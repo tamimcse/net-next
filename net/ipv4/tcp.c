@@ -283,6 +283,10 @@
 #include <asm/ioctls.h>
 #include <net/busy_poll.h>
 
+#if IS_ENABLED(CONFIG_NET_SCH_MF)
+    #include <asm/unaligned.h>
+#endif
+
 struct percpu_counter tcp_orphan_count;
 EXPORT_SYMBOL_GPL(tcp_orphan_count);
 
@@ -3045,6 +3049,14 @@ void tcp_get_info(struct sock *sk, struct tcp_info *info)
 	rate64 = tcp_compute_delivery_rate(tp);
 	if (rate64)
 		info->tcpi_delivery_rate = rate64;
+        
+#if IS_ENABLED(CONFIG_NET_SCH_MF)        
+        if(likely(sysctl_tcp_mf))
+        {
+            put_unaligned(tp->mf_cookie_req->feedback_thput, &info->tcpi_feedback_rate);
+        }
+#endif        
+        
 	unlock_sock_fast(sk, slow);
 }
 EXPORT_SYMBOL_GPL(tcp_get_info);

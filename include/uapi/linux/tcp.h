@@ -221,6 +221,9 @@ struct tcp_info {
 
 	__u64   tcpi_delivery_rate;
 
+        __u8   tcpi_feedback_rate;
+
+        
 	__u64	tcpi_busy_time;      /* Time (usec) busy sending data */
 	__u64	tcpi_rwnd_limited;   /* Time (usec) limited by receive window */
 	__u64	tcpi_sndbuf_limited; /* Time (usec) limited by send buffer */

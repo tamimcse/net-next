@@ -214,6 +214,13 @@ void tcp_time_wait(struct sock *sk, int state, int timeo);
 #define TCPOLEN_MSS_ALIGNED		4
 #define TCPOLEN_EXP_SMC_BASE_ALIGNED	8
 
+#if IS_ENABLED(CONFIG_NET_SCH_MF)
+#define TCPOPT_MF		38	/* Predefined option number for
+                                         Media-friendly (this is a researved number) */
+#define TCPOLEN_MF             6
+#define TCPOLEN_MF_ALIGNED              8
+#endif
+
 /* Flags in tp->nonagle */
 #define TCP_NAGLE_OFF		1	/* Nagle's algo is disabled */
 #define TCP_NAGLE_CORK		2	/* Socket is corked	    */
@@ -238,6 +245,10 @@ void tcp_time_wait(struct sock *sk, int state, int timeo);
  */
 #define	TFO_SERVER_WO_SOCKOPT1	0x400
 
+#if IS_ENABLED(CONFIG_NET_SCH_MF)
+    extern int sysctl_tcp_mf;
+    extern int sysctl_tcp_xcp;
+#endif
 
 /* sysctl variables for tcp */
 extern int sysctl_tcp_max_orphans;

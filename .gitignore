@@ -127,3 +127,8 @@ all.config
 
 # Kdevelop4
 *.kdev4
+
+*.log
+*.data
+streamer
+nbproject

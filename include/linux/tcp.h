@@ -72,6 +72,17 @@ struct tcp_fastopen_cookie {
 	bool	exp;	/* In RFC6994 experimental option format */
 };
 
+#if IS_ENABLED(CONFIG_NET_SCH_MF)
+    /* TCP MF Cookie as stored in memory */
+    struct tcp_mf_cookie {
+            u8	len;
+            u8 req_thput,           /* Required throughput in MF */ 
+               cur_thput,           /* Current throughput in MF */
+               feedback_thput,      /* Feedback throughput in MF */
+               prop_delay_est;
+    };
+#endif
+
 /* This defines a selective acknowledgement block. */
 struct tcp_sack_block_wire {
 	__be32	start_seq;
@@ -94,7 +105,7 @@ struct tcp_options_received {
 	u32	rcv_tsval;	/* Time stamp value             	*/
 	u32	rcv_tsecr;	/* Time stamp echo reply        	*/
 	u16 	saw_tstamp : 1,	/* Saw TIMESTAMP on last packet		*/
-		tstamp_ok : 1,	/* TIMESTAMP seen on SYN packet		*/
+		tstamp_ok : 1,	/* TIMESTAMP seen on SYN packet		*/                
 		dsack : 1,	/* D-SACK is scheduled			*/
 		wscale_ok : 1,	/* Wscale seen on SYN packet		*/
 		sack_ok : 3,	/* SACK seen on SYN packet		*/
@@ -104,6 +115,14 @@ struct tcp_options_received {
 	u8	num_sacks;	/* Number of SACK blocks		*/
 	u16	user_mss;	/* mss requested by user in ioctl	*/
 	u16	mss_clamp;	/* Maximal mss, negotiated at connection setup */
+        
+#if IS_ENABLED(CONFIG_NET_SCH_MF)        
+        u16     mf_ok : 1;	/* MF option seen on SYN packet		*/
+        u8      feedback_thput, /* Feedback throughput from network in option MF */
+                req_thput,      /* Required throughput from network in option MF */
+                cur_thput,      /* Current throughput from network in option MF */       
+                prop_delay_est;
+#endif                
 };
 
 static inline void tcp_clear_options(struct tcp_options_received *rx_opt)
@@ -113,6 +132,9 @@ static inline void tcp_clear_options(struct tcp_options_received *rx_opt)
 #if IS_ENABLED(CONFIG_SMC)
 	rx_opt->smc_ok = 0;
 #endif
+#if IS_ENABLED(CONFIG_NET_SCH_MF)         
+        rx_opt->mf_ok = 0;
+#endif        
 }
 
 /* This is the max number of SACKS that we'll generate and process. It's safe
@@ -379,6 +401,12 @@ struct tcp_sock {
 
 /* TCP fastopen related information */
 	struct tcp_fastopen_request *fastopen_req;
+
+#if IS_ENABLED(CONFIG_NET_SCH_MF)        
+/* TCP MF TCP related information */
+	struct tcp_mf_cookie *mf_cookie_req;        
+#endif
+        
 	/* fastopen_rsk points to request_sock that resulted in this big
 	 * socket. Used to retransmit SYNACKs etc.
 	 */

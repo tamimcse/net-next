@@ -79,6 +79,15 @@
 #include <trace/events/tcp.h>
 #include <linux/static_key.h>
 
+#if IS_ENABLED(CONFIG_NET_SCH_MF)
+#include <linux/compiler.h>
+#endif
+
+#if IS_ENABLED(CONFIG_NET_SCH_MF)
+    int sysctl_tcp_mf __read_mostly = 1;
+    int sysctl_tcp_xcp __read_mostly = 0;
+#endif
+
 int sysctl_tcp_max_orphans __read_mostly = NR_FILE;
 
 #define FLAG_DATA		0x01 /* Incoming frame contained data.		*/
@@ -3267,6 +3276,36 @@ static void tcp_cong_control(struct sock *sk, u32 ack, u32 acked_sacked,
 			     int flag, const struct rate_sample *rs)
 {
 	const struct inet_connection_sock *icsk = inet_csk(sk);
+        
+#if IS_ENABLED(CONFIG_NET_SCH_MF)    
+        struct tcp_sock *tp = tcp_sk(sk);        
+        if(likely(sysctl_tcp_mf) && tp->rx_opt.mf_ok)
+        {
+            if(likely(sysctl_tcp_xcp == 0))
+            {
+                //MF TCP feedback is in KB and everything in kernel is in Byte
+    //            int wnd = (((tp->mf_cookie_req->feedback_thput * 1024) * ((tp->srtt_us >> 3) /USEC_PER_SEC)) / tp->mss_cache);
+
+                //calculated based on tcp_update_pacing_rate()
+                int wnd = ((tp->mf_cookie_req->feedback_thput * 1024) * tcp_min_rtt(tp)) / (tp->mss_cache * ((USEC_PER_SEC/100) << 3));
+                tp->snd_cwnd = wnd;
+                pr_info("Feedback= %d RTT= %d MSS= %d Cwnd= %d on ", 
+                        tp->mf_cookie_req->feedback_thput, tp->srtt_us, tp->mss_cache, tp->snd_cwnd);
+                u32 feedback = tp->mf_cookie_req->feedback_thput * 1024;
+                WRITE_ONCE(sk->sk_pacing_rate, feedback);
+                return;                
+            }
+            else
+            {
+                //calculated based on tcp_update_pacing_rate()
+                int wnd = ((tp->mf_cookie_req->feedback_thput * 1024) * tp->srtt_us) / (tp->mss_cache * ((USEC_PER_SEC/100) << 3));
+//                int wnd = ((tp->mf_cookie_req->feedback_thput * 1024 * 1024) * (tp->srtt_us >> 3) ) / (tp->mss_cache * USEC_PER_SEC);
+                tp->snd_cwnd = wnd;
+                pr_info("Feedback= %d RTT= %d MSS= %d Cwnd= %d on ", 
+                        tp->mf_cookie_req->feedback_thput, tp->srtt_us, tp->mss_cache, tp->snd_cwnd);                
+            }
+        }
+#endif        
 
 	if (icsk->icsk_ca_ops->cong_control) {
 		icsk->icsk_ca_ops->cong_control(sk, rs);
@@ -3719,6 +3758,10 @@ void tcp_parse_options(const struct net *net,
 	const struct tcphdr *th = tcp_hdr(skb);
 	int length = (th->doff * 4) - sizeof(struct tcphdr);
 
+#if IS_ENABLED(CONFIG_NET_SCH_MF)        
+        char *seg_type;
+#endif        
+
 	ptr = (const unsigned char *)(th + 1);
 	opt_rx->saw_tstamp = 0;
 
@@ -3817,6 +3860,26 @@ void tcp_parse_options(const struct net *net,
 					smc_parse_options(th, opt_rx, ptr,
 							  opsize);
 				break;
+
+#if IS_ENABLED(CONFIG_NET_SCH_MF)                                
+			case TCPOPT_MF:
+				if (opsize == TCPOLEN_MF) {
+                                        opt_rx->mf_ok = 1;     
+					opt_rx->req_thput = *ptr;
+                                        opt_rx->cur_thput = *(ptr + 1);
+                                        opt_rx->feedback_thput = *(ptr + 2);
+                                        opt_rx->prop_delay_est = *(ptr + 3);
+                                        if(skb->data_len > 0)
+                                            seg_type = "DATA";
+                                        else
+                                            seg_type = "ACK";
+                                pr_err("Receiving MF TCP in %s segment on [%d.%d.%d.%d] : req_thput:%d curr_thput: %d feedback_thput:%d", 
+                                        seg_type, ip_hdr(skb)->daddr & 255, (ip_hdr(skb)->daddr >> 8U) & 255,
+                                        (ip_hdr(skb)->daddr >> 16U) & 255, (ip_hdr(skb)->daddr >> 24U) & 255,                                        
+                                        (int)opt_rx->req_thput, (int)opt_rx->cur_thput, (int)opt_rx->feedback_thput);                                
+				}
+				break;     
+#endif                                
 
 			}
 			ptr += opsize-2;
@@ -5596,6 +5659,21 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
 	if (tp->rx_opt.saw_tstamp && tp->rx_opt.rcv_tsecr)
 		tp->rx_opt.rcv_tsecr -= tp->tsoffset;
 
+#if IS_ENABLED(CONFIG_NET_SCH_MF)        
+        if(likely(sysctl_tcp_mf))
+        {
+            //Copy the received option to TCP MF cookie        
+            if(!tp->mf_cookie_req)
+                tp->mf_cookie_req = (struct tcp_mf_cookie *) kzalloc(sizeof(struct tcp_mf_cookie), 
+                                            sk->sk_allocation);
+            tp->mf_cookie_req->cur_thput = tp->rx_opt.cur_thput;
+            tp->mf_cookie_req->feedback_thput = tp->rx_opt.feedback_thput;
+            tp->mf_cookie_req->req_thput = tp->rx_opt.req_thput;
+            tp->mf_cookie_req->prop_delay_est = tp->rx_opt.prop_delay_est;
+            tp->mf_cookie_req->len = TCPOLEN_MF_ALIGNED;     
+        }             
+#endif
+        
 	if (th->ack) {
 		/* rfc793:
 		 * "If the state is SYN-SENT then
@@ -6260,7 +6338,23 @@ int tcp_conn_request(struct request_sock_ops *rsk_ops,
 	tmp_opt.user_mss  = tp->rx_opt.user_mss;
 	tcp_parse_options(sock_net(sk), skb, &tmp_opt, 0,
 			  want_cookie ? NULL : &foc);
-
+        
+#if IS_ENABLED(CONFIG_NET_SCH_MF)        
+        if(likely(sysctl_tcp_mf))
+        {
+            //Copy the received option to TCP MF cookie        
+            tp->rx_opt.mf_ok = tmp_opt.mf_ok;
+            if(!tp->mf_cookie_req)
+                tp->mf_cookie_req = (struct tcp_mf_cookie *) kzalloc(sizeof(struct tcp_mf_cookie), 
+                                            sk->sk_allocation);
+            tp->mf_cookie_req->cur_thput = tmp_opt.cur_thput;
+            tp->mf_cookie_req->feedback_thput = tmp_opt.feedback_thput;
+            tp->mf_cookie_req->req_thput = tmp_opt.req_thput;
+            tp->mf_cookie_req->prop_delay_est = tmp_opt.prop_delay_est;
+            tp->mf_cookie_req->len = TCPOLEN_MF_ALIGNED;     
+        }        
+#endif
+        
 	if (want_cookie && !tmp_opt.saw_tstamp)
 		tcp_clear_options(&tmp_opt);
 

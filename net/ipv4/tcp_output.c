@@ -405,6 +405,10 @@ static inline bool tcp_urg_mode(const struct tcp_sock *tp)
 #define OPTION_FAST_OPEN_COOKIE	(1 << 8)
 #define OPTION_SMC		(1 << 9)
 
+#if IS_ENABLED(CONFIG_NET_SCH_MF)
+#define OPTION_MF		(1 << 4)
+#endif
+
 static void smc_options_write(__be32 *ptr, u16 *options)
 {
 #if IS_ENABLED(CONFIG_SMC)
@@ -429,6 +433,9 @@ struct tcp_out_options {
 	__u8 *hash_location;	/* temporary pointer, overloaded */
 	__u32 tsval, tsecr;	/* need to include OPTION_TS */
 	struct tcp_fastopen_cookie *fastopen_cookie;	/* Fast open cookie */
+#if IS_ENABLED(CONFIG_NET_SCH_MF)        
+        struct tcp_mf_cookie *mf_cookie;	        /* TCP MF cookie */ 
+#endif        
 };
 
 /* Write previously computed TCP options to the packet.
@@ -538,6 +545,20 @@ static void tcp_options_write(__be32 *ptr, struct tcp_sock *tp,
 		ptr += (len + 3) >> 2;
 	}
 
+#if IS_ENABLED(CONFIG_NET_SCH_MF)        
+	if (likely(OPTION_MF & options)) {
+            pr_debug("Writting MF TCP option in bytes!!\n");
+	        *ptr++ = htonl((TCPOPT_NOP << 24) |
+                                (TCPOPT_NOP << 16) |
+			        (TCPOPT_MF << 8) |
+			        TCPOLEN_MF);
+                *ptr++ = htonl((opts->mf_cookie->req_thput << 24) |
+                               (opts->mf_cookie->cur_thput << 16)  |
+                               (opts->mf_cookie->feedback_thput << 8)  |
+                                opts->mf_cookie->prop_delay_est);
+	}     
+#endif        
+
 	smc_options_write(ptr, &options);
 }
 
@@ -613,6 +634,14 @@ static unsigned int tcp_syn_options(struct sock *sk, struct sk_buff *skb,
 		opts->tsecr = tp->rx_opt.ts_recent;
 		remaining -= TCPOLEN_TSTAMP_ALIGNED;
 	}
+#if IS_ENABLED(CONFIG_NET_SCH_MF)        
+        if (likely(sysctl_tcp_mf)) {
+                pr_err("Setting MF TCP for SYN packet");
+		opts->options |= OPTION_MF;
+                opts->mf_cookie = tp->mf_cookie_req;
+		remaining -= TCPOLEN_MF_ALIGNED;
+	}
+#endif        
 	if (likely(sock_net(sk)->ipv4.sysctl_tcp_window_scaling)) {
 		opts->ws = tp->rx_opt.rcv_wscale;
 		opts->options |= OPTION_WSCALE;
@@ -684,6 +713,16 @@ static unsigned int tcp_synack_options(const struct sock *sk,
 		opts->tsecr = req->ts_recent;
 		remaining -= TCPOLEN_TSTAMP_ALIGNED;
 	}
+#if IS_ENABLED(CONFIG_NET_SCH_MF)    
+        struct tcp_sock *tp = tcp_sk(sk);
+        if (likely(sysctl_tcp_mf)) {
+                pr_err("Setting MF TCP for SYN packet");
+		opts->options |= OPTION_MF;
+                opts->mf_cookie = tp->mf_cookie_req;
+		remaining -= TCPOLEN_MF_ALIGNED;
+                pr_err("Setting MF TCP for SYN-ACK packet. Feedback: %d", opts->mf_cookie->feedback_thput);                
+	}
+#endif                
 	if (likely(ireq->sack_ok)) {
 		opts->options |= OPTION_SACK_ADVERTISE;
 		if (unlikely(!ireq->tstamp_ok))
@@ -737,6 +776,16 @@ static unsigned int tcp_established_options(struct sock *sk, struct sk_buff *skb
 		size += TCPOLEN_TSTAMP_ALIGNED;
 	}
 
+#if IS_ENABLED(CONFIG_NET_SCH_MF)            
+	if (likely(tp->rx_opt.mf_ok) && sysctl_tcp_mf) {
+                pr_err("Sending MF TCP from [%d.%d.%d.%d]",
+                        inet_sk(sk)->inet_saddr & 255, (inet_sk(sk)->inet_saddr >> 8U) & 255,
+                        (inet_sk(sk)->inet_saddr >> 16U) & 255, (inet_sk(sk)->inet_saddr >> 24U) & 255);
+		opts->options |= OPTION_MF;
+		opts->mf_cookie = tp->mf_cookie_req; 
+		size += TCPOLEN_MF_ALIGNED;
+	}        
+#endif
 	eff_sacks = tp->rx_opt.num_sacks + tp->rx_opt.dsack;
 	if (unlikely(eff_sacks)) {
 		const unsigned int remaining = MAX_TCP_OPTION_SPACE - size;
@@ -1069,6 +1118,25 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
 	tcb = TCP_SKB_CB(skb);
 	memset(&opts, 0, sizeof(opts));
 
+#if IS_ENABLED(CONFIG_NET_SCH_MF)        
+        // TODO: populate tp->mf_cookie_req by Netlink socket
+        if (likely(sysctl_tcp_mf))
+        {            
+            if(!tp->mf_cookie_req)
+                tp->mf_cookie_req = kzalloc(sizeof(struct tcp_mf_cookie), sk->sk_allocation);
+            //Initially current thput = feedback throughput = required throughput (in KB/s)
+            if(!tp->rx_opt.mf_ok)
+            {                
+                tp->mf_cookie_req->feedback_thput
+                        = tp->mf_cookie_req->req_thput
+                        = 512/8;
+                tp->mf_cookie_req->cur_thput = 512/8;
+                tp->mf_cookie_req->prop_delay_est = 140;
+                tp->mf_cookie_req->len = TCPOLEN_MF_ALIGNED;                     
+            }
+        }        
+#endif
+        
 	if (unlikely(tcb->tcp_flags & TCPHDR_SYN))
 		tcp_options_size = tcp_syn_options(sk, skb, &opts, &md5);
 	else
