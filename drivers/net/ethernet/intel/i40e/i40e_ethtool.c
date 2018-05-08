@@ -1,28 +1,5 @@
-/*******************************************************************************
- *
- * Intel Ethernet Controller XL710 Family Linux Driver
- * Copyright(c) 2013 - 2016 Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
- * The full GNU General Public License is included in this distribution in
- * the file called "COPYING".
- *
- * Contact Information:
- * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
- * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
- *
- ******************************************************************************/
+// SPDX-License-Identifier: GPL-2.0
+/* Copyright(c) 2013 - 2018 Intel Corporation. */
 
 /* ethtool support for i40e */
 
@@ -230,6 +207,8 @@ static const struct i40e_priv_flags i40e_gstrings_priv_flags[] = {
 	I40E_PRIV_FLAG("flow-director-atr", I40E_FLAG_FD_ATR_ENABLED, 0),
 	I40E_PRIV_FLAG("veb-stats", I40E_FLAG_VEB_STATS_ENABLED, 0),
 	I40E_PRIV_FLAG("hw-atr-eviction", I40E_FLAG_HW_ATR_EVICT_ENABLED, 0),
+	I40E_PRIV_FLAG("link-down-on-close",
+		       I40E_FLAG_LINK_DOWN_ON_CLOSE_ENABLED, 0),
 	I40E_PRIV_FLAG("legacy-rx", I40E_FLAG_LEGACY_RX, 0),
 	I40E_PRIV_FLAG("disable-source-pruning",
 		       I40E_FLAG_SOURCE_PRUNING_DISABLED, 0),
@@ -857,7 +836,9 @@ static int i40e_set_link_ksettings(struct net_device *netdev,
 	if (hw->device_id == I40E_DEV_ID_KX_B ||
 	    hw->device_id == I40E_DEV_ID_KX_C ||
 	    hw->device_id == I40E_DEV_ID_20G_KR2 ||
-	    hw->device_id == I40E_DEV_ID_20G_KR2_A) {
+	    hw->device_id == I40E_DEV_ID_20G_KR2_A ||
+	    hw->device_id == I40E_DEV_ID_25G_B ||
+	    hw->device_id == I40E_DEV_ID_KX_X722) {
 		netdev_info(netdev, "Changing settings is not supported on backplane.\n");
 		return -EOPNOTSUPP;
 	}
@@ -868,22 +849,20 @@ static int i40e_set_link_ksettings(struct net_device *netdev,
 	/* save autoneg out of ksettings */
 	autoneg = copy_ks.base.autoneg;
 
-	memset(&safe_ks, 0, sizeof(safe_ks));
-	/* Get link modes supported by hardware and check against modes
-	 * requested by the user.  Return an error if unsupported mode was set.
-	 */
-	i40e_phy_type_to_ethtool(pf, &safe_ks);
-	if (!bitmap_subset(copy_ks.link_modes.advertising,
-			   safe_ks.link_modes.supported,
-			   __ETHTOOL_LINK_MODE_MASK_NBITS))
-		return -EINVAL;
-
 	/* get our own copy of the bits to check against */
 	memset(&safe_ks, 0, sizeof(struct ethtool_link_ksettings));
 	safe_ks.base.cmd = copy_ks.base.cmd;
 	safe_ks.base.link_mode_masks_nwords =
 		copy_ks.base.link_mode_masks_nwords;
 	i40e_get_link_ksettings(netdev, &safe_ks);
+
+	/* Get link modes supported by hardware and check against modes
+	 * requested by the user.  Return an error if unsupported mode was set.
+	 */
+	if (!bitmap_subset(copy_ks.link_modes.advertising,
+			   safe_ks.link_modes.supported,
+			   __ETHTOOL_LINK_MODE_MASK_NBITS))
+		return -EINVAL;
 
 	/* set autoneg back to what it currently is */
 	copy_ks.base.autoneg = safe_ks.base.autoneg;
@@ -974,7 +953,9 @@ static int i40e_set_link_ksettings(struct net_device *netdev,
 	    ethtool_link_ksettings_test_link_mode(ks, advertising,
 						  10000baseCR_Full) ||
 	    ethtool_link_ksettings_test_link_mode(ks, advertising,
-						  10000baseSR_Full))
+						  10000baseSR_Full) ||
+	    ethtool_link_ksettings_test_link_mode(ks, advertising,
+						  10000baseLR_Full))
 		config.link_speed |= I40E_LINK_SPEED_10GB;
 	if (ethtool_link_ksettings_test_link_mode(ks, advertising,
 						  20000baseKR2_Full))
@@ -1076,6 +1057,9 @@ static int i40e_nway_reset(struct net_device *netdev)
 
 /**
  * i40e_get_pauseparam -  Get Flow Control status
+ * @netdev: netdevice structure
+ * @pause: buffer to return pause parameters
+ *
  * Return tx/rx-pause status
  **/
 static void i40e_get_pauseparam(struct net_device *netdev,
@@ -2244,14 +2228,14 @@ static int __i40e_get_coalesce(struct net_device *netdev,
 	rx_ring = vsi->rx_rings[queue];
 	tx_ring = vsi->tx_rings[queue];
 
-	if (ITR_IS_DYNAMIC(rx_ring->rx_itr_setting))
+	if (ITR_IS_DYNAMIC(rx_ring->itr_setting))
 		ec->use_adaptive_rx_coalesce = 1;
 
-	if (ITR_IS_DYNAMIC(tx_ring->tx_itr_setting))
+	if (ITR_IS_DYNAMIC(tx_ring->itr_setting))
 		ec->use_adaptive_tx_coalesce = 1;
 
-	ec->rx_coalesce_usecs = rx_ring->rx_itr_setting & ~I40E_ITR_DYNAMIC;
-	ec->tx_coalesce_usecs = tx_ring->tx_itr_setting & ~I40E_ITR_DYNAMIC;
+	ec->rx_coalesce_usecs = rx_ring->itr_setting & ~I40E_ITR_DYNAMIC;
+	ec->tx_coalesce_usecs = tx_ring->itr_setting & ~I40E_ITR_DYNAMIC;
 
 	/* we use the _usecs_high to store/set the interrupt rate limit
 	 * that the hardware supports, that almost but not quite
@@ -2311,34 +2295,35 @@ static void i40e_set_itr_per_queue(struct i40e_vsi *vsi,
 	struct i40e_pf *pf = vsi->back;
 	struct i40e_hw *hw = &pf->hw;
 	struct i40e_q_vector *q_vector;
-	u16 vector, intrl;
+	u16 intrl;
 
 	intrl = i40e_intrl_usec_to_reg(vsi->int_rate_limit);
 
-	rx_ring->rx_itr_setting = ec->rx_coalesce_usecs;
-	tx_ring->tx_itr_setting = ec->tx_coalesce_usecs;
+	rx_ring->itr_setting = ITR_REG_ALIGN(ec->rx_coalesce_usecs);
+	tx_ring->itr_setting = ITR_REG_ALIGN(ec->tx_coalesce_usecs);
 
 	if (ec->use_adaptive_rx_coalesce)
-		rx_ring->rx_itr_setting |= I40E_ITR_DYNAMIC;
+		rx_ring->itr_setting |= I40E_ITR_DYNAMIC;
 	else
-		rx_ring->rx_itr_setting &= ~I40E_ITR_DYNAMIC;
+		rx_ring->itr_setting &= ~I40E_ITR_DYNAMIC;
 
 	if (ec->use_adaptive_tx_coalesce)
-		tx_ring->tx_itr_setting |= I40E_ITR_DYNAMIC;
+		tx_ring->itr_setting |= I40E_ITR_DYNAMIC;
 	else
-		tx_ring->tx_itr_setting &= ~I40E_ITR_DYNAMIC;
+		tx_ring->itr_setting &= ~I40E_ITR_DYNAMIC;
 
 	q_vector = rx_ring->q_vector;
-	q_vector->rx.itr = ITR_TO_REG(rx_ring->rx_itr_setting);
-	vector = vsi->base_vector + q_vector->v_idx;
-	wr32(hw, I40E_PFINT_ITRN(I40E_RX_ITR, vector - 1), q_vector->rx.itr);
+	q_vector->rx.target_itr = ITR_TO_REG(rx_ring->itr_setting);
 
 	q_vector = tx_ring->q_vector;
-	q_vector->tx.itr = ITR_TO_REG(tx_ring->tx_itr_setting);
-	vector = vsi->base_vector + q_vector->v_idx;
-	wr32(hw, I40E_PFINT_ITRN(I40E_TX_ITR, vector - 1), q_vector->tx.itr);
+	q_vector->tx.target_itr = ITR_TO_REG(tx_ring->itr_setting);
 
-	wr32(hw, I40E_PFINT_RATEN(vector - 1), intrl);
+	/* The interrupt handler itself will take care of programming
+	 * the Tx and Rx ITR values based on the values we have entered
+	 * into the q_vector, no need to write the values now.
+	 */
+
+	wr32(hw, I40E_PFINT_RATEN(q_vector->reg_idx), intrl);
 	i40e_flush(hw);
 }
 
@@ -2364,11 +2349,11 @@ static int __i40e_set_coalesce(struct net_device *netdev,
 		vsi->work_limit = ec->tx_max_coalesced_frames_irq;
 
 	if (queue < 0) {
-		cur_rx_itr = vsi->rx_rings[0]->rx_itr_setting;
-		cur_tx_itr = vsi->tx_rings[0]->tx_itr_setting;
+		cur_rx_itr = vsi->rx_rings[0]->itr_setting;
+		cur_tx_itr = vsi->tx_rings[0]->itr_setting;
 	} else if (queue < vsi->num_queue_pairs) {
-		cur_rx_itr = vsi->rx_rings[queue]->rx_itr_setting;
-		cur_tx_itr = vsi->tx_rings[queue]->tx_itr_setting;
+		cur_rx_itr = vsi->rx_rings[queue]->itr_setting;
+		cur_tx_itr = vsi->tx_rings[queue]->itr_setting;
 	} else {
 		netif_info(pf, drv, netdev, "Invalid queue value, queue range is 0 - %d\n",
 			   vsi->num_queue_pairs - 1);
@@ -2396,7 +2381,7 @@ static int __i40e_set_coalesce(struct net_device *netdev,
 		return -EINVAL;
 	}
 
-	if (ec->rx_coalesce_usecs > (I40E_MAX_ITR << 1)) {
+	if (ec->rx_coalesce_usecs > I40E_MAX_ITR) {
 		netif_info(pf, drv, netdev, "Invalid value, rx-usecs range is 0-8160\n");
 		return -EINVAL;
 	}
@@ -2407,16 +2392,16 @@ static int __i40e_set_coalesce(struct net_device *netdev,
 		return -EINVAL;
 	}
 
-	if (ec->tx_coalesce_usecs > (I40E_MAX_ITR << 1)) {
+	if (ec->tx_coalesce_usecs > I40E_MAX_ITR) {
 		netif_info(pf, drv, netdev, "Invalid value, tx-usecs range is 0-8160\n");
 		return -EINVAL;
 	}
 
 	if (ec->use_adaptive_rx_coalesce && !cur_rx_itr)
-		ec->rx_coalesce_usecs = I40E_MIN_ITR << 1;
+		ec->rx_coalesce_usecs = I40E_MIN_ITR;
 
 	if (ec->use_adaptive_tx_coalesce && !cur_tx_itr)
-		ec->tx_coalesce_usecs = I40E_MIN_ITR << 1;
+		ec->tx_coalesce_usecs = I40E_MIN_ITR;
 
 	intrl_reg = i40e_intrl_usec_to_reg(ec->rx_coalesce_usecs_high);
 	vsi->int_rate_limit = INTRL_REG_TO_USEC(intrl_reg);
@@ -2546,7 +2531,7 @@ static int i40e_get_rss_hash_opts(struct i40e_pf *pf, struct ethtool_rxnfc *cmd)
 /**
  * i40e_check_mask - Check whether a mask field is set
  * @mask: the full mask value
- * @field; mask of the field to check
+ * @field: mask of the field to check
  *
  * If the given mask is fully set, return positive value. If the mask for the
  * field is fully unset, return zero. Otherwise return a negative error code.
@@ -2617,6 +2602,7 @@ static int i40e_parse_rx_flow_user_data(struct ethtool_rx_flow_spec *fsp,
 /**
  * i40e_fill_rx_flow_user_data - Fill in user-defined data field
  * @fsp: pointer to rx_flow specification
+ * @data: pointer to return userdef data
  *
  * Reads the userdef data structure and properly fills in the user defined
  * fields of the rx_flow_spec.
@@ -2795,6 +2781,7 @@ no_input_set:
  * i40e_get_rxnfc - command to get RX flow classification rules
  * @netdev: network interface device structure
  * @cmd: ethtool rxnfc command
+ * @rule_locs: pointer to store rule data
  *
  * Returns Success if the command is supported.
  **/
@@ -2836,7 +2823,7 @@ static int i40e_get_rxnfc(struct net_device *netdev, struct ethtool_rxnfc *cmd,
 /**
  * i40e_get_rss_hash_bits - Read RSS Hash bits from register
  * @nfc: pointer to user request
- * @i_setc bits currently set
+ * @i_setc: bits currently set
  *
  * Returns value of bits to be set per user request
  **/
@@ -2881,7 +2868,7 @@ static u64 i40e_get_rss_hash_bits(struct ethtool_rxnfc *nfc, u64 i_setc)
 /**
  * i40e_set_rss_hash_opt - Enable/Disable flow types for RSS hash
  * @pf: pointer to the physical function struct
- * @cmd: ethtool rxnfc command
+ * @nfc: ethtool rxnfc command
  *
  * Returns Success if the flow input set is supported.
  **/
@@ -3280,7 +3267,7 @@ static int i40e_add_flex_offset(struct list_head *flex_pit_list,
  * __i40e_reprogram_flex_pit - Re-program specific FLX_PIT table
  * @pf: Pointer to the PF structure
  * @flex_pit_list: list of flexible src offsets in use
- * #flex_pit_start: index to first entry for this section of the table
+ * @flex_pit_start: index to first entry for this section of the table
  *
  * In order to handle flexible data, the hardware uses a table of values
  * called the FLX_PIT table. This table is used to indicate which sections of
@@ -3394,7 +3381,7 @@ static void i40e_reprogram_flex_pit(struct i40e_pf *pf)
 
 /**
  * i40e_flow_str - Converts a flow_type into a human readable string
- * @flow_type: the flow type from a flow specification
+ * @fsp: the flow specification
  *
  * Currently only flow types we support are included here, and the string
  * value attempts to match what ethtool would use to configure this flow type.
@@ -3947,7 +3934,7 @@ static int i40e_add_fdir_ethtool(struct i40e_vsi *vsi,
 	if (!(pf->flags & I40E_FLAG_FD_SB_ENABLED))
 		return -EOPNOTSUPP;
 
-	if (pf->flags & I40E_FLAG_FD_SB_AUTO_DISABLED)
+	if (test_bit(__I40E_FD_SB_AUTO_DISABLED, pf->state))
 		return -ENOSPC;
 
 	if (test_bit(__I40E_RESET_RECOVERY_PENDING, pf->state) ||
@@ -4099,7 +4086,7 @@ static unsigned int i40e_max_channels(struct i40e_vsi *vsi)
 
 /**
  * i40e_get_channels - Get the current channels enabled and max supported etc.
- * @netdev: network interface device structure
+ * @dev: network interface device structure
  * @ch: ethtool channels structure
  *
  * We don't support separate tx and rx queues as channels. The other count
@@ -4108,7 +4095,7 @@ static unsigned int i40e_max_channels(struct i40e_vsi *vsi)
  * q_vectors since we support a lot more queue pairs than q_vectors.
  **/
 static void i40e_get_channels(struct net_device *dev,
-			       struct ethtool_channels *ch)
+			      struct ethtool_channels *ch)
 {
 	struct i40e_netdev_priv *np = netdev_priv(dev);
 	struct i40e_vsi *vsi = np->vsi;
@@ -4127,14 +4114,14 @@ static void i40e_get_channels(struct net_device *dev,
 
 /**
  * i40e_set_channels - Set the new channels count.
- * @netdev: network interface device structure
+ * @dev: network interface device structure
  * @ch: ethtool channels structure
  *
  * The new channels count may not be the same as requested by the user
  * since it gets rounded down to a power of 2 value.
  **/
 static int i40e_set_channels(struct net_device *dev,
-			      struct ethtool_channels *ch)
+			     struct ethtool_channels *ch)
 {
 	const u8 drop = I40E_FILTER_PROGRAM_DESC_DEST_DROP_PACKET;
 	struct i40e_netdev_priv *np = netdev_priv(dev);
@@ -4269,6 +4256,7 @@ out:
  * @netdev: network interface device structure
  * @indir: indirection table
  * @key: hash key
+ * @hfunc: hash function to use
  *
  * Returns -EINVAL if the table specifies an invalid queue id, otherwise
  * returns 0 after programming the table.
@@ -4406,6 +4394,8 @@ static int i40e_set_priv_flags(struct net_device *dev, u32 flags)
 	}
 
 flags_complete:
+	changed_flags = orig_flags ^ new_flags;
+
 	/* Before we finalize any flag changes, we need to perform some
 	 * checks to ensure that the changes are supported and safe.
 	 */
@@ -4415,38 +4405,27 @@ flags_complete:
 	    !(pf->hw_features & I40E_HW_ATR_EVICT_CAPABLE))
 		return -EOPNOTSUPP;
 
-	/* Disable FW LLDP not supported if NPAR active or if FW
-	 * API version < 1.7
+	/* If the driver detected FW LLDP was disabled on init, this flag could
+	 * be set, however we do not support _changing_ the flag if NPAR is
+	 * enabled or FW API version < 1.7.  There are situations where older
+	 * FW versions/NPAR enabled PFs could disable LLDP, however we _must_
+	 * not allow the user to enable/disable LLDP with this flag on
+	 * unsupported FW versions.
 	 */
-	if (new_flags & I40E_FLAG_DISABLE_FW_LLDP) {
-		if (pf->hw.func_caps.npar_enable) {
+	if (changed_flags & I40E_FLAG_DISABLE_FW_LLDP) {
+		if (!(pf->hw_features & I40E_HW_STOPPABLE_FW_LLDP)) {
 			dev_warn(&pf->pdev->dev,
-				 "Unable to stop FW LLDP if NPAR active\n");
-			return -EOPNOTSUPP;
-		}
-
-		if (pf->hw.aq.api_maj_ver < 1 ||
-		    (pf->hw.aq.api_maj_ver == 1 &&
-		     pf->hw.aq.api_min_ver < 7)) {
-			dev_warn(&pf->pdev->dev,
-				 "FW ver does not support stopping FW LLDP\n");
+				 "Device does not support changing FW LLDP\n");
 			return -EOPNOTSUPP;
 		}
 	}
 
-	/* Compare and exchange the new flags into place. If we failed, that
-	 * is if cmpxchg returns anything but the old value, this means that
-	 * something else has modified the flags variable since we copied it
-	 * originally. We'll just punt with an error and log something in the
-	 * message buffer.
+	/* Now that we've checked to ensure that the new flags are valid, load
+	 * them into place. Since we only modify flags either (a) during
+	 * initialization or (b) while holding the RTNL lock, we don't need
+	 * anything fancy here.
 	 */
-	if (cmpxchg64(&pf->flags, orig_flags, new_flags) != orig_flags) {
-		dev_warn(&pf->pdev->dev,
-			 "Unable to update pf->flags as it was modified by another thread...\n");
-		return -EAGAIN;
-	}
-
-	changed_flags = orig_flags ^ new_flags;
+	pf->flags = new_flags;
 
 	/* Process any additional changes needed as a result of flag changes.
 	 * The changed_flags value reflects the list of bits that were
@@ -4456,7 +4435,7 @@ flags_complete:
 	/* Flush current ATR settings if ATR was disabled */
 	if ((changed_flags & I40E_FLAG_FD_ATR_ENABLED) &&
 	    !(pf->flags & I40E_FLAG_FD_ATR_ENABLED)) {
-		pf->flags |= I40E_FLAG_FD_ATR_AUTO_DISABLED;
+		set_bit(__I40E_FD_ATR_AUTO_DISABLED, pf->state);
 		set_bit(__I40E_FD_FLUSH_REQUESTED, pf->state);
 	}
 
@@ -4478,6 +4457,12 @@ flags_complete:
 			/* not a fatal problem, just keep going */
 		}
 	}
+
+	if ((changed_flags & pf->flags &
+	     I40E_FLAG_LINK_DOWN_ON_CLOSE_ENABLED) &&
+	    (pf->flags & I40E_FLAG_MFP_ENABLED))
+		dev_warn(&pf->pdev->dev,
+			 "Turning on link-down-on-close flag may affect other partitions\n");
 
 	if (changed_flags & I40E_FLAG_DISABLE_FW_LLDP) {
 		if (pf->flags & I40E_FLAG_DISABLE_FW_LLDP) {

@@ -1472,7 +1472,8 @@ static ssize_t module_sect_show(struct module_attribute *mattr,
 {
 	struct module_sect_attr *sattr =
 		container_of(mattr, struct module_sect_attr, mattr);
-	return sprintf(buf, "0x%pK\n", (void *)sattr->address);
+	return sprintf(buf, "0x%px\n", kptr_restrict < 2 ?
+		       (void *)sattr->address : NULL);
 }
 
 static void free_sect_attrs(struct module_sect_attrs *sect_attrs)
@@ -2181,10 +2182,6 @@ static void free_module(struct module *mod)
 	/* Finally, free the core (containing the module structure) */
 	disable_ro_nx(&mod->core_layout);
 	module_memfree(mod->core_layout.base);
-
-#ifdef CONFIG_MPU
-	update_protections(current->mm);
-#endif
 }
 
 void *__symbol_get(const char *symbol)
@@ -3804,6 +3801,7 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	module_disable_nx(mod);
 
  ddebug_cleanup:
+	ftrace_release_mod(mod);
 	dynamic_debug_remove(mod, info->debug);
 	synchronize_sched();
 	kfree(mod->args);
@@ -3823,12 +3821,6 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	synchronize_sched();
 	mutex_unlock(&module_mutex);
  free_module:
-	/*
-	 * Ftrace needs to clean up what it initialized.
-	 * This does nothing if ftrace_module_init() wasn't called,
-	 * but it must be called outside of module_mutex.
-	 */
-	ftrace_release_mod(mod);
 	/* Free lock-classes; relies on the preceding sync_rcu() */
 	lockdep_free_key_range(mod->core_layout.base, mod->core_layout.size);
 
@@ -4233,7 +4225,7 @@ static int modules_open(struct inode *inode, struct file *file)
 		m->private = kallsyms_show_value() ? NULL : (void *)8ul;
 	}
 
-	return 0;
+	return err;
 }
 
 static const struct file_operations proc_modules_operations = {

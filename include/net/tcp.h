@@ -385,7 +385,8 @@ enum tcp_tw_status tcp_timewait_state_process(struct inet_timewait_sock *tw,
 					      struct sk_buff *skb,
 					      const struct tcphdr *th);
 struct sock *tcp_check_req(struct sock *sk, struct sk_buff *skb,
-			   struct request_sock *req, bool fastopen);
+			   struct request_sock *req, bool fastopen,
+			   bool *lost_race);
 int tcp_child_process(struct sock *parent, struct sock *child,
 		      struct sk_buff *skb);
 void tcp_enter_loss(struct sock *sk);
@@ -412,6 +413,10 @@ void tcp_set_keepalive(struct sock *sk, int val);
 void tcp_syn_ack_timeout(const struct request_sock *req);
 int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
 		int flags, int *addr_len);
+int tcp_set_rcvlowat(struct sock *sk, int val);
+void tcp_data_ready(struct sock *sk);
+int tcp_mmap(struct file *file, struct socket *sock,
+	     struct vm_area_struct *vma);
 void tcp_parse_options(const struct net *net, const struct sk_buff *skb,
 		       struct tcp_options_received *opt_rx,
 		       int estab, struct tcp_fastopen_cookie *foc);
@@ -521,8 +526,6 @@ __u32 cookie_v6_init_sequence(const struct sk_buff *skb, __u16 *mss);
 #endif
 /* tcp_output.c */
 
-u32 tcp_tso_autosize(const struct sock *sk, unsigned int mss_now,
-		     int min_tso_segs);
 void __tcp_push_pending_frames(struct sock *sk, unsigned int cur_mss,
 			       int nonagle);
 int __tcp_retransmit_skb(struct sock *sk, struct sk_buff *skb, int segs);
@@ -991,8 +994,8 @@ struct tcp_congestion_ops {
 	u32  (*undo_cwnd)(struct sock *sk);
 	/* hook for packet ack accounting (optional) */
 	void (*pkts_acked)(struct sock *sk, const struct ack_sample *sample);
-	/* suggest number of segments for each skb to transmit (optional) */
-	u32 (*tso_segs_goal)(struct sock *sk);
+	/* override sysctl_tcp_min_tso_segs */
+	u32 (*min_tso_segs)(struct sock *sk);
 	/* returns the multiplier used in tcp_sndbuf_expand (optional) */
 	u32 (*sndbuf_expand)(struct sock *sk);
 	/* call when packets are delivered to update cwnd and pacing rate,
@@ -1994,6 +1997,11 @@ enum hrtimer_restart tcp_pace_kick(struct hrtimer *timer);
 #define TCP_ULP_MAX		128
 #define TCP_ULP_BUF_MAX		(TCP_ULP_NAME_MAX*TCP_ULP_MAX)
 
+enum {
+	TCP_ULP_TLS,
+	TCP_ULP_BPF,
+};
+
 struct tcp_ulp_ops {
 	struct list_head	list;
 
@@ -2002,12 +2010,15 @@ struct tcp_ulp_ops {
 	/* cleanup ulp */
 	void (*release)(struct sock *sk);
 
+	int		uid;
 	char		name[TCP_ULP_NAME_MAX];
+	bool		user_visible;
 	struct module	*owner;
 };
 int tcp_register_ulp(struct tcp_ulp_ops *type);
 void tcp_unregister_ulp(struct tcp_ulp_ops *type);
 int tcp_set_ulp(struct sock *sk, const char *name);
+int tcp_set_ulp_id(struct sock *sk, const int ulp);
 void tcp_get_available_ulp(char *buf, size_t len);
 void tcp_cleanup_ulp(struct sock *sk);
 
@@ -2105,4 +2116,12 @@ static inline bool tcp_bpf_ca_needs_ecn(struct sock *sk)
 #if IS_ENABLED(CONFIG_SMC)
 extern struct static_key_false tcp_have_smc;
 #endif
+
+#if IS_ENABLED(CONFIG_TLS_DEVICE)
+void clean_acked_data_enable(struct inet_connection_sock *icsk,
+			     void (*cad)(struct sock *sk, u32 ack_seq));
+void clean_acked_data_disable(struct inet_connection_sock *icsk);
+
+#endif
+
 #endif	/* _TCP_H */

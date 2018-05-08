@@ -41,11 +41,13 @@
 #include <linux/time64.h>
 #include <linux/types.h>
 #include <net/pkt_cls.h>
+#include <net/tcp.h>
 #include <linux/workqueue.h>
 
 struct net_device;
 struct nfp_app;
 
+#define NFP_FL_STATS_CTX_DONT_CARE	cpu_to_be32(0xffffffff)
 #define NFP_FL_STATS_ENTRY_RS		BIT(20)
 #define NFP_FL_STATS_ELEM_RS		4
 #define NFP_FL_REPEATED_HASH_MAX	BIT(17)
@@ -64,6 +66,7 @@ struct nfp_app;
 
 /* Extra features bitmap. */
 #define NFP_FL_FEATS_GENEVE		BIT(0)
+#define NFP_FL_NBI_MTU_SETTING		BIT(1)
 
 struct nfp_fl_mask_id {
 	struct circ_buf mask_id_free_list;
@@ -78,6 +81,22 @@ struct nfp_fl_stats_id {
 };
 
 /**
+ * struct nfp_mtu_conf - manage MTU setting
+ * @portnum:		NFP port number of repr with requested MTU change
+ * @requested_val:	MTU value requested for repr
+ * @ack:		Received ack that MTU has been correctly set
+ * @wait_q:		Wait queue for MTU acknowledgements
+ * @lock:		Lock for setting/reading MTU variables
+ */
+struct nfp_mtu_conf {
+	u32 portnum;
+	unsigned int requested_val;
+	bool ack;
+	wait_queue_head_t wait_q;
+	spinlock_t lock;
+};
+
+/**
  * struct nfp_flower_priv - Flower APP per-vNIC priv data
  * @app:		Back pointer to app
  * @nn:			Pointer to vNIC
@@ -89,7 +108,10 @@ struct nfp_fl_stats_id {
  * @mask_table:		Hash table used to store masks
  * @flow_table:		Hash table used to store flower rules
  * @cmsg_work:		Workqueue for control messages processing
- * @cmsg_skbs:		List of skbs for control message processing
+ * @cmsg_skbs_high:	List of higher priority skbs for control message
+ *			processing
+ * @cmsg_skbs_low:	List of lower priority skbs for control message
+ *			processing
  * @nfp_mac_off_list:	List of MAC addresses to offload
  * @nfp_mac_index_list:	List of unique 8-bit indexes for non NFP netdevs
  * @nfp_ipv4_off_list:	List of IPv4 addresses to offload
@@ -105,6 +127,7 @@ struct nfp_fl_stats_id {
  * @reify_replies:	atomically stores the number of replies received
  *			from firmware for repr reify
  * @reify_wait_queue:	wait queue for repr reify response counting
+ * @mtu_conf:		Configuration of repr MTU value
  */
 struct nfp_flower_priv {
 	struct nfp_app *app;
@@ -117,7 +140,8 @@ struct nfp_flower_priv {
 	DECLARE_HASHTABLE(mask_table, NFP_FLOWER_MASK_HASH_BITS);
 	DECLARE_HASHTABLE(flow_table, NFP_FLOWER_HASH_BITS);
 	struct work_struct cmsg_work;
-	struct sk_buff_head cmsg_skbs;
+	struct sk_buff_head cmsg_skbs_high;
+	struct sk_buff_head cmsg_skbs_low;
 	struct list_head nfp_mac_off_list;
 	struct list_head nfp_mac_index_list;
 	struct list_head nfp_ipv4_off_list;
@@ -132,6 +156,7 @@ struct nfp_flower_priv {
 	struct notifier_block nfp_tun_neigh_nb;
 	atomic_t reify_replies;
 	wait_queue_head_t reify_wait_queue;
+	struct nfp_mtu_conf mtu_conf;
 };
 
 struct nfp_fl_key_ls {
@@ -165,9 +190,11 @@ struct nfp_fl_payload {
 	spinlock_t lock; /* lock stats */
 	struct nfp_fl_stats stats;
 	__be32 nfp_tun_ipv4_addr;
+	struct net_device *ingress_dev;
 	char *unmasked_data;
 	char *mask_data;
 	char *action_data;
+	bool ingress_offload;
 };
 
 struct nfp_fl_stats_frame {
@@ -192,12 +219,14 @@ int nfp_flower_compile_action(struct tc_cls_flower_offload *flow,
 			      struct nfp_fl_payload *nfp_flow);
 int nfp_compile_flow_metadata(struct nfp_app *app,
 			      struct tc_cls_flower_offload *flow,
-			      struct nfp_fl_payload *nfp_flow);
+			      struct nfp_fl_payload *nfp_flow,
+			      struct net_device *netdev);
 int nfp_modify_flow_metadata(struct nfp_app *app,
 			     struct nfp_fl_payload *nfp_flow);
 
 struct nfp_fl_payload *
-nfp_flower_search_fl_table(struct nfp_app *app, unsigned long tc_flower_cookie);
+nfp_flower_search_fl_table(struct nfp_app *app, unsigned long tc_flower_cookie,
+			   struct net_device *netdev, __be32 host_ctx);
 struct nfp_fl_payload *
 nfp_flower_remove_fl_table(struct nfp_app *app, unsigned long tc_flower_cookie);
 

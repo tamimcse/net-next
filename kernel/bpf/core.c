@@ -1572,29 +1572,55 @@ int bpf_prog_array_length(struct bpf_prog_array __rcu *progs)
 	return cnt;
 }
 
-int bpf_prog_array_copy_to_user(struct bpf_prog_array __rcu *progs,
-				__u32 __user *prog_ids, u32 cnt)
+static bool bpf_prog_array_copy_core(struct bpf_prog **prog,
+				     u32 *prog_ids,
+				     u32 request_cnt)
 {
-	struct bpf_prog **prog;
-	u32 i = 0, id;
+	int i = 0;
 
-	rcu_read_lock();
-	prog = rcu_dereference(progs)->progs;
 	for (; *prog; prog++) {
 		if (*prog == &dummy_bpf_prog.prog)
 			continue;
-		id = (*prog)->aux->id;
-		if (copy_to_user(prog_ids + i, &id, sizeof(id))) {
-			rcu_read_unlock();
-			return -EFAULT;
-		}
-		if (++i == cnt) {
+		prog_ids[i] = (*prog)->aux->id;
+		if (++i == request_cnt) {
 			prog++;
 			break;
 		}
 	}
+
+	return !!(*prog);
+}
+
+int bpf_prog_array_copy_to_user(struct bpf_prog_array __rcu *progs,
+				__u32 __user *prog_ids, u32 cnt)
+{
+	struct bpf_prog **prog;
+	unsigned long err = 0;
+	bool nospc;
+	u32 *ids;
+
+	/* users of this function are doing:
+	 * cnt = bpf_prog_array_length();
+	 * if (cnt > 0)
+	 *     bpf_prog_array_copy_to_user(..., cnt);
+	 * so below kcalloc doesn't need extra cnt > 0 check, but
+	 * bpf_prog_array_length() releases rcu lock and
+	 * prog array could have been swapped with empty or larger array,
+	 * so always copy 'cnt' prog_ids to the user.
+	 * In a rare race the user will see zero prog_ids
+	 */
+	ids = kcalloc(cnt, sizeof(u32), GFP_USER | __GFP_NOWARN);
+	if (!ids)
+		return -ENOMEM;
+	rcu_read_lock();
+	prog = rcu_dereference(progs)->progs;
+	nospc = bpf_prog_array_copy_core(prog, ids, cnt);
 	rcu_read_unlock();
-	if (*prog)
+	err = copy_to_user(prog_ids, ids, cnt * sizeof(u32));
+	kfree(ids);
+	if (err)
+		return -EFAULT;
+	if (nospc)
 		return -ENOSPC;
 	return 0;
 }
@@ -1667,22 +1693,25 @@ int bpf_prog_array_copy(struct bpf_prog_array __rcu *old_array,
 }
 
 int bpf_prog_array_copy_info(struct bpf_prog_array __rcu *array,
-			     __u32 __user *prog_ids, u32 request_cnt,
-			     __u32 __user *prog_cnt)
+			     u32 *prog_ids, u32 request_cnt,
+			     u32 *prog_cnt)
 {
+	struct bpf_prog **prog;
 	u32 cnt = 0;
 
 	if (array)
 		cnt = bpf_prog_array_length(array);
 
-	if (copy_to_user(prog_cnt, &cnt, sizeof(cnt)))
-		return -EFAULT;
+	*prog_cnt = cnt;
 
 	/* return early if user requested only program count or nothing to copy */
 	if (!request_cnt || !cnt)
 		return 0;
 
-	return bpf_prog_array_copy_to_user(array, prog_ids, request_cnt);
+	/* this function is called under trace/bpf_trace.c: bpf_event_mutex */
+	prog = rcu_dereference_check(array, 1)->progs;
+	return bpf_prog_array_copy_core(prog, prog_ids, request_cnt) ? -ENOSPC
+								     : 0;
 }
 
 static void bpf_prog_free_deferred(struct work_struct *work)

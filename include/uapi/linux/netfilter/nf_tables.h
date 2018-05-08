@@ -831,7 +831,9 @@ enum nft_rt_keys {
 	NFT_RT_NEXTHOP4,
 	NFT_RT_NEXTHOP6,
 	NFT_RT_TCPMSS,
+	__NFT_RT_MAX
 };
+#define NFT_RT_MAX		(__NFT_RT_MAX - 1)
 
 /**
  * enum nft_hash_types - nf_tables hash expression types
@@ -909,8 +911,8 @@ enum nft_rt_attributes {
  * @NFT_CT_EXPIRATION: relative conntrack expiration time in ms
  * @NFT_CT_HELPER: connection tracking helper assigned to conntrack
  * @NFT_CT_L3PROTOCOL: conntrack layer 3 protocol
- * @NFT_CT_SRC: conntrack layer 3 protocol source (IPv4/IPv6 address)
- * @NFT_CT_DST: conntrack layer 3 protocol destination (IPv4/IPv6 address)
+ * @NFT_CT_SRC: conntrack layer 3 protocol source (IPv4/IPv6 address, deprecated)
+ * @NFT_CT_DST: conntrack layer 3 protocol destination (IPv4/IPv6 address, deprecated)
  * @NFT_CT_PROTOCOL: conntrack layer 4 protocol
  * @NFT_CT_PROTO_SRC: conntrack layer 4 protocol source
  * @NFT_CT_PROTO_DST: conntrack layer 4 protocol destination
@@ -920,6 +922,10 @@ enum nft_rt_attributes {
  * @NFT_CT_AVGPKT: conntrack average bytes per packet
  * @NFT_CT_ZONE: conntrack zone
  * @NFT_CT_EVENTMASK: ctnetlink events to be generated for this conntrack
+ * @NFT_CT_SRC_IP: conntrack layer 3 protocol source (IPv4 address)
+ * @NFT_CT_DST_IP: conntrack layer 3 protocol destination (IPv4 address)
+ * @NFT_CT_SRC_IP6: conntrack layer 3 protocol source (IPv6 address)
+ * @NFT_CT_DST_IP6: conntrack layer 3 protocol destination (IPv6 address)
  */
 enum nft_ct_keys {
 	NFT_CT_STATE,
@@ -941,7 +947,13 @@ enum nft_ct_keys {
 	NFT_CT_AVGPKT,
 	NFT_CT_ZONE,
 	NFT_CT_EVENTMASK,
+	NFT_CT_SRC_IP,
+	NFT_CT_DST_IP,
+	NFT_CT_SRC_IP6,
+	NFT_CT_DST_IP6,
+	__NFT_CT_MAX
 };
+#define NFT_CT_MAX		(__NFT_CT_MAX - 1)
 
 /**
  * enum nft_ct_attributes - nf_tables ct expression netlink attributes
@@ -1442,6 +1454,8 @@ enum nft_trace_types {
  * @NFTA_NG_MODULUS: maximum counter value (NLA_U32)
  * @NFTA_NG_TYPE: operation type (NLA_U32)
  * @NFTA_NG_OFFSET: offset to be added to the counter (NLA_U32)
+ * @NFTA_NG_SET_NAME: name of the map to lookup (NLA_STRING)
+ * @NFTA_NG_SET_ID: id of the map (NLA_U32)
  */
 enum nft_ng_attributes {
 	NFTA_NG_UNSPEC,
@@ -1449,6 +1463,8 @@ enum nft_ng_attributes {
 	NFTA_NG_MODULUS,
 	NFTA_NG_TYPE,
 	NFTA_NG_OFFSET,
+	NFTA_NG_SET_NAME,
+	NFTA_NG_SET_ID,
 	__NFTA_NG_MAX
 };
 #define NFTA_NG_MAX	(__NFTA_NG_MAX - 1)

@@ -122,12 +122,6 @@ EXPORT_SYMBOL(udp_table);
 long sysctl_udp_mem[3] __read_mostly;
 EXPORT_SYMBOL(sysctl_udp_mem);
 
-int sysctl_udp_rmem_min __read_mostly;
-EXPORT_SYMBOL(sysctl_udp_rmem_min);
-
-int sysctl_udp_wmem_min __read_mostly;
-EXPORT_SYMBOL(sysctl_udp_wmem_min);
-
 atomic_long_t udp_memory_allocated;
 EXPORT_SYMBOL(udp_memory_allocated);
 
@@ -763,7 +757,8 @@ void udp_set_csum(bool nocheck, struct sk_buff *skb,
 }
 EXPORT_SYMBOL(udp_set_csum);
 
-static int udp_send_skb(struct sk_buff *skb, struct flowi4 *fl4)
+static int udp_send_skb(struct sk_buff *skb, struct flowi4 *fl4,
+			struct inet_cork *cork)
 {
 	struct sock *sk = skb->sk;
 	struct inet_sock *inet = inet_sk(sk);
@@ -783,6 +778,24 @@ static int udp_send_skb(struct sk_buff *skb, struct flowi4 *fl4)
 	uh->len = htons(len);
 	uh->check = 0;
 
+	if (cork->gso_size) {
+		const int hlen = skb_network_header_len(skb) +
+				 sizeof(struct udphdr);
+
+		if (hlen + cork->gso_size > cork->fragsize)
+			return -EINVAL;
+		if (skb->len > cork->gso_size * UDP_MAX_SEGMENTS)
+			return -EINVAL;
+		if (sk->sk_no_check_tx)
+			return -EINVAL;
+		if (skb->ip_summed != CHECKSUM_PARTIAL || is_udplite)
+			return -EIO;
+
+		skb_shinfo(skb)->gso_size = cork->gso_size;
+		skb_shinfo(skb)->gso_type = SKB_GSO_UDP_L4;
+		goto csum_partial;
+	}
+
 	if (is_udplite)  				 /*     UDP-Lite      */
 		csum = udplite_csum(skb);
 
@@ -792,6 +805,7 @@ static int udp_send_skb(struct sk_buff *skb, struct flowi4 *fl4)
 		goto send;
 
 	} else if (skb->ip_summed == CHECKSUM_PARTIAL) { /* UDP hardware csum */
+csum_partial:
 
 		udp4_hwcsum(skb, fl4->saddr, fl4->daddr);
 		goto send;
@@ -834,7 +848,7 @@ int udp_push_pending_frames(struct sock *sk)
 	if (!skb)
 		goto out;
 
-	err = udp_send_skb(skb, fl4);
+	err = udp_send_skb(skb, fl4, &inet->cork.base);
 
 out:
 	up->len = 0;
@@ -842,6 +856,43 @@ out:
 	return err;
 }
 EXPORT_SYMBOL(udp_push_pending_frames);
+
+static int __udp_cmsg_send(struct cmsghdr *cmsg, u16 *gso_size)
+{
+	switch (cmsg->cmsg_type) {
+	case UDP_SEGMENT:
+		if (cmsg->cmsg_len != CMSG_LEN(sizeof(__u16)))
+			return -EINVAL;
+		*gso_size = *(__u16 *)CMSG_DATA(cmsg);
+		return 0;
+	default:
+		return -EINVAL;
+	}
+}
+
+int udp_cmsg_send(struct sock *sk, struct msghdr *msg, u16 *gso_size)
+{
+	struct cmsghdr *cmsg;
+	bool need_ip = false;
+	int err;
+
+	for_each_cmsghdr(cmsg, msg) {
+		if (!CMSG_OK(msg, cmsg))
+			return -EINVAL;
+
+		if (cmsg->cmsg_level != SOL_UDP) {
+			need_ip = true;
+			continue;
+		}
+
+		err = __udp_cmsg_send(cmsg, gso_size);
+		if (err)
+			return err;
+	}
+
+	return need_ip;
+}
+EXPORT_SYMBOL_GPL(udp_cmsg_send);
 
 int udp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 {
@@ -928,10 +979,14 @@ int udp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 	ipc.sockc.tsflags = sk->sk_tsflags;
 	ipc.addr = inet->inet_saddr;
 	ipc.oif = sk->sk_bound_dev_if;
+	ipc.gso_size = up->gso_size;
 
 	if (msg->msg_controllen) {
-		err = ip_cmsg_send(sk, msg, &ipc, sk->sk_family == AF_INET6);
-		if (unlikely(err)) {
+		err = udp_cmsg_send(sk, msg, &ipc.gso_size);
+		if (err > 0)
+			err = ip_cmsg_send(sk, msg, &ipc,
+					   sk->sk_family == AF_INET6);
+		if (unlikely(err < 0)) {
 			kfree(ipc.opt);
 			return err;
 		}
@@ -1036,12 +1091,14 @@ back_from_confirm:
 
 	/* Lockless fast path for the non-corking case. */
 	if (!corkreq) {
+		struct inet_cork cork;
+
 		skb = ip_make_skb(sk, fl4, getfrag, msg, ulen,
 				  sizeof(struct udphdr), &ipc, &rt,
-				  msg->msg_flags);
+				  &cork, msg->msg_flags);
 		err = PTR_ERR(skb);
 		if (!IS_ERR_OR_NULL(skb))
-			err = udp_send_skb(skb, fl4);
+			err = udp_send_skb(skb, fl4, &cork);
 		goto out;
 	}
 
@@ -1664,6 +1721,19 @@ csum_copy_err:
 	goto try_again;
 }
 
+int udp_pre_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
+{
+	/* This check is replicated from __ip4_datagram_connect() and
+	 * intended to prevent BPF program called below from accessing bytes
+	 * that are out of the bound specified by user in addr_len.
+	 */
+	if (addr_len < sizeof(struct sockaddr_in))
+		return -EINVAL;
+
+	return BPF_CGROUP_RUN_PROG_INET4_CONNECT_LOCK(sk, uaddr);
+}
+EXPORT_SYMBOL(udp_pre_connect);
+
 int __udp_disconnect(struct sock *sk, int flags)
 {
 	struct inet_sock *inet = inet_sk(sk);
@@ -2024,6 +2094,11 @@ static inline int udp4_csum_init(struct sk_buff *skb, struct udphdr *uh,
 		err = udplite_checksum_init(skb, uh);
 		if (err)
 			return err;
+
+		if (UDP_SKB_CB(skb)->partial_cov) {
+			skb->csum = inet_compute_pseudo(skb, proto);
+			return 0;
+		}
 	}
 
 	/* Note, we are only interested in != 0 or == 0, thus the
@@ -2353,6 +2428,12 @@ int udp_lib_setsockopt(struct sock *sk, int level, int optname,
 		up->no_check6_rx = valbool;
 		break;
 
+	case UDP_SEGMENT:
+		if (val < 0 || val > USHRT_MAX)
+			return -EINVAL;
+		up->gso_size = val;
+		break;
+
 	/*
 	 * 	UDP-Lite's partial checksum coverage (RFC 3828).
 	 */
@@ -2443,6 +2524,10 @@ int udp_lib_getsockopt(struct sock *sk, int level, int optname,
 		val = up->no_check6_rx;
 		break;
 
+	case UDP_SEGMENT:
+		val = up->gso_size;
+		break;
+
 	/* The following two cannot be changed on UDP sockets, the return is
 	 * always 0 (which corresponds to the full checksum coverage of UDP). */
 	case UDPLITE_SEND_CSCOV:
@@ -2501,12 +2586,12 @@ __poll_t udp_poll(struct file *file, struct socket *sock, poll_table *wait)
 	struct sock *sk = sock->sk;
 
 	if (!skb_queue_empty(&udp_sk(sk)->reader_queue))
-		mask |= POLLIN | POLLRDNORM;
+		mask |= EPOLLIN | EPOLLRDNORM;
 
 	/* Check for false positives due to checksum errors */
-	if ((mask & POLLRDNORM) && !(file->f_flags & O_NONBLOCK) &&
+	if ((mask & EPOLLRDNORM) && !(file->f_flags & O_NONBLOCK) &&
 	    !(sk->sk_shutdown & RCV_SHUTDOWN) && first_packet_length(sk) == -1)
-		mask &= ~(POLLIN | POLLRDNORM);
+		mask &= ~(EPOLLIN | EPOLLRDNORM);
 
 	return mask;
 
@@ -2528,35 +2613,36 @@ int udp_abort(struct sock *sk, int err)
 EXPORT_SYMBOL_GPL(udp_abort);
 
 struct proto udp_prot = {
-	.name		   = "UDP",
-	.owner		   = THIS_MODULE,
-	.close		   = udp_lib_close,
-	.connect	   = ip4_datagram_connect,
-	.disconnect	   = udp_disconnect,
-	.ioctl		   = udp_ioctl,
-	.init		   = udp_init_sock,
-	.destroy	   = udp_destroy_sock,
-	.setsockopt	   = udp_setsockopt,
-	.getsockopt	   = udp_getsockopt,
-	.sendmsg	   = udp_sendmsg,
-	.recvmsg	   = udp_recvmsg,
-	.sendpage	   = udp_sendpage,
-	.release_cb	   = ip4_datagram_release_cb,
-	.hash		   = udp_lib_hash,
-	.unhash		   = udp_lib_unhash,
-	.rehash		   = udp_v4_rehash,
-	.get_port	   = udp_v4_get_port,
-	.memory_allocated  = &udp_memory_allocated,
-	.sysctl_mem	   = sysctl_udp_mem,
-	.sysctl_wmem	   = &sysctl_udp_wmem_min,
-	.sysctl_rmem	   = &sysctl_udp_rmem_min,
-	.obj_size	   = sizeof(struct udp_sock),
-	.h.udp_table	   = &udp_table,
+	.name			= "UDP",
+	.owner			= THIS_MODULE,
+	.close			= udp_lib_close,
+	.pre_connect		= udp_pre_connect,
+	.connect		= ip4_datagram_connect,
+	.disconnect		= udp_disconnect,
+	.ioctl			= udp_ioctl,
+	.init			= udp_init_sock,
+	.destroy		= udp_destroy_sock,
+	.setsockopt		= udp_setsockopt,
+	.getsockopt		= udp_getsockopt,
+	.sendmsg		= udp_sendmsg,
+	.recvmsg		= udp_recvmsg,
+	.sendpage		= udp_sendpage,
+	.release_cb		= ip4_datagram_release_cb,
+	.hash			= udp_lib_hash,
+	.unhash			= udp_lib_unhash,
+	.rehash			= udp_v4_rehash,
+	.get_port		= udp_v4_get_port,
+	.memory_allocated	= &udp_memory_allocated,
+	.sysctl_mem		= sysctl_udp_mem,
+	.sysctl_wmem_offset	= offsetof(struct net, ipv4.sysctl_udp_wmem_min),
+	.sysctl_rmem_offset	= offsetof(struct net, ipv4.sysctl_udp_rmem_min),
+	.obj_size		= sizeof(struct udp_sock),
+	.h.udp_table		= &udp_table,
 #ifdef CONFIG_COMPAT
-	.compat_setsockopt = compat_udp_setsockopt,
-	.compat_getsockopt = compat_udp_getsockopt,
+	.compat_setsockopt	= compat_udp_setsockopt,
+	.compat_getsockopt	= compat_udp_getsockopt,
 #endif
-	.diag_destroy	   = udp_abort,
+	.diag_destroy		= udp_abort,
 };
 EXPORT_SYMBOL(udp_prot);
 
@@ -2674,7 +2760,7 @@ int udp_proc_register(struct net *net, struct udp_seq_afinfo *afinfo)
 	afinfo->seq_ops.next		= udp_seq_next;
 	afinfo->seq_ops.stop		= udp_seq_stop;
 
-	p = proc_create_data(afinfo->name, S_IRUGO, net->proc_net,
+	p = proc_create_data(afinfo->name, 0444, net->proc_net,
 			     afinfo->seq_fops, afinfo);
 	if (!p)
 		rc = -ENOMEM;
@@ -2825,6 +2911,26 @@ u32 udp_flow_hashrnd(void)
 }
 EXPORT_SYMBOL(udp_flow_hashrnd);
 
+static void __udp_sysctl_init(struct net *net)
+{
+	net->ipv4.sysctl_udp_rmem_min = SK_MEM_QUANTUM;
+	net->ipv4.sysctl_udp_wmem_min = SK_MEM_QUANTUM;
+
+#ifdef CONFIG_NET_L3_MASTER_DEV
+	net->ipv4.sysctl_udp_l3mdev_accept = 0;
+#endif
+}
+
+static int __net_init udp_sysctl_init(struct net *net)
+{
+	__udp_sysctl_init(net);
+	return 0;
+}
+
+static struct pernet_operations __net_initdata udp_sysctl_ops = {
+	.init	= udp_sysctl_init,
+};
+
 void __init udp_init(void)
 {
 	unsigned long limit;
@@ -2837,8 +2943,7 @@ void __init udp_init(void)
 	sysctl_udp_mem[1] = limit;
 	sysctl_udp_mem[2] = sysctl_udp_mem[0] * 2;
 
-	sysctl_udp_rmem_min = SK_MEM_QUANTUM;
-	sysctl_udp_wmem_min = SK_MEM_QUANTUM;
+	__udp_sysctl_init(&init_net);
 
 	/* 16 spinlocks per cpu */
 	udp_busylocks_log = ilog2(nr_cpu_ids) + 4;
@@ -2848,4 +2953,7 @@ void __init udp_init(void)
 		panic("UDP: failed to alloc udp_busylocks\n");
 	for (i = 0; i < (1U << udp_busylocks_log); i++)
 		spin_lock_init(udp_busylocks + i);
+
+	if (register_pernet_subsys(&udp_sysctl_ops))
+		panic("UDP: failed to init sysctl parameters.\n");
 }

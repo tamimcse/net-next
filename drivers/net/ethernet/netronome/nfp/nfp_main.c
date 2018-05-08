@@ -486,6 +486,10 @@ static int nfp_pci_probe(struct pci_dev *pdev,
 		goto err_disable_msix;
 	}
 
+	err = nfp_resource_table_init(pf->cpp);
+	if (err)
+		goto err_cpp_free;
+
 	pf->hwinfo = nfp_hwinfo_read(pf->cpp);
 
 	dev_info(&pdev->dev, "Assembly: %s%s%s-%s CPLD: %s\n",
@@ -548,6 +552,7 @@ err_fw_unload:
 	vfree(pf->dumpspec);
 err_hwinfo_free:
 	kfree(pf->hwinfo);
+err_cpp_free:
 	nfp_cpp_free(pf->cpp);
 err_disable_msix:
 	destroy_workqueue(pf->wq);
@@ -645,7 +650,9 @@ MODULE_FIRMWARE("netronome/nic_AMDA0097-0001_4x10_1x40.nffw");
 MODULE_FIRMWARE("netronome/nic_AMDA0097-0001_8x10.nffw");
 MODULE_FIRMWARE("netronome/nic_AMDA0099-0001_2x10.nffw");
 MODULE_FIRMWARE("netronome/nic_AMDA0099-0001_2x25.nffw");
+MODULE_FIRMWARE("netronome/nic_AMDA0099-0001_1x10_1x25.nffw");
 
 MODULE_AUTHOR("Netronome Systems <oss-drivers@netronome.com>");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("The Netronome Flow Processor (NFP) driver.");
+MODULE_VERSION(UTS_RELEASE);

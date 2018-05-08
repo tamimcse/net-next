@@ -1027,7 +1027,7 @@ bool dev_valid_name(const char *name)
 {
 	if (*name == '\0')
 		return false;
-	if (strlen(name) >= IFNAMSIZ)
+	if (strnlen(name, IFNAMSIZ) == IFNAMSIZ)
 		return false;
 	if (!strcmp(name, ".") || !strcmp(name, ".."))
 		return false;
@@ -1285,6 +1285,7 @@ int dev_set_alias(struct net_device *dev, const char *alias, size_t len)
 
 	return len;
 }
+EXPORT_SYMBOL(dev_set_alias);
 
 /**
  *	dev_get_alias - get ifalias of a device
@@ -1571,6 +1572,27 @@ static void dev_disable_gro_hw(struct net_device *dev)
 		netdev_WARN(dev, "failed to disable GRO_HW!\n");
 }
 
+const char *netdev_cmd_to_name(enum netdev_cmd cmd)
+{
+#define N(val) 						\
+	case NETDEV_##val:				\
+		return "NETDEV_" __stringify(val);
+	switch (cmd) {
+	N(UP) N(DOWN) N(REBOOT) N(CHANGE) N(REGISTER) N(UNREGISTER)
+	N(CHANGEMTU) N(CHANGEADDR) N(GOING_DOWN) N(CHANGENAME) N(FEAT_CHANGE)
+	N(BONDING_FAILOVER) N(PRE_UP) N(PRE_TYPE_CHANGE) N(POST_TYPE_CHANGE)
+	N(POST_INIT) N(RELEASE) N(NOTIFY_PEERS) N(JOIN) N(CHANGEUPPER)
+	N(RESEND_IGMP) N(PRECHANGEMTU) N(CHANGEINFODATA) N(BONDING_INFO)
+	N(PRECHANGEUPPER) N(CHANGELOWERSTATE) N(UDP_TUNNEL_PUSH_INFO)
+	N(UDP_TUNNEL_DROP_INFO) N(CHANGE_TX_QUEUE_LEN)
+	N(CVLAN_FILTER_PUSH_INFO) N(CVLAN_FILTER_DROP_INFO)
+	N(SVLAN_FILTER_PUSH_INFO) N(SVLAN_FILTER_DROP_INFO)
+	}
+#undef N
+	return "UNKNOWN_NETDEV_EVENT";
+}
+EXPORT_SYMBOL_GPL(netdev_cmd_to_name);
+
 static int call_netdevice_notifier(struct notifier_block *nb, unsigned long val,
 				   struct net_device *dev)
 {
@@ -1604,6 +1626,8 @@ int register_netdevice_notifier(struct notifier_block *nb)
 	struct net *net;
 	int err;
 
+	/* Close race with setup_net() and cleanup_net() */
+	down_write(&pernet_ops_rwsem);
 	rtnl_lock();
 	err = raw_notifier_chain_register(&netdev_chain, nb);
 	if (err)
@@ -1626,6 +1650,7 @@ int register_netdevice_notifier(struct notifier_block *nb)
 
 unlock:
 	rtnl_unlock();
+	up_write(&pernet_ops_rwsem);
 	return err;
 
 rollback:
@@ -1670,6 +1695,8 @@ int unregister_netdevice_notifier(struct notifier_block *nb)
 	struct net *net;
 	int err;
 
+	/* Close race with setup_net() and cleanup_net() */
+	down_write(&pernet_ops_rwsem);
 	rtnl_lock();
 	err = raw_notifier_chain_unregister(&netdev_chain, nb);
 	if (err)
@@ -1687,6 +1714,7 @@ int unregister_netdevice_notifier(struct notifier_block *nb)
 	}
 unlock:
 	rtnl_unlock();
+	up_write(&pernet_ops_rwsem);
 	return err;
 }
 EXPORT_SYMBOL(unregister_netdevice_notifier);
@@ -2378,11 +2406,14 @@ EXPORT_SYMBOL(netdev_set_num_tc);
 
 /*
  * Routine to help set real_num_tx_queues. To avoid skbs mapped to queues
- * greater then real_num_tx_queues stale skbs on the qdisc must be flushed.
+ * greater than real_num_tx_queues stale skbs on the qdisc must be flushed.
  */
 int netif_set_real_num_tx_queues(struct net_device *dev, unsigned int txq)
 {
+	bool disabling;
 	int rc;
+
+	disabling = txq < dev->real_num_tx_queues;
 
 	if (txq < 1 || txq > dev->num_tx_queues)
 		return -EINVAL;
@@ -2399,15 +2430,19 @@ int netif_set_real_num_tx_queues(struct net_device *dev, unsigned int txq)
 		if (dev->num_tc)
 			netif_setup_tc(dev, txq);
 
-		if (txq < dev->real_num_tx_queues) {
+		dev->real_num_tx_queues = txq;
+
+		if (disabling) {
+			synchronize_net();
 			qdisc_reset_all_tx_gt(dev, txq);
 #ifdef CONFIG_XPS
 			netif_reset_xps_queues_gt(dev, txq);
 #endif
 		}
+	} else {
+		dev->real_num_tx_queues = txq;
 	}
 
-	dev->real_num_tx_queues = txq;
 	return 0;
 }
 EXPORT_SYMBOL(netif_set_real_num_tx_queues);
@@ -2580,17 +2615,16 @@ EXPORT_SYMBOL(netif_device_attach);
  * Returns a Tx hash based on the given packet descriptor a Tx queues' number
  * to be used as a distribution range.
  */
-u16 __skb_tx_hash(const struct net_device *dev, struct sk_buff *skb,
-		  unsigned int num_tx_queues)
+static u16 skb_tx_hash(const struct net_device *dev, struct sk_buff *skb)
 {
 	u32 hash;
 	u16 qoffset = 0;
-	u16 qcount = num_tx_queues;
+	u16 qcount = dev->real_num_tx_queues;
 
 	if (skb_rx_queue_recorded(skb)) {
 		hash = skb_get_rx_queue(skb);
-		while (unlikely(hash >= num_tx_queues))
-			hash -= num_tx_queues;
+		while (unlikely(hash >= qcount))
+			hash -= qcount;
 		return hash;
 	}
 
@@ -2603,7 +2637,6 @@ u16 __skb_tx_hash(const struct net_device *dev, struct sk_buff *skb,
 
 	return (u16) reciprocal_scale(skb_get_hash(skb), qcount) + qoffset;
 }
-EXPORT_SYMBOL(__skb_tx_hash);
 
 static void skb_warn_bad_offload(const struct sk_buff *skb)
 {
@@ -2728,7 +2761,7 @@ __be16 skb_network_protocol(struct sk_buff *skb, int *depth)
 		if (unlikely(!pskb_may_pull(skb, sizeof(struct ethhdr))))
 			return 0;
 
-		eth = (struct ethhdr *)skb_mac_header(skb);
+		eth = (struct ethhdr *)skb->data;
 		type = eth->h_proto;
 	}
 
@@ -2935,7 +2968,7 @@ netdev_features_t passthru_features_check(struct sk_buff *skb,
 }
 EXPORT_SYMBOL(passthru_features_check);
 
-static netdev_features_t dflt_features_check(const struct sk_buff *skb,
+static netdev_features_t dflt_features_check(struct sk_buff *skb,
 					     struct net_device *dev,
 					     netdev_features_t features)
 {
@@ -3076,6 +3109,10 @@ static struct sk_buff *validate_xmit_skb(struct sk_buff *skb, struct net_device 
 
 	features = netif_skb_features(skb);
 	skb = validate_xmit_vlan(skb, features);
+	if (unlikely(!skb))
+		goto out_null;
+
+	skb = sk_validate_xmit_skb(skb, dev);
 	if (unlikely(!skb))
 		goto out_null;
 
@@ -3271,15 +3308,23 @@ static inline int __dev_xmit_skb(struct sk_buff *skb, struct Qdisc *q,
 #if IS_ENABLED(CONFIG_CGROUP_NET_PRIO)
 static void skb_update_prio(struct sk_buff *skb)
 {
-	struct netprio_map *map = rcu_dereference_bh(skb->dev->priomap);
+	const struct netprio_map *map;
+	const struct sock *sk;
+	unsigned int prioidx;
 
-	if (!skb->priority && skb->sk && map) {
-		unsigned int prioidx =
-			sock_cgroup_prioidx(&skb->sk->sk_cgrp_data);
+	if (skb->priority)
+		return;
+	map = rcu_dereference_bh(skb->dev->priomap);
+	if (!map)
+		return;
+	sk = skb_to_full_sk(skb);
+	if (!sk)
+		return;
 
-		if (prioidx < map->priomap_len)
-			skb->priority = map->priomap[prioidx];
-	}
+	prioidx = sock_cgroup_prioidx(&sk->sk_cgrp_data);
+
+	if (prioidx < map->priomap_len)
+		skb->priority = map->priomap[prioidx];
 }
 #else
 #define skb_update_prio(skb)
@@ -3954,9 +3999,9 @@ static u32 netif_receive_generic_xdp(struct sk_buff *skb,
 				     struct bpf_prog *xdp_prog)
 {
 	struct netdev_rx_queue *rxqueue;
+	void *orig_data, *orig_data_end;
 	u32 metalen, act = XDP_DROP;
 	struct xdp_buff xdp;
-	void *orig_data;
 	int hlen, off;
 	u32 mac_len;
 
@@ -3995,6 +4040,7 @@ static u32 netif_receive_generic_xdp(struct sk_buff *skb,
 	xdp.data_meta = xdp.data;
 	xdp.data_end = xdp.data + hlen;
 	xdp.data_hard_start = skb->data - skb_headroom(skb);
+	orig_data_end = xdp.data_end;
 	orig_data = xdp.data;
 
 	rxqueue = netif_get_rxqueue(skb);
@@ -4008,6 +4054,15 @@ static u32 netif_receive_generic_xdp(struct sk_buff *skb,
 	else if (off < 0)
 		__skb_push(skb, -off);
 	skb->mac_header += off;
+
+	/* check if bpf_xdp_adjust_tail was used. it can only "shrink"
+	 * pckt.
+	 */
+	off = orig_data_end - xdp.data_end;
+	if (off != 0) {
+		skb_set_tail_pointer(skb, xdp.data_end - xdp.data);
+		skb->len -= off;
+	}
 
 	switch (act) {
 	case XDP_REDIRECT:
@@ -4343,6 +4398,9 @@ int netdev_rx_handler_register(struct net_device *dev,
 {
 	if (netdev_is_rx_handler_busy(dev))
 		return -EBUSY;
+
+	if (dev->priv_flags & IFF_NO_RX_HANDLER)
+		return -EINVAL;
 
 	/* Note: rx_handler_data must be set before rx_handler */
 	rcu_assign_pointer(dev->rx_handler_data, rx_handler_data);
@@ -6389,6 +6447,7 @@ static int __netdev_upper_dev_link(struct net_device *dev,
 		.linking = true,
 		.upper_info = upper_info,
 	};
+	struct net_device *master_dev;
 	int ret = 0;
 
 	ASSERT_RTNL();
@@ -6400,11 +6459,14 @@ static int __netdev_upper_dev_link(struct net_device *dev,
 	if (netdev_has_upper_dev(upper_dev, dev))
 		return -EBUSY;
 
-	if (netdev_has_upper_dev(dev, upper_dev))
-		return -EEXIST;
-
-	if (master && netdev_master_upper_dev_get(dev))
-		return -EBUSY;
+	if (!master) {
+		if (netdev_has_upper_dev(dev, upper_dev))
+			return -EEXIST;
+	} else {
+		master_dev = netdev_master_upper_dev_get(dev);
+		if (master_dev)
+			return master_dev == upper_dev ? -EEXIST : -EBUSY;
+	}
 
 	ret = call_netdevice_notifiers_info(NETDEV_PRECHANGEUPPER,
 					    &changeupper_info.info);
@@ -7535,6 +7597,19 @@ static netdev_features_t netdev_fix_features(struct net_device *dev,
 		}
 	}
 
+	/* LRO/HW-GRO features cannot be combined with RX-FCS */
+	if (features & NETIF_F_RXFCS) {
+		if (features & NETIF_F_LRO) {
+			netdev_dbg(dev, "Dropping LRO feature since RX-FCS is requested.\n");
+			features &= ~NETIF_F_LRO;
+		}
+
+		if (features & NETIF_F_GRO_HW) {
+			netdev_dbg(dev, "Dropping HW-GRO feature since RX-FCS is requested.\n");
+			features &= ~NETIF_F_GRO_HW;
+		}
+	}
+
 	return features;
 }
 
@@ -7603,6 +7678,24 @@ sync_lower:
 				udp_tunnel_get_rx_info(dev);
 			} else {
 				udp_tunnel_drop_rx_info(dev);
+			}
+		}
+
+		if (diff & NETIF_F_HW_VLAN_CTAG_FILTER) {
+			if (features & NETIF_F_HW_VLAN_CTAG_FILTER) {
+				dev->features = features;
+				err |= vlan_get_rx_ctag_filter_info(dev);
+			} else {
+				vlan_drop_rx_ctag_filter_info(dev);
+			}
+		}
+
+		if (diff & NETIF_F_HW_VLAN_STAG_FILTER) {
+			if (features & NETIF_F_HW_VLAN_STAG_FILTER) {
+				dev->features = features;
+				err |= vlan_get_rx_stag_filter_info(dev);
+			} else {
+				vlan_drop_rx_stag_filter_info(dev);
 			}
 		}
 
@@ -7790,6 +7883,8 @@ int register_netdevice(struct net_device *dev)
 	int ret;
 	struct net *net = dev_net(dev);
 
+	BUILD_BUG_ON(sizeof(netdev_features_t) * BITS_PER_BYTE <
+		     NETDEV_FEATURE_COUNT);
 	BUG_ON(dev_boot_phase);
 	ASSERT_RTNL();
 
@@ -7991,7 +8086,8 @@ int register_netdev(struct net_device *dev)
 {
 	int err;
 
-	rtnl_lock();
+	if (rtnl_lock_killable())
+		return -EINTR;
 	err = register_netdevice(dev);
 	rtnl_unlock();
 	return err;
@@ -8041,7 +8137,6 @@ static void netdev_wait_allrefs(struct net_device *dev)
 			rcu_barrier();
 			rtnl_lock();
 
-			call_netdevice_notifiers(NETDEV_UNREGISTER_FINAL, dev);
 			if (test_bit(__LINK_STATE_LINKWATCH_PENDING,
 				     &dev->state)) {
 				/* We must not have linkwatch events
@@ -8113,10 +8208,6 @@ void netdev_run_todo(void)
 			= list_first_entry(&list, struct net_device, todo_list);
 		list_del(&dev->todo_list);
 
-		rtnl_lock();
-		call_netdevice_notifiers(NETDEV_UNREGISTER_FINAL, dev);
-		__rtnl_unlock();
-
 		if (unlikely(dev->reg_state != NETREG_UNREGISTERING)) {
 			pr_err("network todo '%s' but state %d\n",
 			       dev->name, dev->reg_state);
@@ -8134,8 +8225,9 @@ void netdev_run_todo(void)
 		BUG_ON(!list_empty(&dev->ptype_specific));
 		WARN_ON(rcu_access_pointer(dev->ip_ptr));
 		WARN_ON(rcu_access_pointer(dev->ip6_ptr));
+#if IS_ENABLED(CONFIG_DECNET)
 		WARN_ON(dev->dn_ptr);
-
+#endif
 		if (dev->priv_destructor)
 			dev->priv_destructor(dev);
 		if (dev->needs_free_netdev)
@@ -8557,7 +8649,6 @@ int dev_change_net_namespace(struct net_device *dev, struct net *net, const char
 	 */
 	call_netdevice_notifiers(NETDEV_UNREGISTER, dev);
 	rcu_barrier();
-	call_netdevice_notifiers(NETDEV_UNREGISTER_FINAL, dev);
 
 	new_nsid = peernet2id_alloc(dev_net(dev), net);
 	/* If there is an ifindex conflict assign a new one */

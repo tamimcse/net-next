@@ -216,10 +216,9 @@ static unsigned long *alloc_thread_stack_node(struct task_struct *tsk, int node)
 		if (!s)
 			continue;
 
-#ifdef CONFIG_DEBUG_KMEMLEAK
 		/* Clear stale pointers from reused stack. */
 		memset(s->addr, 0, THREAD_SIZE);
-#endif
+
 		tsk->stack_vm_area = s;
 		return s->addr;
 	}
@@ -592,9 +591,11 @@ static void check_mm(struct mm_struct *mm)
  * is dropped: either by a lazy thread or by
  * mmput. Free the page directory and the mm.
  */
-static void __mmdrop(struct mm_struct *mm)
+void __mmdrop(struct mm_struct *mm)
 {
 	BUG_ON(mm == &init_mm);
+	WARN_ON_ONCE(mm == current->mm);
+	WARN_ON_ONCE(mm == current->active_mm);
 	mm_free_pgd(mm);
 	destroy_context(mm);
 	hmm_mm_destroy(mm);
@@ -603,13 +604,7 @@ static void __mmdrop(struct mm_struct *mm)
 	put_user_ns(mm->user_ns);
 	free_mm(mm);
 }
-
-void mmdrop(struct mm_struct *mm)
-{
-	if (unlikely(atomic_dec_and_test(&mm->mm_count)))
-		__mmdrop(mm);
-}
-EXPORT_SYMBOL_GPL(mmdrop);
+EXPORT_SYMBOL_GPL(__mmdrop);
 
 static void mmdrop_async_fn(struct work_struct *work)
 {
@@ -1204,8 +1199,8 @@ void mm_release(struct task_struct *tsk, struct mm_struct *mm)
 			 * not set up a proper pointer then tough luck.
 			 */
 			put_user(0, tsk->clear_child_tid);
-			sys_futex(tsk->clear_child_tid, FUTEX_WAKE,
-					1, NULL, NULL, 0);
+			do_futex(tsk->clear_child_tid, FUTEX_WAKE,
+					1, NULL, NULL, 0, 0);
 		}
 		tsk->clear_child_tid = NULL;
 	}
@@ -1587,6 +1582,10 @@ static __latent_entropy struct task_struct *copy_process(
 	int retval;
 	struct task_struct *p;
 
+	/*
+	 * Don't allow sharing the root directory with processes in a different
+	 * namespace
+	 */
 	if ((clone_flags & (CLONE_NEWNS|CLONE_FS)) == (CLONE_NEWNS|CLONE_FS))
 		return ERR_PTR(-EINVAL);
 
@@ -2062,6 +2061,8 @@ long _do_fork(unsigned long clone_flags,
 	      int __user *child_tidptr,
 	      unsigned long tls)
 {
+	struct completion vfork;
+	struct pid *pid;
 	struct task_struct *p;
 	int trace = 0;
 	long nr;
@@ -2087,43 +2088,40 @@ long _do_fork(unsigned long clone_flags,
 	p = copy_process(clone_flags, stack_start, stack_size,
 			 child_tidptr, NULL, trace, tls, NUMA_NO_NODE);
 	add_latent_entropy();
+
+	if (IS_ERR(p))
+		return PTR_ERR(p);
+
 	/*
 	 * Do this prior waking up the new thread - the thread pointer
 	 * might get invalid after that point, if the thread exits quickly.
 	 */
-	if (!IS_ERR(p)) {
-		struct completion vfork;
-		struct pid *pid;
+	trace_sched_process_fork(current, p);
 
-		trace_sched_process_fork(current, p);
+	pid = get_task_pid(p, PIDTYPE_PID);
+	nr = pid_vnr(pid);
 
-		pid = get_task_pid(p, PIDTYPE_PID);
-		nr = pid_vnr(pid);
+	if (clone_flags & CLONE_PARENT_SETTID)
+		put_user(nr, parent_tidptr);
 
-		if (clone_flags & CLONE_PARENT_SETTID)
-			put_user(nr, parent_tidptr);
-
-		if (clone_flags & CLONE_VFORK) {
-			p->vfork_done = &vfork;
-			init_completion(&vfork);
-			get_task_struct(p);
-		}
-
-		wake_up_new_task(p);
-
-		/* forking complete and child started to run, tell ptracer */
-		if (unlikely(trace))
-			ptrace_event_pid(trace, pid);
-
-		if (clone_flags & CLONE_VFORK) {
-			if (!wait_for_vfork_done(p, &vfork))
-				ptrace_event_pid(PTRACE_EVENT_VFORK_DONE, pid);
-		}
-
-		put_pid(pid);
-	} else {
-		nr = PTR_ERR(p);
+	if (clone_flags & CLONE_VFORK) {
+		p->vfork_done = &vfork;
+		init_completion(&vfork);
+		get_task_struct(p);
 	}
+
+	wake_up_new_task(p);
+
+	/* forking complete and child started to run, tell ptracer */
+	if (unlikely(trace))
+		ptrace_event_pid(trace, pid);
+
+	if (clone_flags & CLONE_VFORK) {
+		if (!wait_for_vfork_done(p, &vfork))
+			ptrace_event_pid(PTRACE_EVENT_VFORK_DONE, pid);
+	}
+
+	put_pid(pid);
 	return nr;
 }
 
@@ -2357,7 +2355,7 @@ static int unshare_fd(unsigned long unshare_flags, struct files_struct **new_fdp
  * constructed. Here we are modifying the current, active,
  * task_struct.
  */
-SYSCALL_DEFINE1(unshare, unsigned long, unshare_flags)
+int ksys_unshare(unsigned long unshare_flags)
 {
 	struct fs_struct *fs, *new_fs = NULL;
 	struct files_struct *fd, *new_fd = NULL;
@@ -2471,6 +2469,11 @@ bad_unshare_cleanup_fs:
 
 bad_unshare_out:
 	return err;
+}
+
+SYSCALL_DEFINE1(unshare, unsigned long, unshare_flags)
+{
+	return ksys_unshare(unshare_flags);
 }
 
 /*

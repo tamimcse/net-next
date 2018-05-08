@@ -18,11 +18,13 @@
 
 #include "smc_ib.h"
 
-#define SMCPROTO_SMC		0	/* SMC protocol */
+#define SMCPROTO_SMC		0	/* SMC protocol, IPv4 */
+#define SMCPROTO_SMC6		1	/* SMC protocol, IPv6 */
 
 #define SMC_MAX_PORTS		2	/* Max # of ports */
 
 extern struct proto smc_proto;
+extern struct proto smc_proto6;
 
 #ifdef ATOMIC64_INIT
 #define KERNEL_HAS_ATOMIC64
@@ -162,6 +164,9 @@ struct smc_connection {
 	atomic_t		bytes_to_rcv;	/* arrived data,
 						 * not yet received
 						 */
+	atomic_t		splice_pending;	/* number of spliced bytes
+						 * pending processing
+						 */
 #ifndef KERNEL_HAS_ATOMIC64
 	spinlock_t		acurs_lock;	/* protect cursors */
 #endif
@@ -172,13 +177,16 @@ struct smc_sock {				/* smc sock container */
 	struct sock		sk;
 	struct socket		*clcsock;	/* internal tcp socket */
 	struct smc_connection	conn;		/* smc connection */
-	struct sockaddr		*addr;		/* inet connect address */
 	struct smc_sock		*listen_smc;	/* listen parent */
 	struct work_struct	tcp_listen_work;/* handle tcp socket accepts */
 	struct work_struct	smc_listen_work;/* prepare new accept socket */
 	struct list_head	accept_q;	/* sockets to be accepted */
 	spinlock_t		accept_q_lock;	/* protects accept_q */
 	bool			use_fallback;	/* fallback to tcp */
+	int			sockopt_defer_accept;
+						/* sockopt TCP_DEFER_ACCEPT
+						 * value
+						 */
 	u8			wait_close_tx_prepared : 1;
 						/* shutdown wr or close
 						 * started, waiting for unsent
@@ -263,10 +271,8 @@ static inline bool using_ipsec(struct smc_sock *smc)
 
 struct smc_clc_msg_local;
 
-int smc_netinfo_by_tcpsk(struct socket *clcsock, __be32 *subnet,
-			 u8 *prefix_len);
 void smc_conn_free(struct smc_connection *conn);
-int smc_conn_create(struct smc_sock *smc, __be32 peer_in_addr,
+int smc_conn_create(struct smc_sock *smc,
 		    struct smc_ib_device *smcibdev, u8 ibport,
 		    struct smc_clc_msg_local *lcl, int srv_first_contact);
 struct sock *smc_accept_dequeue(struct sock *parent, struct socket *new_sock);

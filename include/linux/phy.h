@@ -924,6 +924,7 @@ void phy_device_remove(struct phy_device *phydev);
 int phy_init_hw(struct phy_device *phydev);
 int phy_suspend(struct phy_device *phydev);
 int phy_resume(struct phy_device *phydev);
+int __phy_resume(struct phy_device *phydev);
 int phy_loopback(struct phy_device *phydev, bool enable);
 struct phy_device *phy_attach(struct net_device *dev, const char *bus_id,
 			      phy_interface_t interface);
@@ -983,6 +984,10 @@ static inline int genphy_no_soft_reset(struct phy_device *phydev)
 {
 	return 0;
 }
+int genphy_read_mmd_unsupported(struct phy_device *phdev, int devad,
+				u16 regnum);
+int genphy_write_mmd_unsupported(struct phy_device *phdev, int devnum,
+				 u16 regnum, u16 val);
 
 /* Clause 45 PHY */
 int genphy_c45_restart_aneg(struct phy_device *phydev);
@@ -993,6 +998,14 @@ int genphy_c45_read_pma(struct phy_device *phydev);
 int genphy_c45_pma_setup_forced(struct phy_device *phydev);
 int genphy_c45_an_disable_aneg(struct phy_device *phydev);
 int genphy_c45_read_mdix(struct phy_device *phydev);
+
+/* The gen10g_* functions are the old Clause 45 stub */
+int gen10g_config_aneg(struct phy_device *phydev);
+int gen10g_read_status(struct phy_device *phydev);
+int gen10g_no_soft_reset(struct phy_device *phydev);
+int gen10g_config_init(struct phy_device *phydev);
+int gen10g_suspend(struct phy_device *phydev);
+int gen10g_resume(struct phy_device *phydev);
 
 static inline int phy_read_status(struct phy_device *phydev)
 {
@@ -1011,7 +1024,6 @@ int phy_driver_register(struct phy_driver *new_driver, struct module *owner);
 int phy_drivers_register(struct phy_driver *new_driver, int n,
 			 struct module *owner);
 void phy_state_machine(struct work_struct *work);
-void phy_change(struct phy_device *phydev);
 void phy_change_work(struct work_struct *work);
 void phy_mac_interrupt(struct phy_device *phydev);
 void phy_start_machine(struct phy_device *phydev);
@@ -1055,6 +1067,52 @@ int phy_ethtool_nway_reset(struct net_device *ndev);
 int __init mdio_bus_init(void);
 void mdio_bus_exit(void);
 #endif
+
+/* Inline function for use within net/core/ethtool.c (built-in) */
+static inline int phy_ethtool_get_strings(struct phy_device *phydev, u8 *data)
+{
+	if (!phydev->drv)
+		return -EIO;
+
+	mutex_lock(&phydev->lock);
+	phydev->drv->get_strings(phydev, data);
+	mutex_unlock(&phydev->lock);
+
+	return 0;
+}
+
+static inline int phy_ethtool_get_sset_count(struct phy_device *phydev)
+{
+	int ret;
+
+	if (!phydev->drv)
+		return -EIO;
+
+	if (phydev->drv->get_sset_count &&
+	    phydev->drv->get_strings &&
+	    phydev->drv->get_stats) {
+		mutex_lock(&phydev->lock);
+		ret = phydev->drv->get_sset_count(phydev);
+		mutex_unlock(&phydev->lock);
+
+		return ret;
+	}
+
+	return -EOPNOTSUPP;
+}
+
+static inline int phy_ethtool_get_stats(struct phy_device *phydev,
+					struct ethtool_stats *stats, u64 *data)
+{
+	if (!phydev->drv)
+		return -EIO;
+
+	mutex_lock(&phydev->lock);
+	phydev->drv->get_stats(phydev, stats, data);
+	mutex_unlock(&phydev->lock);
+
+	return 0;
+}
 
 extern struct bus_type mdio_bus_type;
 

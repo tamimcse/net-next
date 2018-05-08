@@ -186,6 +186,7 @@ unsigned int nf_conntrack_htable_size __read_mostly;
 EXPORT_SYMBOL_GPL(nf_conntrack_htable_size);
 
 unsigned int nf_conntrack_max __read_mostly;
+EXPORT_SYMBOL_GPL(nf_conntrack_max);
 seqcount_t nf_conntrack_generation __read_mostly;
 static unsigned int nf_conntrack_hash_rnd __read_mostly;
 
@@ -1763,14 +1764,14 @@ nf_ct_iterate_destroy(int (*iter)(struct nf_conn *i, void *data), void *data)
 {
 	struct net *net;
 
-	rtnl_lock();
+	down_read(&net_rwsem);
 	for_each_net(net) {
 		if (atomic_read(&net->ct.count) == 0)
 			continue;
 		__nf_ct_unconfirmed_destroy(net);
 		nf_queue_nf_hook_drop(net);
 	}
-	rtnl_unlock();
+	up_read(&net_rwsem);
 
 	/* Need to wait for netns cleanup worker to finish, if its
 	 * running -- it might have deleted a net namespace from

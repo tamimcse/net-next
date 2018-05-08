@@ -8,5 +8,11 @@ fixdep
 test_align
 test_dev_cgroup
 test_progs
+test_tcpbpf_user
 test_verifier_log
 feature
+test_libbpf_open
+test_sock
+test_sock_addr
+urandom_read
+test_btf

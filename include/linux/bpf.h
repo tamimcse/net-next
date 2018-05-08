@@ -21,6 +21,9 @@ struct bpf_verifier_env;
 struct perf_event;
 struct bpf_prog;
 struct bpf_map;
+struct sock;
+struct seq_file;
+struct btf;
 
 /* map is generic key/value storage optionally accesible by eBPF programs */
 struct bpf_map_ops {
@@ -30,6 +33,7 @@ struct bpf_map_ops {
 	void (*map_release)(struct bpf_map *map, struct file *map_file);
 	void (*map_free)(struct bpf_map *map);
 	int (*map_get_next_key)(struct bpf_map *map, void *key, void *next_key);
+	void (*map_release_uref)(struct bpf_map *map);
 
 	/* funcs callable from userspace and from eBPF programs */
 	void *(*map_lookup_elem)(struct bpf_map *map, void *key);
@@ -42,10 +46,14 @@ struct bpf_map_ops {
 	void (*map_fd_put_ptr)(void *ptr);
 	u32 (*map_gen_lookup)(struct bpf_map *map, struct bpf_insn *insn_buf);
 	u32 (*map_fd_sys_lookup_elem)(void *ptr);
+	void (*map_seq_show_elem)(struct bpf_map *map, void *key,
+				  struct seq_file *m);
+	int (*map_check_btf)(const struct bpf_map *map, const struct btf *btf,
+			     u32 key_type_id, u32 value_type_id);
 };
 
 struct bpf_map {
-	/* 1st cacheline with read-mostly members of which some
+	/* The first two cachelines with read-mostly members of which some
 	 * are also accessed in fast-path (e.g. ops, max_entries).
 	 */
 	const struct bpf_map_ops *ops ____cacheline_aligned;
@@ -61,10 +69,13 @@ struct bpf_map {
 	u32 pages;
 	u32 id;
 	int numa_node;
+	u32 btf_key_id;
+	u32 btf_value_id;
+	struct btf *btf;
 	bool unpriv_array;
-	/* 7 bytes hole */
+	/* 55 bytes hole */
 
-	/* 2nd cacheline with misc members to avoid false sharing
+	/* The 3rd and 4th cacheline with misc members to avoid false sharing
 	 * particularly with refcounting.
 	 */
 	struct user_struct *user ____cacheline_aligned;
@@ -97,6 +108,11 @@ struct bpf_offloaded_map {
 static inline struct bpf_offloaded_map *map_to_offmap(struct bpf_map *map)
 {
 	return container_of(map, struct bpf_offloaded_map, map);
+}
+
+static inline bool bpf_map_support_seq_show(const struct bpf_map *map)
+{
+	return map->ops->map_seq_show_elem && map->ops->map_check_btf;
 }
 
 extern const struct bpf_map_ops bpf_map_offload_ops;
@@ -207,12 +223,15 @@ struct bpf_prog_ops {
 
 struct bpf_verifier_ops {
 	/* return eBPF function prototype for verification */
-	const struct bpf_func_proto *(*get_func_proto)(enum bpf_func_id func_id);
+	const struct bpf_func_proto *
+	(*get_func_proto)(enum bpf_func_id func_id,
+			  const struct bpf_prog *prog);
 
 	/* return true if 'size' wide access at offset 'off' within bpf_context
 	 * with 'type' (read or write) is allowed
 	 */
 	bool (*is_valid_access)(int off, int size, enum bpf_access_type type,
+				const struct bpf_prog *prog,
 				struct bpf_insn_access_aux *info);
 	int (*gen_prologue)(struct bpf_insn *insn, bool direct_write,
 			    const struct bpf_prog *prog);
@@ -335,8 +354,8 @@ int bpf_prog_array_copy_to_user(struct bpf_prog_array __rcu *progs,
 void bpf_prog_array_delete_safe(struct bpf_prog_array __rcu *progs,
 				struct bpf_prog *old_prog);
 int bpf_prog_array_copy_info(struct bpf_prog_array __rcu *array,
-			     __u32 __user *prog_ids, u32 request_cnt,
-			     __u32 __user *prog_cnt);
+			     u32 *prog_ids, u32 request_cnt,
+			     u32 *prog_cnt);
 int bpf_prog_array_copy(struct bpf_prog_array __rcu *old_array,
 			struct bpf_prog *exclude_prog,
 			struct bpf_prog *include_prog,
@@ -347,6 +366,7 @@ int bpf_prog_array_copy(struct bpf_prog_array __rcu *old_array,
 		struct bpf_prog **_prog, *__prog;	\
 		struct bpf_prog_array *_array;		\
 		u32 _ret = 1;				\
+		preempt_disable();			\
 		rcu_read_lock();			\
 		_array = rcu_dereference(array);	\
 		if (unlikely(check_non_null && !_array))\
@@ -358,6 +378,7 @@ int bpf_prog_array_copy(struct bpf_prog_array __rcu *old_array,
 		}					\
 _out:							\
 		rcu_read_unlock();			\
+		preempt_enable_no_resched();		\
 		_ret;					\
 	 })
 
@@ -430,7 +451,6 @@ int bpf_stackmap_copy(struct bpf_map *map, void *key, void *value);
 int bpf_fd_array_map_update_elem(struct bpf_map *map, struct file *map_file,
 				 void *key, void *value, u64 map_flags);
 int bpf_fd_array_map_lookup_elem(struct bpf_map *map, void *key, u32 *value);
-void bpf_fd_array_map_clear(struct bpf_map *map);
 int bpf_fd_htab_map_update_elem(struct bpf_map *map, struct file *map_file,
 				void *key, void *value, u64 map_flags);
 int bpf_fd_htab_map_lookup_elem(struct bpf_map *map, void *key, u32 *value);

@@ -64,8 +64,7 @@ static int set_tcb_field(struct adapter *adap, struct filter_entry *f,
 	if (!skb)
 		return -ENOMEM;
 
-	req = (struct cpl_set_tcb_field *)__skb_put(skb, sizeof(*req));
-	memset(req, 0, sizeof(*req));
+	req = (struct cpl_set_tcb_field *)__skb_put_zero(skb, sizeof(*req));
 	INIT_TP_WR_CPL(req, CPL_SET_TCB_FIELD, ftid);
 	req->reply_ctrl = htons(REPLY_CHAN_V(0) |
 				QUEUENO_V(adap->sge.fw_evtq.abs_id) |
@@ -1334,12 +1333,6 @@ int __cxgb4_set_filter(struct net_device *dev, int filter_id,
 				 chip_ver);
 		return ret;
 	}
-
-	/* Clear out any old resources being used by the filter before
-	 * we start constructing the new filter.
-	 */
-	if (f->valid)
-		clear_filter(adapter, f);
 
 	if (is_t6(adapter->params.chip) && fs->type &&
 	    ipv6_addr_type((const struct in6_addr *)fs->val.lip) !=
