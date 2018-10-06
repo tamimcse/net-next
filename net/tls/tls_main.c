@@ -45,20 +45,12 @@
 MODULE_AUTHOR("Mellanox Technologies");
 MODULE_DESCRIPTION("Transport Layer Security Support");
 MODULE_LICENSE("Dual BSD/GPL");
+MODULE_ALIAS_TCP_ULP("tls");
 
 enum {
 	TLSV4,
 	TLSV6,
 	TLS_NUM_PROTS,
-};
-enum {
-	TLS_BASE,
-	TLS_SW,
-#ifdef CONFIG_TLS_DEVICE
-	TLS_HW,
-#endif
-	TLS_HW_RECORD,
-	TLS_NUM_CONFIG,
 };
 
 static struct proto *saved_tcpv6_prot;
@@ -135,6 +127,7 @@ retry:
 			offset -= sg->offset;
 			ctx->partially_sent_offset = offset;
 			ctx->partially_sent_record = (void *)sg;
+			ctx->in_tcp_sendpages = false;
 			return ret;
 		}
 
@@ -220,9 +213,14 @@ static void tls_write_space(struct sock *sk)
 {
 	struct tls_context *ctx = tls_get_ctx(sk);
 
-	/* We are already sending pages, ignore notification */
-	if (ctx->in_tcp_sendpages)
+	/* If in_tcp_sendpages call lower protocol write space handler
+	 * to ensure we wake up any waiting operations there. For example
+	 * if do_tcp_sendpages where to call sk_wait_event.
+	 */
+	if (ctx->in_tcp_sendpages) {
+		ctx->sk_write_space(sk);
 		return;
+	}
 
 	if (!sk->sk_write_pending && tls_is_pending_closed_record(ctx)) {
 		gfp_t sk_allocation = sk->sk_allocation;
@@ -243,21 +241,29 @@ static void tls_write_space(struct sock *sk)
 	ctx->sk_write_space(sk);
 }
 
+static void tls_ctx_free(struct tls_context *ctx)
+{
+	if (!ctx)
+		return;
+
+	memzero_explicit(&ctx->crypto_send, sizeof(ctx->crypto_send));
+	memzero_explicit(&ctx->crypto_recv, sizeof(ctx->crypto_recv));
+	kfree(ctx);
+}
+
 static void tls_sk_proto_close(struct sock *sk, long timeout)
 {
 	struct tls_context *ctx = tls_get_ctx(sk);
 	long timeo = sock_sndtimeo(sk, 0);
 	void (*sk_proto_close)(struct sock *sk, long timeout);
+	bool free_ctx = false;
 
 	lock_sock(sk);
 	sk_proto_close = ctx->sk_proto_close;
 
-	if (ctx->tx_conf == TLS_HW_RECORD && ctx->rx_conf == TLS_HW_RECORD)
-		goto skip_tx_cleanup;
-
-	if (ctx->tx_conf == TLS_BASE && ctx->rx_conf == TLS_BASE) {
-		kfree(ctx);
-		ctx = NULL;
+	if ((ctx->tx_conf == TLS_HW_RECORD && ctx->rx_conf == TLS_HW_RECORD) ||
+	    (ctx->tx_conf == TLS_BASE && ctx->rx_conf == TLS_BASE)) {
+		free_ctx = true;
 		goto skip_tx_cleanup;
 	}
 
@@ -291,11 +297,14 @@ static void tls_sk_proto_close(struct sock *sk, long timeout)
 	}
 
 #ifdef CONFIG_TLS_DEVICE
-	if (ctx->tx_conf != TLS_HW) {
+	if (ctx->rx_conf == TLS_HW)
+		tls_device_offload_cleanup_rx(sk);
+
+	if (ctx->tx_conf != TLS_HW && ctx->rx_conf != TLS_HW) {
 #else
 	{
 #endif
-		kfree(ctx);
+		tls_ctx_free(ctx);
 		ctx = NULL;
 	}
 
@@ -305,9 +314,8 @@ skip_tx_cleanup:
 	/* free ctx for TLS_HW_RECORD, used by tcp_set_state
 	 * for sk->sk_prot->unhash [tls_hw_unhash]
 	 */
-	if (ctx && ctx->tx_conf == TLS_HW_RECORD &&
-	    ctx->rx_conf == TLS_HW_RECORD)
-		kfree(ctx);
+	if (free_ctx)
+		tls_ctx_free(ctx);
 }
 
 static int do_tls_getsockopt_tx(struct sock *sk, char __user *optval,
@@ -332,7 +340,7 @@ static int do_tls_getsockopt_tx(struct sock *sk, char __user *optval,
 	}
 
 	/* get user crypto info */
-	crypto_info = &ctx->crypto_send;
+	crypto_info = &ctx->crypto_send.info;
 
 	if (!TLS_CRYPTO_INFO_READY(crypto_info)) {
 		rc = -EBUSY;
@@ -419,9 +427,9 @@ static int do_tls_setsockopt_conf(struct sock *sk, char __user *optval,
 	}
 
 	if (tx)
-		crypto_info = &ctx->crypto_send;
+		crypto_info = &ctx->crypto_send.info;
 	else
-		crypto_info = &ctx->crypto_recv;
+		crypto_info = &ctx->crypto_recv.info;
 
 	/* Currently we don't support set crypto info more than one time */
 	if (TLS_CRYPTO_INFO_READY(crypto_info)) {
@@ -472,8 +480,16 @@ static int do_tls_setsockopt_conf(struct sock *sk, char __user *optval,
 			conf = TLS_SW;
 		}
 	} else {
-		rc = tls_set_sw_offload(sk, ctx, 0);
-		conf = TLS_SW;
+#ifdef CONFIG_TLS_DEVICE
+		rc = tls_set_device_offload_rx(sk, ctx);
+		conf = TLS_HW;
+		if (rc) {
+#else
+		{
+#endif
+			rc = tls_set_sw_offload(sk, ctx, 0);
+			conf = TLS_SW;
+		}
 	}
 
 	if (rc)
@@ -493,7 +509,7 @@ static int do_tls_setsockopt_conf(struct sock *sk, char __user *optval,
 	goto out;
 
 err_crypto_info:
-	memset(crypto_info, 0, sizeof(*crypto_info));
+	memzero_explicit(crypto_info, sizeof(union tls_crypto_context));
 out:
 	return rc;
 }
@@ -631,6 +647,12 @@ static void build_protos(struct proto prot[TLS_NUM_CONFIG][TLS_NUM_CONFIG],
 	prot[TLS_HW][TLS_SW] = prot[TLS_BASE][TLS_SW];
 	prot[TLS_HW][TLS_SW].sendmsg		= tls_device_sendmsg;
 	prot[TLS_HW][TLS_SW].sendpage		= tls_device_sendpage;
+
+	prot[TLS_BASE][TLS_HW] = prot[TLS_BASE][TLS_SW];
+
+	prot[TLS_SW][TLS_HW] = prot[TLS_SW][TLS_SW];
+
+	prot[TLS_HW][TLS_HW] = prot[TLS_HW][TLS_SW];
 #endif
 
 	prot[TLS_HW_RECORD][TLS_HW_RECORD] = *base;

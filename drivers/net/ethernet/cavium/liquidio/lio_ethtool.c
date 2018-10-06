@@ -230,44 +230,145 @@ static int lio_get_link_ksettings(struct net_device *netdev,
 	struct lio *lio = GET_LIO(netdev);
 	struct octeon_device *oct = lio->oct_dev;
 	struct oct_link_info *linfo;
-	u32 supported = 0, advertising = 0;
 
 	linfo = &lio->linfo;
+
+	ethtool_link_ksettings_zero_link_mode(ecmd, supported);
+	ethtool_link_ksettings_zero_link_mode(ecmd, advertising);
 
 	switch (linfo->link.s.phy_type) {
 	case LIO_PHY_PORT_TP:
 		ecmd->base.port = PORT_TP;
-		supported = (SUPPORTED_10000baseT_Full |
-			     SUPPORTED_TP | SUPPORTED_Pause);
-		advertising = (ADVERTISED_10000baseT_Full | ADVERTISED_Pause);
 		ecmd->base.autoneg = AUTONEG_DISABLE;
+		ethtool_link_ksettings_add_link_mode(ecmd, supported, TP);
+		ethtool_link_ksettings_add_link_mode(ecmd, supported, Pause);
+		ethtool_link_ksettings_add_link_mode(ecmd, supported,
+						     10000baseT_Full);
+
+		ethtool_link_ksettings_add_link_mode(ecmd, advertising, Pause);
+		ethtool_link_ksettings_add_link_mode(ecmd, advertising,
+						     10000baseT_Full);
+
 		break;
 
 	case LIO_PHY_PORT_FIBRE:
-		ecmd->base.port = PORT_FIBRE;
-
-		if (linfo->link.s.speed == SPEED_10000) {
-			supported = SUPPORTED_10000baseT_Full;
-			advertising = ADVERTISED_10000baseT_Full;
+		if (linfo->link.s.if_mode == INTERFACE_MODE_XAUI ||
+		    linfo->link.s.if_mode == INTERFACE_MODE_RXAUI ||
+		    linfo->link.s.if_mode == INTERFACE_MODE_XLAUI ||
+		    linfo->link.s.if_mode == INTERFACE_MODE_XFI) {
+			dev_dbg(&oct->pci_dev->dev, "ecmd->base.transceiver is XCVR_EXTERNAL\n");
+		} else {
+			dev_err(&oct->pci_dev->dev, "Unknown link interface mode: %d\n",
+				linfo->link.s.if_mode);
 		}
 
-		supported |= SUPPORTED_FIBRE | SUPPORTED_Pause;
-		advertising |= ADVERTISED_Pause;
+		ecmd->base.port = PORT_FIBRE;
 		ecmd->base.autoneg = AUTONEG_DISABLE;
-		break;
-	}
+		ethtool_link_ksettings_add_link_mode(ecmd, supported, FIBRE);
 
-	if (linfo->link.s.if_mode == INTERFACE_MODE_XAUI ||
-	    linfo->link.s.if_mode == INTERFACE_MODE_RXAUI ||
-	    linfo->link.s.if_mode == INTERFACE_MODE_XLAUI ||
-	    linfo->link.s.if_mode == INTERFACE_MODE_XFI) {
-		ethtool_convert_legacy_u32_to_link_mode(
-			ecmd->link_modes.supported, supported);
-		ethtool_convert_legacy_u32_to_link_mode(
-			ecmd->link_modes.advertising, advertising);
-	} else {
-		dev_err(&oct->pci_dev->dev, "Unknown link interface reported %d\n",
-			linfo->link.s.if_mode);
+		ethtool_link_ksettings_add_link_mode(ecmd, supported, Pause);
+		ethtool_link_ksettings_add_link_mode(ecmd, advertising, Pause);
+		if (oct->subsystem_id == OCTEON_CN2350_25GB_SUBSYS_ID ||
+		    oct->subsystem_id == OCTEON_CN2360_25GB_SUBSYS_ID) {
+			if (OCTEON_CN23XX_PF(oct)) {
+				ethtool_link_ksettings_add_link_mode
+					(ecmd, supported, 25000baseSR_Full);
+				ethtool_link_ksettings_add_link_mode
+					(ecmd, supported, 25000baseKR_Full);
+				ethtool_link_ksettings_add_link_mode
+					(ecmd, supported, 25000baseCR_Full);
+
+				if (oct->no_speed_setting == 0)  {
+					ethtool_link_ksettings_add_link_mode
+						(ecmd, supported,
+						 10000baseSR_Full);
+					ethtool_link_ksettings_add_link_mode
+						(ecmd, supported,
+						 10000baseKR_Full);
+					ethtool_link_ksettings_add_link_mode
+						(ecmd, supported,
+						 10000baseCR_Full);
+				}
+
+				if (oct->no_speed_setting == 0)
+					liquidio_get_speed(lio);
+				else
+					oct->speed_setting = 25;
+
+				if (oct->speed_setting == 10) {
+					ethtool_link_ksettings_add_link_mode
+						(ecmd, advertising,
+						 10000baseSR_Full);
+					ethtool_link_ksettings_add_link_mode
+						(ecmd, advertising,
+						 10000baseKR_Full);
+					ethtool_link_ksettings_add_link_mode
+						(ecmd, advertising,
+						 10000baseCR_Full);
+				}
+				if (oct->speed_setting == 25) {
+					ethtool_link_ksettings_add_link_mode
+						(ecmd, advertising,
+						 25000baseSR_Full);
+					ethtool_link_ksettings_add_link_mode
+						(ecmd, advertising,
+						 25000baseKR_Full);
+					ethtool_link_ksettings_add_link_mode
+						(ecmd, advertising,
+						 25000baseCR_Full);
+				}
+			} else { /* VF */
+				if (linfo->link.s.speed == 10000) {
+					ethtool_link_ksettings_add_link_mode
+						(ecmd, supported,
+						 10000baseSR_Full);
+					ethtool_link_ksettings_add_link_mode
+						(ecmd, supported,
+						 10000baseKR_Full);
+					ethtool_link_ksettings_add_link_mode
+						(ecmd, supported,
+						 10000baseCR_Full);
+
+					ethtool_link_ksettings_add_link_mode
+						(ecmd, advertising,
+						 10000baseSR_Full);
+					ethtool_link_ksettings_add_link_mode
+						(ecmd, advertising,
+						 10000baseKR_Full);
+					ethtool_link_ksettings_add_link_mode
+						(ecmd, advertising,
+						 10000baseCR_Full);
+				}
+
+				if (linfo->link.s.speed == 25000) {
+					ethtool_link_ksettings_add_link_mode
+						(ecmd, supported,
+						 25000baseSR_Full);
+					ethtool_link_ksettings_add_link_mode
+						(ecmd, supported,
+						 25000baseKR_Full);
+					ethtool_link_ksettings_add_link_mode
+						(ecmd, supported,
+						 25000baseCR_Full);
+
+					ethtool_link_ksettings_add_link_mode
+						(ecmd, advertising,
+						 25000baseSR_Full);
+					ethtool_link_ksettings_add_link_mode
+						(ecmd, advertising,
+						 25000baseKR_Full);
+					ethtool_link_ksettings_add_link_mode
+						(ecmd, advertising,
+						 25000baseCR_Full);
+				}
+			}
+		} else {
+			ethtool_link_ksettings_add_link_mode(ecmd, supported,
+							     10000baseT_Full);
+			ethtool_link_ksettings_add_link_mode(ecmd, advertising,
+							     10000baseT_Full);
+		}
+		break;
 	}
 
 	if (linfo->link.s.link_up) {
@@ -277,6 +378,47 @@ static int lio_get_link_ksettings(struct net_device *netdev,
 		ecmd->base.speed = SPEED_UNKNOWN;
 		ecmd->base.duplex = DUPLEX_UNKNOWN;
 	}
+
+	return 0;
+}
+
+static int lio_set_link_ksettings(struct net_device *netdev,
+				  const struct ethtool_link_ksettings *ecmd)
+{
+	const int speed = ecmd->base.speed;
+	struct lio *lio = GET_LIO(netdev);
+	struct oct_link_info *linfo;
+	struct octeon_device *oct;
+
+	oct = lio->oct_dev;
+
+	linfo = &lio->linfo;
+
+	if (!(oct->subsystem_id == OCTEON_CN2350_25GB_SUBSYS_ID ||
+	      oct->subsystem_id == OCTEON_CN2360_25GB_SUBSYS_ID))
+		return -EOPNOTSUPP;
+
+	if (oct->no_speed_setting) {
+		dev_err(&oct->pci_dev->dev, "%s: Changing speed is not supported\n",
+			__func__);
+		return -EOPNOTSUPP;
+	}
+
+	if ((ecmd->base.duplex != DUPLEX_UNKNOWN &&
+	     ecmd->base.duplex != linfo->link.s.duplex) ||
+	     ecmd->base.autoneg != AUTONEG_DISABLE ||
+	    (ecmd->base.speed != 10000 && ecmd->base.speed != 25000 &&
+	     ecmd->base.speed != SPEED_UNKNOWN))
+		return -EOPNOTSUPP;
+
+	if ((oct->speed_boot == speed / 1000) &&
+	    oct->speed_boot == oct->speed_setting)
+		return 0;
+
+	liquidio_set_speed(lio, speed / 1000);
+
+	dev_dbg(&oct->pci_dev->dev, "Port speed is set to %dG\n",
+		oct->speed_setting);
 
 	return 0;
 }
@@ -711,7 +853,14 @@ static int lio_set_phys_id(struct net_device *netdev,
 {
 	struct lio *lio = GET_LIO(netdev);
 	struct octeon_device *oct = lio->oct_dev;
+	struct oct_link_info *linfo;
 	int value, ret;
+	u32 cur_ver;
+
+	linfo = &lio->linfo;
+	cur_ver = OCT_FW_VER(oct->fw_info.ver.maj,
+			     oct->fw_info.ver.min,
+			     oct->fw_info.ver.rev);
 
 	switch (state) {
 	case ETHTOOL_ID_ACTIVE:
@@ -750,16 +899,22 @@ static int lio_set_phys_id(struct net_device *netdev,
 				return ret;
 		} else if (oct->chip_id == OCTEON_CN23XX_PF_VID) {
 			octnet_id_active(netdev, LED_IDENTIFICATION_ON);
-
-			/* returns 0 since updates are asynchronous */
-			return 0;
+			if (linfo->link.s.phy_type == LIO_PHY_PORT_TP &&
+			    cur_ver > OCT_FW_VER(1, 7, 2))
+				return 2;
+			else
+				return 0;
 		} else {
 			return -EINVAL;
 		}
 		break;
 
 	case ETHTOOL_ID_ON:
-		if (oct->chip_id == OCTEON_CN66XX)
+		if (oct->chip_id == OCTEON_CN23XX_PF_VID &&
+		    linfo->link.s.phy_type == LIO_PHY_PORT_TP &&
+		    cur_ver > OCT_FW_VER(1, 7, 2))
+			octnet_id_active(netdev, LED_IDENTIFICATION_ON);
+		else if (oct->chip_id == OCTEON_CN66XX)
 			octnet_gpio_access(netdev, VITESSE_PHY_GPIO_CFG,
 					   VITESSE_PHY_GPIO_HIGH);
 		else
@@ -768,7 +923,11 @@ static int lio_set_phys_id(struct net_device *netdev,
 		break;
 
 	case ETHTOOL_ID_OFF:
-		if (oct->chip_id == OCTEON_CN66XX)
+		if (oct->chip_id == OCTEON_CN23XX_PF_VID &&
+		    linfo->link.s.phy_type == LIO_PHY_PORT_TP &&
+		    cur_ver > OCT_FW_VER(1, 7, 2))
+			octnet_id_active(netdev, LED_IDENTIFICATION_OFF);
+		else if (oct->chip_id == OCTEON_CN66XX)
 			octnet_gpio_access(netdev, VITESSE_PHY_GPIO_CFG,
 					   VITESSE_PHY_GPIO_LOW);
 		else
@@ -2966,6 +3125,7 @@ static int lio_set_priv_flags(struct net_device *netdev, u32 flags)
 
 static const struct ethtool_ops lio_ethtool_ops = {
 	.get_link_ksettings	= lio_get_link_ksettings,
+	.set_link_ksettings	= lio_set_link_ksettings,
 	.get_link		= ethtool_op_get_link,
 	.get_drvinfo		= lio_get_drvinfo,
 	.get_ringparam		= lio_ethtool_get_ringparam,

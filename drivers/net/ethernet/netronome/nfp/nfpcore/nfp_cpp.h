@@ -87,6 +87,11 @@ struct resource;
 
 #define NFP_CPP_TARGET_ID_MASK          0x1f
 
+#define NFP_CPP_ATOMIC_RD(target, island) \
+	NFP_CPP_ISLAND_ID((target), 3, 0, (island))
+#define NFP_CPP_ATOMIC_WR(target, island) \
+	NFP_CPP_ISLAND_ID((target), 4, 0, (island))
+
 /**
  * NFP_CPP_ID() - pack target, token, and action into a CPP ID.
  * @target:     NFP CPP target id
@@ -359,8 +364,8 @@ struct nfp_cpp_operations {
 	int (*init)(struct nfp_cpp *cpp);
 	void (*free)(struct nfp_cpp *cpp);
 
-	void (*read_serial)(struct device *dev, u8 *serial);
-	u16 (*get_interface)(struct device *dev);
+	int (*read_serial)(struct device *dev, u8 *serial);
+	int (*get_interface)(struct device *dev);
 
 	int (*area_init)(struct nfp_cpp_area *area,
 			 u32 dest, unsigned long long address,

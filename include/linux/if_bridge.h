@@ -50,6 +50,7 @@ struct br_ip_list {
 #define BR_VLAN_TUNNEL		BIT(13)
 #define BR_BCAST_FLOOD		BIT(14)
 #define BR_NEIGH_SUPPRESS	BIT(15)
+#define BR_ISOLATED		BIT(16)
 
 #define BR_DEFAULT_AGEING_TIME	(300 * HZ)
 
@@ -104,13 +105,13 @@ static inline bool br_vlan_enabled(const struct net_device *dev)
 
 static inline int br_vlan_get_pvid(const struct net_device *dev, u16 *p_pvid)
 {
-	return -1;
+	return -EINVAL;
 }
 
 static inline int br_vlan_get_info(const struct net_device *dev, u16 vid,
 				   struct bridge_vlan_info *p_vinfo)
 {
-	return -1;
+	return -EINVAL;
 }
 #endif
 

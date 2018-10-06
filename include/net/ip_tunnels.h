@@ -466,10 +466,12 @@ static inline void ip_tunnel_info_opts_get(void *to,
 }
 
 static inline void ip_tunnel_info_opts_set(struct ip_tunnel_info *info,
-					   const void *from, int len)
+					   const void *from, int len,
+					   __be16 flags)
 {
 	memcpy(ip_tunnel_info_opts(info), from, len);
 	info->options_len = len;
+	info->key.tun_flags |= flags;
 }
 
 static inline struct ip_tunnel_info *lwt_tun_info(struct lwtunnel_state *lwtstate)
@@ -477,12 +479,12 @@ static inline struct ip_tunnel_info *lwt_tun_info(struct lwtunnel_state *lwtstat
 	return (struct ip_tunnel_info *)lwtstate->data;
 }
 
-extern struct static_key ip_tunnel_metadata_cnt;
+DECLARE_STATIC_KEY_FALSE(ip_tunnel_metadata_cnt);
 
 /* Returns > 0 if metadata should be collected */
 static inline int ip_tunnel_collect_metadata(void)
 {
-	return static_key_false(&ip_tunnel_metadata_cnt);
+	return static_branch_unlikely(&ip_tunnel_metadata_cnt);
 }
 
 void __init ip_tunnel_core_init(void);
@@ -511,9 +513,11 @@ static inline void ip_tunnel_info_opts_get(void *to,
 }
 
 static inline void ip_tunnel_info_opts_set(struct ip_tunnel_info *info,
-					   const void *from, int len)
+					   const void *from, int len,
+					   __be16 flags)
 {
 	info->options_len = 0;
+	info->key.tun_flags |= flags;
 }
 
 #endif /* CONFIG_INET */
