@@ -18,7 +18,10 @@
 
 #include "../../../include/linux/filter.h"
 #include "bpf_rlimit.h"
-#include "bpf_util.h"
+
+#ifndef ARRAY_SIZE
+# define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
+#endif
 
 #define MAX_INSNS	512
 #define MAX_MATCHES	16

@@ -15,8 +15,6 @@
 #include <sound/pcm-indirect.h>
 #include <linux/workqueue.h>
 
-#include "interface/vchi/vchi.h"
-
 /*
  * #define AUDIO_DEBUG_ENABLE
  * #define AUDIO_VERBOSE_DEBUG_ENABLE
@@ -88,11 +86,6 @@ enum snd_bcm2835_ctrl {
 	PCM_PLAYBACK_DEVICE,
 };
 
-struct bcm2835_vchi_ctx {
-	VCHI_INSTANCE_T vchi_instance;
-	VCHI_CONNECTION_T *vchi_connection;
-};
-
 /* definition of the chip-specific record */
 struct bcm2835_chip {
 	struct snd_card *card;
@@ -111,8 +104,6 @@ struct bcm2835_chip {
 	unsigned int opened;
 	unsigned int spdif_status;
 	struct mutex audio_mutex;
-
-	struct bcm2835_vchi_ctx *vchi_ctx;
 };
 
 struct bcm2835_alsa_stream {
@@ -150,9 +141,6 @@ int snd_bcm2835_new_simple_pcm(struct bcm2835_chip *chip,
 
 int snd_bcm2835_new_hdmi_ctl(struct bcm2835_chip *chip);
 int snd_bcm2835_new_headphones_ctl(struct bcm2835_chip *chip);
-
-int bcm2835_new_vchi_ctx(struct bcm2835_vchi_ctx *vchi_ctx);
-void bcm2835_free_vchi_ctx(struct bcm2835_vchi_ctx *vchi_ctx);
 
 int bcm2835_audio_open(struct bcm2835_alsa_stream *alsa_stream);
 int bcm2835_audio_close(struct bcm2835_alsa_stream *alsa_stream);

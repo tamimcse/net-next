@@ -155,12 +155,11 @@ static void adu_interrupt_in_callback(struct urb *urb)
 {
 	struct adu_device *dev = urb->context;
 	int status = urb->status;
-	unsigned long flags;
 
 	adu_debug_data(&dev->udev->dev, __func__,
 		       urb->actual_length, urb->transfer_buffer);
 
-	spin_lock_irqsave(&dev->buflock, flags);
+	spin_lock(&dev->buflock);
 
 	if (status != 0) {
 		if ((status != -ENOENT) && (status != -ECONNRESET) &&
@@ -191,7 +190,7 @@ static void adu_interrupt_in_callback(struct urb *urb)
 
 exit:
 	dev->read_urb_finished = 1;
-	spin_unlock_irqrestore(&dev->buflock, flags);
+	spin_unlock(&dev->buflock);
 	/* always wake up so we recover from errors */
 	wake_up_interruptible(&dev->read_wait);
 }
@@ -200,7 +199,6 @@ static void adu_interrupt_out_callback(struct urb *urb)
 {
 	struct adu_device *dev = urb->context;
 	int status = urb->status;
-	unsigned long flags;
 
 	adu_debug_data(&dev->udev->dev, __func__,
 		       urb->actual_length, urb->transfer_buffer);
@@ -215,10 +213,10 @@ static void adu_interrupt_out_callback(struct urb *urb)
 		return;
 	}
 
-	spin_lock_irqsave(&dev->buflock, flags);
+	spin_lock(&dev->buflock);
 	dev->out_urb_finished = 1;
 	wake_up(&dev->write_wait);
-	spin_unlock_irqrestore(&dev->buflock, flags);
+	spin_unlock(&dev->buflock);
 }
 
 static int adu_open(struct inode *inode, struct file *file)

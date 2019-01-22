@@ -11,7 +11,6 @@
 #include <asm/ppc_asm.h>
 #include <asm/asm-offsets.h>
 #include <asm/export.h>
-#include <asm/feature-fixups.h>
 
         .section        ".toc","aw"
 PPC64_CACHES:

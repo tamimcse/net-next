@@ -2,7 +2,6 @@
 // Copyright 2017 IBM Corp.
 #include <linux/sched/mm.h>
 #include <linux/mutex.h>
-#include <linux/mm_types.h>
 #include <linux/mmu_context.h>
 #include <asm/copro.h>
 #include <asm/pnv-ocxl.h>
@@ -127,7 +126,7 @@ static void ack_irq(struct spa *spa, enum xsl_response r)
 
 static void xsl_fault_handler_bh(struct work_struct *fault_work)
 {
-	vm_fault_t flt = 0;
+	unsigned int flt = 0;
 	unsigned long access, flags, inv_flags = 0;
 	enum xsl_response r;
 	struct xsl_fault *fault = container_of(fault_work, struct xsl_fault,
@@ -137,7 +136,7 @@ static void xsl_fault_handler_bh(struct work_struct *fault_work)
 	int rc;
 
 	/*
-	 * We must release a reference on mm_users whenever exiting this
+	 * We need to release a reference on the mm whenever exiting this
 	 * function (taken in the memory fault interrupt handler)
 	 */
 	rc = copro_handle_mm_fault(fault->pe_data.mm, fault->dar, fault->dsisr,
@@ -173,7 +172,7 @@ static void xsl_fault_handler_bh(struct work_struct *fault_work)
 	}
 	r = RESTART;
 ack:
-	mmput(fault->pe_data.mm);
+	mmdrop(fault->pe_data.mm);
 	ack_irq(spa, r);
 }
 
@@ -185,7 +184,6 @@ static irqreturn_t xsl_fault_handler(int irq, void *data)
 	struct pe_data *pe_data;
 	struct ocxl_process_element *pe;
 	int lpid, pid, tid;
-	bool schedule = false;
 
 	read_irq(spa, &dsisr, &dar, &pe_handle);
 	trace_ocxl_fault(spa->spa_mem, pe_handle, dsisr, dar, -1);
@@ -228,19 +226,14 @@ static irqreturn_t xsl_fault_handler(int irq, void *data)
 	}
 	WARN_ON(pe_data->mm->context.id != pid);
 
-	if (mmget_not_zero(pe_data->mm)) {
-			spa->xsl_fault.pe = pe_handle;
-			spa->xsl_fault.dar = dar;
-			spa->xsl_fault.dsisr = dsisr;
-			spa->xsl_fault.pe_data = *pe_data;
-			schedule = true;
-			/* mm_users count released by bottom half */
-	}
+	spa->xsl_fault.pe = pe_handle;
+	spa->xsl_fault.dar = dar;
+	spa->xsl_fault.dsisr = dsisr;
+	spa->xsl_fault.pe_data = *pe_data;
+	mmgrab(pe_data->mm); /* mm count is released by bottom half */
+
 	rcu_read_unlock();
-	if (schedule)
-		schedule_work(&spa->xsl_fault.fault_work);
-	else
-		ack_irq(spa, ADDRESS_ERROR);
+	schedule_work(&spa->xsl_fault.fault_work);
 	return IRQ_HANDLED;
 }
 
@@ -551,42 +544,6 @@ unlock:
 }
 EXPORT_SYMBOL_GPL(ocxl_link_add_pe);
 
-int ocxl_link_update_pe(void *link_handle, int pasid, __u16 tid)
-{
-	struct link *link = (struct link *) link_handle;
-	struct spa *spa = link->spa;
-	struct ocxl_process_element *pe;
-	int pe_handle, rc;
-
-	if (pasid > SPA_PASID_MAX)
-		return -EINVAL;
-
-	pe_handle = pasid & SPA_PE_MASK;
-	pe = spa->spa_mem + pe_handle;
-
-	mutex_lock(&spa->spa_lock);
-
-	pe->tid = tid;
-
-	/*
-	 * The barrier makes sure the PE is updated
-	 * before we clear the NPU context cache below, so that the
-	 * old PE cannot be reloaded erroneously.
-	 */
-	mb();
-
-	/*
-	 * hook to platform code
-	 * On powerpc, the entry needs to be cleared from the context
-	 * cache of the NPU.
-	 */
-	rc = pnv_ocxl_spa_remove_pe_from_cache(link->platform_data, pe_handle);
-	WARN_ON(rc);
-
-	mutex_unlock(&spa->spa_lock);
-	return rc;
-}
-
 int ocxl_link_remove_pe(void *link_handle, int pasid)
 {
 	struct link *link = (struct link *) link_handle;
@@ -642,7 +599,7 @@ int ocxl_link_remove_pe(void *link_handle, int pasid)
 	 * On powerpc, the entry needs to be cleared from the context
 	 * cache of the NPU.
 	 */
-	rc = pnv_ocxl_spa_remove_pe_from_cache(link->platform_data, pe_handle);
+	rc = pnv_ocxl_spa_remove_pe(link->platform_data, pe_handle);
 	WARN_ON(rc);
 
 	pe_data = radix_tree_delete(&spa->pe_tree, pe_handle);

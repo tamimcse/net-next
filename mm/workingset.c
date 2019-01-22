@@ -366,7 +366,10 @@ static unsigned long count_shadow_nodes(struct shrinker *shrinker,
 	unsigned long nodes;
 	unsigned long cache;
 
+	/* list_lru lock nests inside the IRQ-safe i_pages lock */
+	local_irq_disable();
 	nodes = list_lru_shrink_count(&shadow_nodes, sc);
+	local_irq_enable();
 
 	/*
 	 * Approximate a reasonable limit for the radix tree nodes
@@ -398,9 +401,6 @@ static unsigned long count_shadow_nodes(struct shrinker *shrinker,
 			node_page_state(NODE_DATA(sc->nid), NR_INACTIVE_FILE);
 	}
 	max_nodes = cache >> (RADIX_TREE_MAP_SHIFT - 3);
-
-	if (!nodes)
-		return SHRINK_EMPTY;
 
 	if (nodes <= max_nodes)
 		return 0;
@@ -434,7 +434,7 @@ static enum lru_status shadow_lru_isolate(struct list_head *item,
 
 	/* Coming from the list, invert the lock order */
 	if (!xa_trylock(&mapping->i_pages)) {
-		spin_unlock_irq(lru_lock);
+		spin_unlock(lru_lock);
 		ret = LRU_RETRY;
 		goto out;
 	}
@@ -472,20 +472,26 @@ static enum lru_status shadow_lru_isolate(struct list_head *item,
 				 workingset_lookup_update(mapping));
 
 out_invalid:
-	xa_unlock_irq(&mapping->i_pages);
+	xa_unlock(&mapping->i_pages);
 	ret = LRU_REMOVED_RETRY;
 out:
+	local_irq_enable();
 	cond_resched();
-	spin_lock_irq(lru_lock);
+	local_irq_disable();
+	spin_lock(lru_lock);
 	return ret;
 }
 
 static unsigned long scan_shadow_nodes(struct shrinker *shrinker,
 				       struct shrink_control *sc)
 {
+	unsigned long ret;
+
 	/* list_lru lock nests inside the IRQ-safe i_pages lock */
-	return list_lru_shrink_walk_irq(&shadow_nodes, sc, shadow_lru_isolate,
-					NULL);
+	local_irq_disable();
+	ret = list_lru_shrink_walk(&shadow_nodes, sc, shadow_lru_isolate, NULL);
+	local_irq_enable();
+	return ret;
 }
 
 static struct shrinker workingset_shadow_shrinker = {
@@ -522,17 +528,15 @@ static int __init workingset_init(void)
 	pr_info("workingset: timestamp_bits=%d max_order=%d bucket_order=%u\n",
 	       timestamp_bits, max_order, bucket_order);
 
-	ret = prealloc_shrinker(&workingset_shadow_shrinker);
+	ret = __list_lru_init(&shadow_nodes, true, &shadow_nodes_key);
 	if (ret)
 		goto err;
-	ret = __list_lru_init(&shadow_nodes, true, &shadow_nodes_key,
-			      &workingset_shadow_shrinker);
+	ret = register_shrinker(&workingset_shadow_shrinker);
 	if (ret)
 		goto err_list_lru;
-	register_shrinker_prepared(&workingset_shadow_shrinker);
 	return 0;
 err_list_lru:
-	free_prealloced_shrinker(&workingset_shadow_shrinker);
+	list_lru_destroy(&shadow_nodes);
 err:
 	return ret;
 }

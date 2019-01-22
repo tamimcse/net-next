@@ -36,7 +36,6 @@
 			enable-method = "psci";
 			next-level-cache = <&l2>;
 			operating-points-v2 = <&cpu_opp>;
-			#cooling-cells = <2>;
 		};
 
 		cpu2: cpu@2 {
@@ -47,7 +46,6 @@
 			enable-method = "psci";
 			next-level-cache = <&l2>;
 			operating-points-v2 = <&cpu_opp>;
-			#cooling-cells = <2>;
 		};
 
 		cpu3: cpu@3 {
@@ -58,7 +56,6 @@
 			enable-method = "psci";
 			next-level-cache = <&l2>;
 			operating-points-v2 = <&cpu_opp>;
-			#cooling-cells = <2>;
 		};
 	};
 
@@ -509,13 +506,10 @@
 			interrupts = <0 66 4>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&pinctrl_ether_rgmii>;
-			clock-names = "ether";
 			clocks = <&sys_clk 6>;
-			reset-names = "ether";
 			resets = <&sys_rst 6>;
 			phy-mode = "rgmii";
 			local-mac-address = [00 00 00 00 00 00];
-			socionext,syscon-phy-mode = <&soc_glue 0>;
 
 			mdio: mdio {
 				#address-cells = <1>;

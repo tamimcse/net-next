@@ -158,9 +158,9 @@ struct test_mb_aead_data {
 };
 
 static int do_mult_aead_op(struct test_mb_aead_data *data, int enc,
-				u32 num_mb, int *rc)
+				u32 num_mb)
 {
-	int i, err = 0;
+	int i, rc[num_mb], err = 0;
 
 	/* Fire up a bunch of concurrent requests */
 	for (i = 0; i < num_mb; i++) {
@@ -188,26 +188,18 @@ static int test_mb_aead_jiffies(struct test_mb_aead_data *data, int enc,
 {
 	unsigned long start, end;
 	int bcount;
-	int ret = 0;
-	int *rc;
-
-	rc = kcalloc(num_mb, sizeof(*rc), GFP_KERNEL);
-	if (!rc)
-		return -ENOMEM;
+	int ret;
 
 	for (start = jiffies, end = start + secs * HZ, bcount = 0;
 	     time_before(jiffies, end); bcount++) {
-		ret = do_mult_aead_op(data, enc, num_mb, rc);
+		ret = do_mult_aead_op(data, enc, num_mb);
 		if (ret)
-			goto out;
+			return ret;
 	}
 
 	pr_cont("%d operations in %d seconds (%ld bytes)\n",
 		bcount * num_mb, secs, (long)bcount * blen * num_mb);
-
-out:
-	kfree(rc);
-	return ret;
+	return 0;
 }
 
 static int test_mb_aead_cycles(struct test_mb_aead_data *data, int enc,
@@ -216,15 +208,10 @@ static int test_mb_aead_cycles(struct test_mb_aead_data *data, int enc,
 	unsigned long cycles = 0;
 	int ret = 0;
 	int i;
-	int *rc;
-
-	rc = kcalloc(num_mb, sizeof(*rc), GFP_KERNEL);
-	if (!rc)
-		return -ENOMEM;
 
 	/* Warm-up run. */
 	for (i = 0; i < 4; i++) {
-		ret = do_mult_aead_op(data, enc, num_mb, rc);
+		ret = do_mult_aead_op(data, enc, num_mb);
 		if (ret)
 			goto out;
 	}
@@ -234,7 +221,7 @@ static int test_mb_aead_cycles(struct test_mb_aead_data *data, int enc,
 		cycles_t start, end;
 
 		start = get_cycles();
-		ret = do_mult_aead_op(data, enc, num_mb, rc);
+		ret = do_mult_aead_op(data, enc, num_mb);
 		end = get_cycles();
 
 		if (ret)
@@ -243,11 +230,11 @@ static int test_mb_aead_cycles(struct test_mb_aead_data *data, int enc,
 		cycles += end - start;
 	}
 
-	pr_cont("1 operation in %lu cycles (%d bytes)\n",
-		(cycles + 4) / (8 * num_mb), blen);
-
 out:
-	kfree(rc);
+	if (ret == 0)
+		pr_cont("1 operation in %lu cycles (%d bytes)\n",
+			(cycles + 4) / (8 * num_mb), blen);
+
 	return ret;
 }
 
@@ -415,14 +402,12 @@ static void test_mb_aead_speed(const char *algo, int enc, int secs,
 
 			}
 
-			if (secs) {
+			if (secs)
 				ret = test_mb_aead_jiffies(data, enc, *b_size,
 							   secs, num_mb);
-				cond_resched();
-			} else {
+			else
 				ret = test_mb_aead_cycles(data, enc, *b_size,
 							  num_mb);
-			}
 
 			if (ret) {
 				pr_err("%s() failed return code=%d\n", e, ret);
@@ -662,13 +647,11 @@ static void test_aead_speed(const char *algo, int enc, unsigned int secs,
 					       *b_size + (enc ? 0 : authsize),
 					       iv);
 
-			if (secs) {
+			if (secs)
 				ret = test_aead_jiffies(req, enc, *b_size,
 							secs);
-				cond_resched();
-			} else {
+			else
 				ret = test_aead_cycles(req, enc, *b_size);
-			}
 
 			if (ret) {
 				pr_err("%s() failed return code=%d\n", e, ret);
@@ -722,10 +705,9 @@ struct test_mb_ahash_data {
 	char *xbuf[XBUFSIZE];
 };
 
-static inline int do_mult_ahash_op(struct test_mb_ahash_data *data, u32 num_mb,
-				   int *rc)
+static inline int do_mult_ahash_op(struct test_mb_ahash_data *data, u32 num_mb)
 {
-	int i, err = 0;
+	int i, rc[num_mb], err = 0;
 
 	/* Fire up a bunch of concurrent requests */
 	for (i = 0; i < num_mb; i++)
@@ -749,26 +731,18 @@ static int test_mb_ahash_jiffies(struct test_mb_ahash_data *data, int blen,
 {
 	unsigned long start, end;
 	int bcount;
-	int ret = 0;
-	int *rc;
-
-	rc = kcalloc(num_mb, sizeof(*rc), GFP_KERNEL);
-	if (!rc)
-		return -ENOMEM;
+	int ret;
 
 	for (start = jiffies, end = start + secs * HZ, bcount = 0;
 	     time_before(jiffies, end); bcount++) {
-		ret = do_mult_ahash_op(data, num_mb, rc);
+		ret = do_mult_ahash_op(data, num_mb);
 		if (ret)
-			goto out;
+			return ret;
 	}
 
 	pr_cont("%d operations in %d seconds (%ld bytes)\n",
 		bcount * num_mb, secs, (long)bcount * blen * num_mb);
-
-out:
-	kfree(rc);
-	return ret;
+	return 0;
 }
 
 static int test_mb_ahash_cycles(struct test_mb_ahash_data *data, int blen,
@@ -777,15 +751,10 @@ static int test_mb_ahash_cycles(struct test_mb_ahash_data *data, int blen,
 	unsigned long cycles = 0;
 	int ret = 0;
 	int i;
-	int *rc;
-
-	rc = kcalloc(num_mb, sizeof(*rc), GFP_KERNEL);
-	if (!rc)
-		return -ENOMEM;
 
 	/* Warm-up run. */
 	for (i = 0; i < 4; i++) {
-		ret = do_mult_ahash_op(data, num_mb, rc);
+		ret = do_mult_ahash_op(data, num_mb);
 		if (ret)
 			goto out;
 	}
@@ -795,7 +764,7 @@ static int test_mb_ahash_cycles(struct test_mb_ahash_data *data, int blen,
 		cycles_t start, end;
 
 		start = get_cycles();
-		ret = do_mult_ahash_op(data, num_mb, rc);
+		ret = do_mult_ahash_op(data, num_mb);
 		end = get_cycles();
 
 		if (ret)
@@ -804,11 +773,11 @@ static int test_mb_ahash_cycles(struct test_mb_ahash_data *data, int blen,
 		cycles += end - start;
 	}
 
-	pr_cont("1 operation in %lu cycles (%d bytes)\n",
-		(cycles + 4) / (8 * num_mb), blen);
-
 out:
-	kfree(rc);
+	if (ret == 0)
+		pr_cont("1 operation in %lu cycles (%d bytes)\n",
+			(cycles + 4) / (8 * num_mb), blen);
+
 	return ret;
 }
 
@@ -880,13 +849,11 @@ static void test_mb_ahash_speed(const char *algo, unsigned int secs,
 			i, speed[i].blen, speed[i].plen,
 			speed[i].blen / speed[i].plen);
 
-		if (secs) {
+		if (secs)
 			ret = test_mb_ahash_jiffies(data, speed[i].blen, secs,
 						    num_mb);
-			cond_resched();
-		} else {
+		else
 			ret = test_mb_ahash_cycles(data, speed[i].blen, num_mb);
-		}
 
 
 		if (ret) {
@@ -1109,14 +1076,12 @@ static void test_ahash_speed_common(const char *algo, unsigned int secs,
 
 		ahash_request_set_crypt(req, sg, output, speed[i].plen);
 
-		if (secs) {
+		if (secs)
 			ret = test_ahash_jiffies(req, speed[i].blen,
 						 speed[i].plen, output, secs);
-			cond_resched();
-		} else {
+		else
 			ret = test_ahash_cycles(req, speed[i].blen,
 						speed[i].plen, output);
-		}
 
 		if (ret) {
 			pr_err("hashing failed ret=%d\n", ret);
@@ -1153,9 +1118,9 @@ struct test_mb_skcipher_data {
 };
 
 static int do_mult_acipher_op(struct test_mb_skcipher_data *data, int enc,
-				u32 num_mb, int *rc)
+				u32 num_mb)
 {
-	int i, err = 0;
+	int i, rc[num_mb], err = 0;
 
 	/* Fire up a bunch of concurrent requests */
 	for (i = 0; i < num_mb; i++) {
@@ -1183,26 +1148,18 @@ static int test_mb_acipher_jiffies(struct test_mb_skcipher_data *data, int enc,
 {
 	unsigned long start, end;
 	int bcount;
-	int ret = 0;
-	int *rc;
-
-	rc = kcalloc(num_mb, sizeof(*rc), GFP_KERNEL);
-	if (!rc)
-		return -ENOMEM;
+	int ret;
 
 	for (start = jiffies, end = start + secs * HZ, bcount = 0;
 	     time_before(jiffies, end); bcount++) {
-		ret = do_mult_acipher_op(data, enc, num_mb, rc);
+		ret = do_mult_acipher_op(data, enc, num_mb);
 		if (ret)
-			goto out;
+			return ret;
 	}
 
 	pr_cont("%d operations in %d seconds (%ld bytes)\n",
 		bcount * num_mb, secs, (long)bcount * blen * num_mb);
-
-out:
-	kfree(rc);
-	return ret;
+	return 0;
 }
 
 static int test_mb_acipher_cycles(struct test_mb_skcipher_data *data, int enc,
@@ -1211,15 +1168,10 @@ static int test_mb_acipher_cycles(struct test_mb_skcipher_data *data, int enc,
 	unsigned long cycles = 0;
 	int ret = 0;
 	int i;
-	int *rc;
-
-	rc = kcalloc(num_mb, sizeof(*rc), GFP_KERNEL);
-	if (!rc)
-		return -ENOMEM;
 
 	/* Warm-up run. */
 	for (i = 0; i < 4; i++) {
-		ret = do_mult_acipher_op(data, enc, num_mb, rc);
+		ret = do_mult_acipher_op(data, enc, num_mb);
 		if (ret)
 			goto out;
 	}
@@ -1229,7 +1181,7 @@ static int test_mb_acipher_cycles(struct test_mb_skcipher_data *data, int enc,
 		cycles_t start, end;
 
 		start = get_cycles();
-		ret = do_mult_acipher_op(data, enc, num_mb, rc);
+		ret = do_mult_acipher_op(data, enc, num_mb);
 		end = get_cycles();
 
 		if (ret)
@@ -1238,11 +1190,11 @@ static int test_mb_acipher_cycles(struct test_mb_skcipher_data *data, int enc,
 		cycles += end - start;
 	}
 
-	pr_cont("1 operation in %lu cycles (%d bytes)\n",
-		(cycles + 4) / (8 * num_mb), blen);
-
 out:
-	kfree(rc);
+	if (ret == 0)
+		pr_cont("1 operation in %lu cycles (%d bytes)\n",
+			(cycles + 4) / (8 * num_mb), blen);
+
 	return ret;
 }
 
@@ -1375,15 +1327,13 @@ static void test_mb_skcipher_speed(const char *algo, int enc, int secs,
 							   iv);
 			}
 
-			if (secs) {
+			if (secs)
 				ret = test_mb_acipher_jiffies(data, enc,
 							      *b_size, secs,
 							      num_mb);
-				cond_resched();
-			} else {
+			else
 				ret = test_mb_acipher_cycles(data, enc,
 							     *b_size, num_mb);
-			}
 
 			if (ret) {
 				pr_err("%s() failed flags=%x\n", e,
@@ -1591,14 +1541,12 @@ static void test_skcipher_speed(const char *algo, int enc, unsigned int secs,
 
 			skcipher_request_set_crypt(req, sg, sg, *b_size, iv);
 
-			if (secs) {
+			if (secs)
 				ret = test_acipher_jiffies(req, enc,
 							   *b_size, secs);
-				cond_resched();
-			} else {
+			else
 				ret = test_acipher_cycles(req, enc,
 							  *b_size);
-			}
 
 			if (ret) {
 				pr_err("%s() failed flags=%x\n", e,
@@ -1658,7 +1606,7 @@ static inline int tcrypt_test(const char *alg)
 	return ret;
 }
 
-static int do_test(const char *alg, u32 type, u32 mask, int m, u32 num_mb)
+static int do_test(const char *alg, u32 type, u32 mask, int m)
 {
 	int i;
 	int ret = 0;
@@ -1673,7 +1621,7 @@ static int do_test(const char *alg, u32 type, u32 mask, int m, u32 num_mb)
 		}
 
 		for (i = 1; i < 200; i++)
-			ret += do_test(NULL, 0, 0, i, num_mb);
+			ret += do_test(NULL, 0, 0, i);
 		break;
 
 	case 1:
@@ -1951,7 +1899,11 @@ static int do_test(const char *alg, u32 type, u32 mask, int m, u32 num_mb)
 		break;
 
 	case 109:
-		ret += tcrypt_test("vmac64(aes)");
+		ret += tcrypt_test("vmac(aes)");
+		break;
+
+	case 110:
+		ret += tcrypt_test("hmac(crc32)");
 		break;
 
 	case 111:
@@ -2951,7 +2903,7 @@ static int __init tcrypt_mod_init(void)
 			goto err_free_tv;
 	}
 
-	err = do_test(alg, type, mask, mode, num_mb);
+	err = do_test(alg, type, mask, mode);
 
 	if (err) {
 		printk(KERN_ERR "tcrypt: one or more tests failed!\n");

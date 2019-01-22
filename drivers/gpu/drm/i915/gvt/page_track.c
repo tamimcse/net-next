@@ -157,10 +157,11 @@ int intel_vgpu_disable_page_track(struct intel_vgpu *vgpu, unsigned long gfn)
 int intel_vgpu_page_track_handler(struct intel_vgpu *vgpu, u64 gpa,
 		void *data, unsigned int bytes)
 {
+	struct intel_gvt *gvt = vgpu->gvt;
 	struct intel_vgpu_page_track *page_track;
 	int ret = 0;
 
-	mutex_lock(&vgpu->vgpu_lock);
+	mutex_lock(&gvt->lock);
 
 	page_track = intel_vgpu_find_page_track(vgpu, gpa >> PAGE_SHIFT);
 	if (!page_track) {
@@ -178,6 +179,6 @@ int intel_vgpu_page_track_handler(struct intel_vgpu *vgpu, u64 gpa,
 	}
 
 out:
-	mutex_unlock(&vgpu->vgpu_lock);
+	mutex_unlock(&gvt->lock);
 	return ret;
 }

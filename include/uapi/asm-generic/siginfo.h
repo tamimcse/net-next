@@ -249,8 +249,7 @@ typedef struct siginfo {
 #define TRAP_TRACE	2	/* process trace trap */
 #define TRAP_BRANCH     3	/* process taken branch trap */
 #define TRAP_HWBKPT     4	/* hardware breakpoint/watchpoint */
-#define TRAP_UNK	5	/* undiagnosed trap */
-#define NSIGTRAP	5
+#define NSIGTRAP	4
 
 /*
  * There is an additional set of SIGTRAP si_codes used by ptrace

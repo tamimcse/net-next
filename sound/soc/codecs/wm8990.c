@@ -40,9 +40,9 @@ static bool wm8990_volatile_register(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
 	case WM8990_RESET:
-		return true;
+		return 1;
 	default:
-		return false;
+		return 0;
 	}
 }
 

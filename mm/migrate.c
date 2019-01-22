@@ -528,12 +528,14 @@ int migrate_page_move_mapping(struct address_space *mapping,
 		int i;
 		int index = page_index(page);
 
-		for (i = 1; i < HPAGE_PMD_NR; i++) {
+		for (i = 0; i < HPAGE_PMD_NR; i++) {
 			pslot = radix_tree_lookup_slot(&mapping->i_pages,
 						       index + i);
 			radix_tree_replace_slot(&mapping->i_pages, pslot,
 						newpage + i);
 		}
+	} else {
+		radix_tree_replace_slot(&mapping->i_pages, pslot, newpage);
 	}
 
 	/*
@@ -1131,8 +1133,7 @@ out:
  * gcc 4.7 and 4.8 on arm get an ICEs when inlining unmap_and_move().  Work
  * around it.
  */
-#if defined(CONFIG_ARM) && \
-	defined(GCC_VERSION) && GCC_VERSION < 40900 && GCC_VERSION >= 40700
+#if (GCC_VERSION >= 40700 && GCC_VERSION < 40900) && defined(CONFIG_ARM)
 #define ICE_noinline noinline
 #else
 #define ICE_noinline
@@ -1212,7 +1213,7 @@ out:
 			 * intentionally. Although it's rather weird,
 			 * it's how HWPoison flag works at the moment.
 			 */
-			if (set_hwpoison_free_buddy_page(page))
+			if (!test_set_page_hwpoison(page))
 				num_poisoned_pages_inc();
 		}
 	} else {
@@ -1331,6 +1332,8 @@ put_anon:
 out:
 	if (rc != -EAGAIN)
 		putback_active_hugepage(hpage);
+	if (reason == MR_MEMORY_FAILURE && !test_set_page_hwpoison(hpage))
+		num_poisoned_pages_inc();
 
 	/*
 	 * If migration was not successful and there's a freeing callback, use
@@ -2950,8 +2953,7 @@ int migrate_vma(const struct migrate_vma_ops *ops,
 	/* Sanity check the arguments */
 	start &= PAGE_MASK;
 	end &= PAGE_MASK;
-	if (!vma || is_vm_hugetlb_page(vma) || (vma->vm_flags & VM_SPECIAL) ||
-			vma_is_dax(vma))
+	if (!vma || is_vm_hugetlb_page(vma) || (vma->vm_flags & VM_SPECIAL))
 		return -EINVAL;
 	if (start < vma->vm_start || start >= vma->vm_end)
 		return -EINVAL;

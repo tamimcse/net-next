@@ -15,7 +15,6 @@
 #include <linux/dns_resolver.h>
 #include <linux/sched.h>
 #include <linux/inet.h>
-#include <linux/namei.h>
 #include <keys/rxrpc-type.h>
 #include "internal.h"
 
@@ -342,8 +341,8 @@ int afs_cell_init(struct afs_net *net, const char *rootcell)
 
 	/* install the new cell */
 	write_seqlock(&net->cells_lock);
-	old_root = rcu_access_pointer(net->ws_cell);
-	rcu_assign_pointer(net->ws_cell, new_root);
+	old_root = net->ws_cell;
+	net->ws_cell = new_root;
 	write_sequnlock(&net->cells_lock);
 
 	afs_put_cell(net, old_root);
@@ -529,14 +528,12 @@ static int afs_activate_cell(struct afs_net *net, struct afs_cell *cell)
 					     NULL, 0,
 					     cell, 0, true);
 #endif
-	ret = afs_proc_cell_setup(cell);
+	ret = afs_proc_cell_setup(net, cell);
 	if (ret < 0)
 		return ret;
-
-	mutex_lock(&net->proc_cells_lock);
+	spin_lock(&net->proc_cells_lock);
 	list_add_tail(&cell->proc_link, &net->proc_cells);
-	afs_dynroot_mkdir(net, cell);
-	mutex_unlock(&net->proc_cells_lock);
+	spin_unlock(&net->proc_cells_lock);
 	return 0;
 }
 
@@ -547,12 +544,11 @@ static void afs_deactivate_cell(struct afs_net *net, struct afs_cell *cell)
 {
 	_enter("%s", cell->name);
 
-	afs_proc_cell_remove(cell);
+	afs_proc_cell_remove(net, cell);
 
-	mutex_lock(&net->proc_cells_lock);
+	spin_lock(&net->proc_cells_lock);
 	list_del_init(&cell->proc_link);
-	afs_dynroot_rmdir(net, cell);
-	mutex_unlock(&net->proc_cells_lock);
+	spin_unlock(&net->proc_cells_lock);
 
 #ifdef CONFIG_AFS_FSCACHE
 	fscache_relinquish_cookie(cell->cache, NULL, false);
@@ -759,8 +755,8 @@ void afs_cell_purge(struct afs_net *net)
 	_enter("");
 
 	write_seqlock(&net->cells_lock);
-	ws = rcu_access_pointer(net->ws_cell);
-	RCU_INIT_POINTER(net->ws_cell, NULL);
+	ws = net->ws_cell;
+	net->ws_cell = NULL;
 	write_sequnlock(&net->cells_lock);
 	afs_put_cell(net, ws);
 

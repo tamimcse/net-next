@@ -13,7 +13,6 @@
 #define	_LINUX_SLAB_H
 
 #include <linux/gfp.h>
-#include <linux/overflow.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
 
@@ -97,7 +96,7 @@
 # define SLAB_FAILSLAB		0
 #endif
 /* Account to memcg */
-#ifdef CONFIG_MEMCG_KMEM
+#if defined(CONFIG_MEMCG) && !defined(CONFIG_SLOB)
 # define SLAB_ACCOUNT		((slab_flags_t __force)0x04000000U)
 #else
 # define SLAB_ACCOUNT		0
@@ -600,7 +599,6 @@ struct memcg_cache_params {
 			struct memcg_cache_array __rcu *memcg_caches;
 			struct list_head __root_caches_node;
 			struct list_head children;
-			bool dying;
 		};
 		struct {
 			struct mem_cgroup *memcg;
@@ -626,13 +624,11 @@ int memcg_update_all_caches(int num_memcgs);
  */
 static inline void *kmalloc_array(size_t n, size_t size, gfp_t flags)
 {
-	size_t bytes;
-
-	if (unlikely(check_mul_overflow(n, size, &bytes)))
+	if (size != 0 && n > SIZE_MAX / size)
 		return NULL;
 	if (__builtin_constant_p(n) && __builtin_constant_p(size))
-		return kmalloc(bytes, flags);
-	return __kmalloc(bytes, flags);
+		return kmalloc(n * size, flags);
+	return __kmalloc(n * size, flags);
 }
 
 /**
@@ -661,13 +657,11 @@ extern void *__kmalloc_track_caller(size_t, gfp_t, unsigned long);
 static inline void *kmalloc_array_node(size_t n, size_t size, gfp_t flags,
 				       int node)
 {
-	size_t bytes;
-
-	if (unlikely(check_mul_overflow(n, size, &bytes)))
+	if (size != 0 && n > SIZE_MAX / size)
 		return NULL;
 	if (__builtin_constant_p(n) && __builtin_constant_p(size))
-		return kmalloc_node(bytes, flags, node);
-	return __kmalloc_node(bytes, flags, node);
+		return kmalloc_node(n * size, flags, node);
+	return __kmalloc_node(n * size, flags, node);
 }
 
 static inline void *kcalloc_node(size_t n, size_t size, gfp_t flags, int node)

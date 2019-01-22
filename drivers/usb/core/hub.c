@@ -1142,14 +1142,10 @@ static void hub_activate(struct usb_hub *hub, enum hub_activation_type type)
 
 		if (!udev || udev->state == USB_STATE_NOTATTACHED) {
 			/* Tell hub_wq to disconnect the device or
-			 * check for a new connection or over current condition.
-			 * Based on USB2.0 Spec Section 11.12.5,
-			 * C_PORT_OVER_CURRENT could be set while
-			 * PORT_OVER_CURRENT is not. So check for any of them.
+			 * check for a new connection
 			 */
 			if (udev || (portstatus & USB_PORT_STAT_CONNECTION) ||
-			    (portstatus & USB_PORT_STAT_OVERCURRENT) ||
-			    (portchange & USB_PORT_STAT_C_OVERCURRENT))
+			    (portstatus & USB_PORT_STAT_OVERCURRENT))
 				set_bit(port1, hub->change_bits);
 
 		} else if (portstatus & USB_PORT_STAT_ENABLE) {
@@ -1380,7 +1376,7 @@ static int hub_configure(struct usb_hub *hub,
 	dev_info(hub_dev, "%d port%s detected\n", maxchild,
 			(maxchild == 1) ? "" : "s");
 
-	hub->ports = kcalloc(maxchild, sizeof(struct usb_port *), GFP_KERNEL);
+	hub->ports = kzalloc(maxchild * sizeof(struct usb_port *), GFP_KERNEL);
 	if (!hub->ports) {
 		ret = -ENOMEM;
 		goto fail;
@@ -2640,7 +2636,7 @@ static unsigned hub_is_wusb(struct usb_hub *hub)
 #define SET_ADDRESS_TRIES	2
 #define GET_DESCRIPTOR_TRIES	2
 #define SET_CONFIG_TRIES	(2 * (use_both_schemes + 1))
-#define USE_NEW_SCHEME(i, scheme)	((i) / 2 == (int)scheme)
+#define USE_NEW_SCHEME(i)	((i) / 2 == (int)old_scheme_first)
 
 #define HUB_ROOT_RESET_TIME	60	/* times are in msec */
 #define HUB_SHORT_RESET_TIME	10
@@ -2655,16 +2651,12 @@ static unsigned hub_is_wusb(struct usb_hub *hub)
  * enumeration failures, so disable this enumeration scheme for USB3
  * devices.
  */
-static bool use_new_scheme(struct usb_device *udev, int retry,
-			   struct usb_port *port_dev)
+static bool use_new_scheme(struct usb_device *udev, int retry)
 {
-	int old_scheme_first_port =
-		port_dev->quirks & USB_PORT_QUIRK_OLD_SCHEME;
-
 	if (udev->speed >= USB_SPEED_SUPER)
 		return false;
 
-	return USE_NEW_SCHEME(retry, old_scheme_first_port || old_scheme_first);
+	return USE_NEW_SCHEME(retry);
 }
 
 /* Is a USB 3.0 port in the Inactive or Compliance Mode state?
@@ -2759,14 +2751,6 @@ static int hub_port_wait_reset(struct usb_hub *hub, int port1,
 	if (!udev)
 		return 0;
 
-	if (hub_is_superspeedplus(hub->hdev)) {
-		/* extended portstatus Rx and Tx lane count are zero based */
-		udev->rx_lanes = USB_EXT_PORT_RX_LANES(ext_portstatus) + 1;
-		udev->tx_lanes = USB_EXT_PORT_TX_LANES(ext_portstatus) + 1;
-	} else {
-		udev->rx_lanes = 1;
-		udev->tx_lanes = 1;
-	}
 	if (hub_is_wusb(hub))
 		udev->speed = USB_SPEED_WIRELESS;
 	else if (hub_is_superspeedplus(hub->hdev) &&
@@ -2883,11 +2867,7 @@ static int hub_port_reset(struct usb_hub *hub, int port1,
 done:
 	if (status == 0) {
 		/* TRSTRCY = 10 ms; plus some extra */
-		if (port_dev->quirks & USB_PORT_QUIRK_FAST_ENUM)
-			usleep_range(10000, 12000);
-		else
-			msleep(10 + 40);
-
+		msleep(10 + 40);
 		if (udev) {
 			struct usb_hcd *hcd = bus_to_hcd(udev->bus);
 
@@ -3396,10 +3376,6 @@ static int wait_for_connected(struct usb_device *udev,
 	while (delay_ms < 2000) {
 		if (status || *portstatus & USB_PORT_STAT_CONNECTION)
 			break;
-		if (!port_is_power_on(hub, *portstatus)) {
-			status = -ENODEV;
-			break;
-		}
 		msleep(20);
 		delay_ms += 20;
 		status = hub_port_status(hub, *port1, portstatus, portchange);
@@ -3660,54 +3636,12 @@ static int hub_suspend(struct usb_interface *intf, pm_message_t msg)
 	return 0;
 }
 
-/* Report wakeup requests from the ports of a resuming root hub */
-static void report_wakeup_requests(struct usb_hub *hub)
-{
-	struct usb_device	*hdev = hub->hdev;
-	struct usb_device	*udev;
-	struct usb_hcd		*hcd;
-	unsigned long		resuming_ports;
-	int			i;
-
-	if (hdev->parent)
-		return;		/* Not a root hub */
-
-	hcd = bus_to_hcd(hdev->bus);
-	if (hcd->driver->get_resuming_ports) {
-
-		/*
-		 * The get_resuming_ports() method returns a bitmap (origin 0)
-		 * of ports which have started wakeup signaling but have not
-		 * yet finished resuming.  During system resume we will
-		 * resume all the enabled ports, regardless of any wakeup
-		 * signals, which means the wakeup requests would be lost.
-		 * To prevent this, report them to the PM core here.
-		 */
-		resuming_ports = hcd->driver->get_resuming_ports(hcd);
-		for (i = 0; i < hdev->maxchild; ++i) {
-			if (test_bit(i, &resuming_ports)) {
-				udev = hub->ports[i]->child;
-				if (udev)
-					pm_wakeup_event(&udev->dev, 0);
-			}
-		}
-	}
-}
-
 static int hub_resume(struct usb_interface *intf)
 {
 	struct usb_hub *hub = usb_get_intfdata(intf);
 
 	dev_dbg(&intf->dev, "%s\n", __func__);
 	hub_activate(hub, HUB_RESUME);
-
-	/*
-	 * This should be called only for system resume, not runtime resume.
-	 * We can't tell the difference here, so some wakeup requests will be
-	 * reported at the wrong time or more than once.  This shouldn't
-	 * matter much, so long as they do get reported.
-	 */
-	report_wakeup_requests(hub);
 	return 0;
 }
 
@@ -4446,7 +4380,6 @@ hub_port_init(struct usb_hub *hub, struct usb_device *udev, int port1,
 {
 	struct usb_device	*hdev = hub->hdev;
 	struct usb_hcd		*hcd = bus_to_hcd(hdev->bus);
-	struct usb_port		*port_dev = hub->ports[port1 - 1];
 	int			retries, operations, retval, i;
 	unsigned		delay = HUB_SHORT_RESET_TIME;
 	enum usb_device_speed	oldspeed = udev->speed;
@@ -4568,7 +4501,7 @@ hub_port_init(struct usb_hub *hub, struct usb_device *udev, int port1,
 	for (retries = 0; retries < GET_DESCRIPTOR_TRIES; (++retries, msleep(100))) {
 		bool did_new_scheme = false;
 
-		if (use_new_scheme(udev, retry_counter, port_dev)) {
+		if (use_new_scheme(udev, retry_counter)) {
 			struct usb_device_descriptor *buf;
 			int r = 0;
 
@@ -4618,9 +4551,7 @@ hub_port_init(struct usb_hub *hub, struct usb_device *udev, int port1,
 				 * reset. But only on the first attempt,
 				 * lest we get into a time out/reset loop
 				 */
-				if (r == 0 || (r == -ETIMEDOUT &&
-						retries == 0 &&
-						udev->speed > USB_SPEED_FULL))
+				if (r == 0  || (r == -ETIMEDOUT && retries == 0))
 					break;
 			}
 			udev->descriptor.bMaxPacketSize0 =
@@ -4667,12 +4598,9 @@ hub_port_init(struct usb_hub *hub, struct usb_device *udev, int port1,
 			if (udev->speed >= USB_SPEED_SUPER) {
 				devnum = udev->devnum;
 				dev_info(&udev->dev,
-						"%s SuperSpeed%s%s USB device number %d using %s\n",
+						"%s SuperSpeed%s USB device number %d using %s\n",
 						(udev->config) ? "reset" : "new",
-					 (udev->speed == USB_SPEED_SUPER_PLUS) ?
-							"Plus Gen 2" : " Gen 1",
-					 (udev->rx_lanes == 2 && udev->tx_lanes == 2) ?
-							"x2" : "",
+					 (udev->speed == USB_SPEED_SUPER_PLUS) ? "Plus" : "",
 					 devnum, driver_name);
 			}
 

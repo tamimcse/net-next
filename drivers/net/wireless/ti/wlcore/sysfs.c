@@ -19,11 +19,9 @@
  *
  */
 
-#include <linux/pm_runtime.h>
-
-#include "acx.h"
 #include "wlcore.h"
 #include "debug.h"
+#include "ps.h"
 #include "sysfs.h"
 
 static ssize_t wl1271_sysfs_show_bt_coex_state(struct device *dev,
@@ -70,15 +68,12 @@ static ssize_t wl1271_sysfs_store_bt_coex_state(struct device *dev,
 	if (unlikely(wl->state != WLCORE_STATE_ON))
 		goto out;
 
-	ret = pm_runtime_get_sync(wl->dev);
-	if (ret < 0) {
-		pm_runtime_put_noidle(wl->dev);
+	ret = wl1271_ps_elp_wakeup(wl);
+	if (ret < 0)
 		goto out;
-	}
 
 	wl1271_acx_sg_enable(wl, wl->sg_enabled);
-	pm_runtime_mark_last_busy(wl->dev);
-	pm_runtime_put_autosuspend(wl->dev);
+	wl1271_ps_elp_sleep(wl);
 
  out:
 	mutex_unlock(&wl->mutex);

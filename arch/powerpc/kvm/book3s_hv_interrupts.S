@@ -27,8 +27,6 @@
 #include <asm/asm-offsets.h>
 #include <asm/exception-64s.h>
 #include <asm/ppc-opcode.h>
-#include <asm/asm-compat.h>
-#include <asm/feature-fixups.h>
 
 /*****************************************************************************
  *                                                                           *
@@ -139,7 +137,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_ARCH_300)
 /*
  * We return here in virtual mode after the guest exits
  * with something that we can't handle in real mode.
- * Interrupts are still hard-disabled.
+ * Interrupts are enabled again at this point.
  */
 
 	/*

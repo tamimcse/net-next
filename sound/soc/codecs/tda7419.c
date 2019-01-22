@@ -142,9 +142,9 @@ struct tda7419_vol_control {
 static inline bool tda7419_vol_is_stereo(struct tda7419_vol_control *tvc)
 {
 	if (tvc->reg == tvc->rreg)
-		return false;
+		return 0;
 
-	return true;
+	return 1;
 }
 
 static int tda7419_vol_info(struct snd_kcontrol *kcontrol,

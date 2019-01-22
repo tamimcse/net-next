@@ -24,7 +24,6 @@
 #include "../entry/calling.h"
 #include <asm/export.h>
 #include <asm/nospec-branch.h>
-#include <asm/fixmap.h>
 
 #ifdef CONFIG_PARAVIRT
 #include <asm/asm-offsets.h>
@@ -236,7 +235,7 @@ ENTRY(secondary_startup_64)
 	 *		address given in m16:64.
 	 */
 	pushq	$.Lafter_lret	# put return address on stack for unwinder
-	xorl	%ebp, %ebp	# clear frame pointer
+	xorq	%rbp, %rbp	# clear frame pointer
 	movq	initial_code(%rip), %rax
 	pushq	$__KERNEL_CS	# set correct cs
 	pushq	%rax		# target address in negative space
@@ -446,20 +445,13 @@ NEXT_PAGE(level2_kernel_pgt)
 		KERNEL_IMAGE_SIZE/PMD_SIZE)
 
 NEXT_PAGE(level2_fixmap_pgt)
-	.fill	(512 - 4 - FIXMAP_PMD_NUM),8,0
-	pgtno = 0
-	.rept (FIXMAP_PMD_NUM)
-	.quad level1_fixmap_pgt + (pgtno << PAGE_SHIFT) - __START_KERNEL_map \
-		+ _PAGE_TABLE_NOENC;
-	pgtno = pgtno + 1
-	.endr
-	/* 6 MB reserved space + a 2MB hole */
-	.fill	4,8,0
+	.fill	506,8,0
+	.quad	level1_fixmap_pgt - __START_KERNEL_map + _PAGE_TABLE_NOENC
+	/* 8MB reserved for vsyscalls + a 2MB hole = 4 + 1 entries */
+	.fill	5,8,0
 
 NEXT_PAGE(level1_fixmap_pgt)
-	.rept (FIXMAP_PMD_NUM)
 	.fill	512,8,0
-	.endr
 
 #undef PMDS
 

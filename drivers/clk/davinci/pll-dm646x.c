@@ -6,7 +6,6 @@
  */
 
 #include <linux/clk-provider.h>
-#include <linux/clk/davinci.h>
 #include <linux/clkdev.h>
 #include <linux/init.h>
 #include <linux/types.h>
@@ -30,11 +29,11 @@ SYSCLK(6, pll1_sysclk6, pll1_pllen, 4, 0);
 SYSCLK(8, pll1_sysclk8, pll1_pllen, 4, 0);
 SYSCLK(9, pll1_sysclk9, pll1_pllen, 4, 0);
 
-int dm646x_pll1_init(struct device *dev, void __iomem *base, struct regmap *cfgchip)
+int dm646x_pll1_init(struct device *dev, void __iomem *base)
 {
 	struct clk *clk;
 
-	davinci_pll_clk_register(dev, &dm646x_pll1_info, "ref_clk", base, cfgchip);
+	davinci_pll_clk_register(dev, &dm646x_pll1_info, "ref_clk", base);
 
 	clk = davinci_pll_sysclk_register(dev, &pll1_sysclk1, base);
 	clk_register_clkdev(clk, "pll1_sysclk1", "dm646x-psc");
@@ -73,11 +72,11 @@ static const struct davinci_pll_clk_info dm646x_pll2_info = {
 	.flags = 0,
 };
 
-SYSCLK(1, pll2_sysclk1, pll2_pllen, 4, SYSCLK_ALWAYS_ENABLED);
+SYSCLK(1, pll2_sysclk1, pll2_pllen, 4, 0);
 
-int dm646x_pll2_init(struct device *dev, void __iomem *base, struct regmap *cfgchip)
+int dm646x_pll2_init(struct device *dev, void __iomem *base)
 {
-	davinci_pll_clk_register(dev, &dm646x_pll2_info, "oscin", base, cfgchip);
+	davinci_pll_clk_register(dev, &dm646x_pll2_info, "oscin", base);
 
 	davinci_pll_sysclk_register(dev, &pll2_sysclk1, base);
 

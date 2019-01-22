@@ -70,7 +70,6 @@
  *   The worst-case behavior is nevertheless O(N^2) for N wakeups.
  */
 
-#include <linux/compat.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/init.h>
@@ -85,8 +84,6 @@
 #include <linux/nsproxy.h>
 #include <linux/ipc_namespace.h>
 #include <linux/sched/wake_q.h>
-#include <linux/nospec.h>
-#include <linux/rhashtable.h>
 
 #include <linux/uaccess.h>
 #include "util.h"
@@ -107,7 +104,7 @@ struct sem {
 					/* that alter the semaphore */
 	struct list_head pending_const; /* pending single-sop operations */
 					/* that do not alter the semaphore*/
-	time64_t	 sem_otime;	/* candidate for sem_otime */
+	time_t	sem_otime;	/* candidate for sem_otime */
 } ____cacheline_aligned_in_smp;
 
 /* One sem_array data structure for each set of semaphores in the system. */
@@ -221,14 +218,14 @@ static int sysvipc_sem_proc_show(struct seq_file *s, void *it);
 #define sc_semopm	sem_ctls[2]
 #define sc_semmni	sem_ctls[3]
 
-void sem_init_ns(struct ipc_namespace *ns)
+int sem_init_ns(struct ipc_namespace *ns)
 {
 	ns->sc_semmsl = SEMMSL;
 	ns->sc_semmns = SEMMNS;
 	ns->sc_semopm = SEMOPM;
 	ns->sc_semmni = SEMMNI;
 	ns->used_sems = 0;
-	ipc_init_ids(&ns->ids[IPC_SEM_IDS]);
+	return ipc_init_ids(&ns->ids[IPC_SEM_IDS]);
 }
 
 #ifdef CONFIG_IPC_NS
@@ -240,12 +237,14 @@ void sem_exit_ns(struct ipc_namespace *ns)
 }
 #endif
 
-void __init sem_init(void)
+int __init sem_init(void)
 {
-	sem_init_ns(&init_ipc_ns);
+	const int err = sem_init_ns(&init_ipc_ns);
+
 	ipc_init_proc_interface("sysvipc/sem",
 				"       key      semid perms      nsems   uid   gid  cuid  cgid      otime      ctime\n",
 				IPC_SEM_IDS, sysvipc_sem_proc_show);
+	return err;
 }
 
 /**
@@ -368,7 +367,6 @@ static inline int sem_lock(struct sem_array *sma, struct sembuf *sops,
 			      int nsops)
 {
 	struct sem *sem;
-	int idx;
 
 	if (nsops != 1) {
 		/* Complex operation - acquire a full lock */
@@ -386,8 +384,7 @@ static inline int sem_lock(struct sem_array *sma, struct sembuf *sops,
 	 *
 	 * Both facts are tracked by use_global_mode.
 	 */
-	idx = array_index_nospec(sops->sem_num, sma->sem_nsems);
-	sem = &sma->sems[idx];
+	sem = &sma->sems[sops->sem_num];
 
 	/*
 	 * Initial check for use_global_lock. Just an optimization,
@@ -555,7 +552,7 @@ static int newary(struct ipc_namespace *ns, struct ipc_params *params)
 	/* ipc_addid() locks sma upon success. */
 	retval = ipc_addid(&sem_ids(ns), &sma->sem_perm, ns->sc_semmni);
 	if (retval < 0) {
-		ipc_rcu_putref(&sma->sem_perm, sem_rcu_free);
+		call_rcu(&sma->sem_perm.rcu, sem_rcu_free);
 		return retval;
 	}
 	ns->used_sems += nsems;
@@ -640,8 +637,7 @@ static int perform_atomic_semop_slow(struct sem_array *sma, struct sem_queue *q)
 	un = q->undo;
 
 	for (sop = sops; sop < sops + nsops; sop++) {
-		int idx = array_index_nospec(sop->sem_num, sma->sem_nsems);
-		curr = &sma->sems[idx];
+		curr = &sma->sems[sop->sem_num];
 		sem_op = sop->sem_op;
 		result = curr->semval;
 
@@ -721,9 +717,7 @@ static int perform_atomic_semop(struct sem_array *sma, struct sem_queue *q)
 	 * until the operations can go through.
 	 */
 	for (sop = sops; sop < sops + nsops; sop++) {
-		int idx = array_index_nospec(sop->sem_num, sma->sem_nsems);
-
-		curr = &sma->sems[idx];
+		curr = &sma->sems[sop->sem_num];
 		sem_op = sop->sem_op;
 		result = curr->semval;
 
@@ -990,10 +984,10 @@ again:
 static void set_semotime(struct sem_array *sma, struct sembuf *sops)
 {
 	if (sops == NULL) {
-		sma->sems[0].sem_otime = ktime_get_real_seconds();
+		sma->sems[0].sem_otime = get_seconds();
 	} else {
 		sma->sems[sops[0].sem_num].sem_otime =
-						ktime_get_real_seconds();
+							get_seconds();
 	}
 }
 
@@ -1220,7 +1214,7 @@ static int semctl_stat(struct ipc_namespace *ns, int semid,
 			 int cmd, struct semid64_ds *semid64)
 {
 	struct sem_array *sma;
-	time64_t semotime;
+	int id = 0;
 	int err;
 
 	memset(semid64, 0, sizeof(*semid64));
@@ -1232,6 +1226,7 @@ static int semctl_stat(struct ipc_namespace *ns, int semid,
 			err = PTR_ERR(sma);
 			goto out_unlock;
 		}
+		id = sma->sem_perm.id;
 	} else { /* IPC_STAT */
 		sma = sem_obtain_object_check(ns, semid);
 		if (IS_ERR(sma)) {
@@ -1262,29 +1257,14 @@ static int semctl_stat(struct ipc_namespace *ns, int semid,
 	}
 
 	kernel_to_ipc64_perm(&sma->sem_perm, &semid64->sem_perm);
-	semotime = get_semotime(sma);
-	semid64->sem_otime = semotime;
+	semid64->sem_otime = get_semotime(sma);
 	semid64->sem_ctime = sma->sem_ctime;
-#ifndef CONFIG_64BIT
-	semid64->sem_otime_high = semotime >> 32;
-	semid64->sem_ctime_high = sma->sem_ctime >> 32;
-#endif
 	semid64->sem_nsems = sma->sem_nsems;
 
-	if (cmd == IPC_STAT) {
-		/*
-		 * As defined in SUS:
-		 * Return 0 on success
-		 */
-		err = 0;
-	} else {
-		/*
-		 * SEM_STAT and SEM_STAT_ANY (both Linux specific)
-		 * Return the full id, including the sequence number
-		 */
-		err = sma->sem_perm.id;
-	}
 	ipc_unlock_object(&sma->sem_perm);
+	rcu_read_unlock();
+	return id;
+
 out_unlock:
 	rcu_read_unlock();
 	return err;
@@ -1294,7 +1274,7 @@ static int semctl_info(struct ipc_namespace *ns, int semid,
 			 int cmd, void __user *p)
 {
 	struct seminfo seminfo;
-	int max_idx;
+	int max_id;
 	int err;
 
 	err = security_sem_semctl(NULL, cmd);
@@ -1318,11 +1298,11 @@ static int semctl_info(struct ipc_namespace *ns, int semid,
 		seminfo.semusz = SEMUSZ;
 		seminfo.semaem = SEMAEM;
 	}
-	max_idx = ipc_get_maxidx(&sem_ids(ns));
+	max_id = ipc_get_maxid(&sem_ids(ns));
 	up_read(&sem_ids(ns).rwsem);
 	if (copy_to_user(p, &seminfo, sizeof(struct seminfo)))
 		return -EFAULT;
-	return (max_idx < 0) ? 0 : max_idx;
+	return (max_id < 0) ? 0 : max_id;
 }
 
 static int semctl_setval(struct ipc_namespace *ns, int semid, int semnum,
@@ -1369,7 +1349,6 @@ static int semctl_setval(struct ipc_namespace *ns, int semid, int semnum,
 		return -EIDRM;
 	}
 
-	semnum = array_index_nospec(semnum, sma->sem_nsems);
 	curr = &sma->sems[semnum];
 
 	ipc_assert_locked_object(&sma->sem_perm);
@@ -1523,8 +1502,6 @@ static int semctl_main(struct ipc_namespace *ns, int semid, int semnum,
 		err = -EIDRM;
 		goto out_unlock;
 	}
-
-	semnum = array_index_nospec(semnum, nsems);
 	curr = &sma->sems[semnum];
 
 	switch (cmd) {
@@ -1594,7 +1571,7 @@ static int semctl_down(struct ipc_namespace *ns, int semid,
 	down_write(&sem_ids(ns).rwsem);
 	rcu_read_lock();
 
-	ipcp = ipcctl_obtain_check(ns, &sem_ids(ns), semid, cmd,
+	ipcp = ipcctl_pre_down_nolock(ns, &sem_ids(ns), semid, cmd,
 				      &semid64->sem_perm, 0);
 	if (IS_ERR(ipcp)) {
 		err = PTR_ERR(ipcp);
@@ -1727,10 +1704,8 @@ static int copy_compat_semid_to_user(void __user *buf, struct semid64_ds *in,
 		struct compat_semid64_ds v;
 		memset(&v, 0, sizeof(v));
 		to_compat_ipc64_perm(&v.sem_perm, &in->sem_perm);
-		v.sem_otime	 = lower_32_bits(in->sem_otime);
-		v.sem_otime_high = upper_32_bits(in->sem_otime);
-		v.sem_ctime	 = lower_32_bits(in->sem_ctime);
-		v.sem_ctime_high = upper_32_bits(in->sem_ctime);
+		v.sem_otime = in->sem_otime;
+		v.sem_ctime = in->sem_ctime;
 		v.sem_nsems = in->sem_nsems;
 		return copy_to_user(buf, &v, sizeof(v));
 	} else {
@@ -1961,7 +1936,7 @@ static long do_semtimedop(int semid, struct sembuf __user *tsops,
 	if (nsops > ns->sc_semopm)
 		return -E2BIG;
 	if (nsops > SEMOPM_FAST) {
-		sops = kvmalloc_array(nsops, sizeof(*sops), GFP_KERNEL);
+		sops = kvmalloc(sizeof(*sops)*nsops, GFP_KERNEL);
 		if (sops == NULL)
 			return -ENOMEM;
 	}
@@ -2097,8 +2072,7 @@ static long do_semtimedop(int semid, struct sembuf __user *tsops,
 	 */
 	if (nsops == 1) {
 		struct sem *curr;
-		int idx = array_index_nospec(sops->sem_num, sma->sem_nsems);
-		curr = &sma->sems[idx];
+		curr = &sma->sems[sops->sem_num];
 
 		if (alter) {
 			if (sma->complex_count) {
@@ -2125,7 +2099,7 @@ static long do_semtimedop(int semid, struct sembuf __user *tsops,
 	}
 
 	do {
-		WRITE_ONCE(queue.status, -EINTR);
+		queue.status = -EINTR;
 		queue.sleeper = current;
 
 		__set_current_state(TASK_INTERRUPTIBLE);
@@ -2194,7 +2168,7 @@ out_free:
 }
 
 long ksys_semtimedop(int semid, struct sembuf __user *tsops,
-		     unsigned int nsops, const struct __kernel_timespec __user *timeout)
+		     unsigned int nsops, const struct timespec __user *timeout)
 {
 	if (timeout) {
 		struct timespec64 ts;
@@ -2206,12 +2180,12 @@ long ksys_semtimedop(int semid, struct sembuf __user *tsops,
 }
 
 SYSCALL_DEFINE4(semtimedop, int, semid, struct sembuf __user *, tsops,
-		unsigned int, nsops, const struct __kernel_timespec __user *, timeout)
+		unsigned int, nsops, const struct timespec __user *, timeout)
 {
 	return ksys_semtimedop(semid, tsops, nsops, timeout);
 }
 
-#ifdef CONFIG_COMPAT_32BIT_TIME
+#ifdef CONFIG_COMPAT
 long compat_ksys_semtimedop(int semid, struct sembuf __user *tsems,
 			    unsigned int nsops,
 			    const struct compat_timespec __user *timeout)

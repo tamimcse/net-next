@@ -21,7 +21,6 @@
 
 /* Enables debugging of low-level hash table routines - careful! */
 #undef DEBUG
-#define pr_fmt(fmt) "lpar: " fmt
 
 #include <linux/kernel.h>
 #include <linux/dma-mapping.h>
@@ -37,6 +36,7 @@
 #include <asm/machdep.h>
 #include <asm/mmu_context.h>
 #include <asm/iommu.h>
+#include <asm/tlbflush.h>
 #include <asm/tlb.h>
 #include <asm/prom.h>
 #include <asm/cputable.h>
@@ -165,7 +165,8 @@ static long pSeries_lpar_hpte_insert(unsigned long hpte_group,
 
 	lpar_rc = plpar_pte_enter(flags, hpte_group, hpte_v, hpte_r, &slot);
 	if (unlikely(lpar_rc == H_PTEG_FULL)) {
-		pr_devel("Hash table group is full\n");
+		if (!(vflags & HPTE_V_BOLTED))
+			pr_devel(" full\n");
 		return -1;
 	}
 
@@ -175,7 +176,8 @@ static long pSeries_lpar_hpte_insert(unsigned long hpte_group,
 	 * or we will loop forever, so return -2 in this case.
 	 */
 	if (unlikely(lpar_rc != H_SUCCESS)) {
-		pr_err("Failed hash pte insert with error %ld\n", lpar_rc);
+		if (!(vflags & HPTE_V_BOLTED))
+			pr_devel(" lpar err %ld\n", lpar_rc);
 		return -2;
 	}
 	if (!(vflags & HPTE_V_BOLTED))
@@ -238,11 +240,8 @@ static void manual_hpte_clear_all(void)
          */
 	for (i = 0; i < hpte_count; i += 4) {
 		lpar_rc = plpar_pte_read_4_raw(0, i, (void *)ptes);
-		if (lpar_rc != H_SUCCESS) {
-			pr_info("Failed to read hash page table at %ld err %ld\n",
-				i, lpar_rc);
+		if (lpar_rc != H_SUCCESS)
 			continue;
-		}
 		for (j = 0; j < 4; j++){
 			if ((ptes[j].pteh & HPTE_V_VRMA_MASK) ==
 				HPTE_V_VRMA_MASK)
@@ -341,11 +340,8 @@ static long __pSeries_lpar_hpte_find(unsigned long want_v, unsigned long hpte_gr
 	for (i = 0; i < HPTES_PER_GROUP; i += 4, hpte_group += 4) {
 
 		lpar_rc = plpar_pte_read_4(0, hpte_group, (void *)ptes);
-		if (lpar_rc != H_SUCCESS) {
-			pr_info("Failed to read hash page table at %ld err %ld\n",
-				hpte_group, lpar_rc);
+		if (lpar_rc != H_SUCCESS)
 			continue;
-		}
 
 		for (j = 0; j < 4; j++) {
 			if (HPTE_V_COMPARE(ptes[j].pteh, want_v) &&
@@ -616,8 +612,8 @@ static int __init disable_bulk_remove(char *str)
 {
 	if (strcmp(str, "off") == 0 &&
 	    firmware_has_feature(FW_FEATURE_BULK_REMOVE)) {
-		pr_info("Disabling BULK_REMOVE firmware feature");
-		powerpc_firmware_features &= ~FW_FEATURE_BULK_REMOVE;
+			printk(KERN_INFO "Disabling BULK_REMOVE firmware feature");
+			powerpc_firmware_features &= ~FW_FEATURE_BULK_REMOVE;
 	}
 	return 1;
 }
@@ -663,7 +659,8 @@ static int pseries_lpar_resize_hpt(unsigned long shift)
 	if (!firmware_has_feature(FW_FEATURE_HPT_RESIZE))
 		return -ENODEV;
 
-	pr_info("Attempting to resize HPT to shift %lu\n", shift);
+	printk(KERN_INFO "lpar: Attempting to resize HPT to shift %lu\n",
+	       shift);
 
 	t0 = ktime_get();
 
@@ -675,7 +672,8 @@ static int pseries_lpar_resize_hpt(unsigned long shift)
 			/* prepare with shift==0 cancels an in-progress resize */
 			rc = plpar_resize_hpt_prepare(0, 0);
 			if (rc != H_SUCCESS)
-				pr_warn("Unexpected error %d cancelling timed out HPT resize\n",
+				printk(KERN_WARNING
+				       "lpar: Unexpected error %d cancelling timed out HPT resize\n",
 				       rc);
 			return -ETIMEDOUT;
 		}
@@ -693,7 +691,9 @@ static int pseries_lpar_resize_hpt(unsigned long shift)
 	case H_RESOURCE:
 		return -EPERM;
 	default:
-		pr_warn("Unexpected error %d from H_RESIZE_HPT_PREPARE\n", rc);
+		printk(KERN_WARNING
+		       "lpar: Unexpected error %d from H_RESIZE_HPT_PREPARE\n",
+		       rc);
 		return -EIO;
 	}
 
@@ -706,19 +706,22 @@ static int pseries_lpar_resize_hpt(unsigned long shift)
 	if (rc != 0) {
 		switch (state.commit_rc) {
 		case H_PTEG_FULL:
-			pr_warn("Hash collision while resizing HPT\n");
+			printk(KERN_WARNING
+			       "lpar: Hash collision while resizing HPT\n");
 			return -ENOSPC;
 
 		default:
-			pr_warn("Unexpected error %d from H_RESIZE_HPT_COMMIT\n",
-				state.commit_rc);
+			printk(KERN_WARNING
+			       "lpar: Unexpected error %d from H_RESIZE_HPT_COMMIT\n",
+			       state.commit_rc);
 			return -EIO;
 		};
 	}
 
-	pr_info("HPT resize to shift %lu complete (%lld ms / %lld ms)\n",
-		shift, (long long) ktime_ms_delta(t1, t0),
-		(long long) ktime_ms_delta(t2, t1));
+	printk(KERN_INFO
+	       "lpar: HPT resize to shift %lu complete (%lld ms / %lld ms)\n",
+	       shift, (long long) ktime_ms_delta(t1, t0),
+	       (long long) ktime_ms_delta(t2, t1));
 
 	return 0;
 }
@@ -782,13 +785,13 @@ static int __init cmo_free_hint(char *str)
 	parm = strstrip(str);
 
 	if (strcasecmp(parm, "no") == 0 || strcasecmp(parm, "off") == 0) {
-		pr_info("%s: CMO free page hinting is not active.\n", __func__);
+		printk(KERN_INFO "cmo_free_hint: CMO free page hinting is not active.\n");
 		cmo_free_hint_flag = 0;
 		return 1;
 	}
 
 	cmo_free_hint_flag = 1;
-	pr_info("%s: CMO free page hinting is active.\n", __func__);
+	printk(KERN_INFO "cmo_free_hint: CMO free page hinting is active.\n");
 
 	if (strcasecmp(parm, "yes") == 0 || strcasecmp(parm, "on") == 0)
 		return 1;
@@ -899,7 +902,8 @@ out:
 	local_irq_restore(flags);
 }
 
-void __trace_hcall_exit(long opcode, long retval, unsigned long *retbuf)
+void __trace_hcall_exit(long opcode, unsigned long retval,
+			unsigned long *retbuf)
 {
 	unsigned long flags;
 	unsigned int *depth;

@@ -130,17 +130,7 @@ static int gemini_poweroff_probe(struct platform_device *pdev)
 	val |= GEMINI_CTRL_ENABLE;
 	writel(val, gpw->base + GEMINI_PWC_CTRLREG);
 
-	/* Clear the IRQ */
-	val = readl(gpw->base + GEMINI_PWC_CTRLREG);
-	val |= GEMINI_CTRL_IRQ_CLR;
-	writel(val, gpw->base + GEMINI_PWC_CTRLREG);
-
-	/* Wait for this to clear */
-	val = readl(gpw->base + GEMINI_PWC_STATREG);
-	while (val & 0x70U)
-		val = readl(gpw->base + GEMINI_PWC_STATREG);
-
-	/* Clear the IRQ again */
+	/* Now that the state machine is active, clear the IRQ */
 	val = readl(gpw->base + GEMINI_PWC_CTRLREG);
 	val |= GEMINI_CTRL_IRQ_CLR;
 	writel(val, gpw->base + GEMINI_PWC_CTRLREG);

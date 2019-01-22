@@ -28,7 +28,6 @@
 #include <net/netfilter/nf_conntrack.h>
 #include <net/netfilter/nf_conntrack_l4proto.h>
 #include <net/netfilter/nf_conntrack_ecache.h>
-#include <net/netfilter/nf_conntrack_timeout.h>
 
 /* FIXME: Examine ipfilter's timeouts and conntrack transitions more
    closely.  They're more complex. --RR
@@ -149,6 +148,30 @@ static const u8 sctp_conntracks[2][11][SCTP_CONNTRACK_MAX] = {
 static inline struct nf_sctp_net *sctp_pernet(struct net *net)
 {
 	return &net->ct.nf_ct_proto.sctp;
+}
+
+static bool sctp_pkt_to_tuple(const struct sk_buff *skb, unsigned int dataoff,
+			      struct net *net, struct nf_conntrack_tuple *tuple)
+{
+	const struct sctphdr *hp;
+	struct sctphdr _hdr;
+
+	/* Actually only need first 4 bytes to get ports. */
+	hp = skb_header_pointer(skb, dataoff, 4, &_hdr);
+	if (hp == NULL)
+		return false;
+
+	tuple->src.u.sctp.port = hp->source;
+	tuple->dst.u.sctp.port = hp->dest;
+	return true;
+}
+
+static bool sctp_invert_tuple(struct nf_conntrack_tuple *tuple,
+			      const struct nf_conntrack_tuple *orig)
+{
+	tuple->src.u.sctp.port = orig->dst.u.sctp.port;
+	tuple->dst.u.sctp.port = orig->src.u.sctp.port;
+	return true;
 }
 
 #ifdef CONFIG_NF_CONNTRACK_PROCFS
@@ -273,11 +296,17 @@ static int sctp_new_state(enum ip_conntrack_dir dir,
 	return sctp_conntracks[dir][i][cur_state];
 }
 
+static unsigned int *sctp_get_timeouts(struct net *net)
+{
+	return sctp_pernet(net)->timeouts;
+}
+
 /* Returns verdict for packet, or -NF_ACCEPT for invalid. */
 static int sctp_packet(struct nf_conn *ct,
 		       const struct sk_buff *skb,
 		       unsigned int dataoff,
-		       enum ip_conntrack_info ctinfo)
+		       enum ip_conntrack_info ctinfo,
+		       unsigned int *timeouts)
 {
 	enum sctp_conntrack new_state, old_state;
 	enum ip_conntrack_dir dir = CTINFO2DIR(ctinfo);
@@ -286,7 +315,6 @@ static int sctp_packet(struct nf_conn *ct,
 	const struct sctp_chunkhdr *sch;
 	struct sctp_chunkhdr _sch;
 	u_int32_t offset, count;
-	unsigned int *timeouts;
 	unsigned long map[256 / sizeof(unsigned long)] = { 0 };
 
 	sh = skb_header_pointer(skb, dataoff, sizeof(_sctph), &_sctph);
@@ -375,10 +403,6 @@ static int sctp_packet(struct nf_conn *ct,
 	}
 	spin_unlock_bh(&ct->lock);
 
-	timeouts = nf_ct_timeout_lookup(ct);
-	if (!timeouts)
-		timeouts = sctp_pernet(nf_ct_net(ct))->timeouts;
-
 	nf_ct_refresh_acct(ct, ctinfo, skb, timeouts[new_state]);
 
 	if (old_state == SCTP_CONNTRACK_COOKIE_ECHOED &&
@@ -399,7 +423,7 @@ out:
 
 /* Called when a new connection for this protocol found. */
 static bool sctp_new(struct nf_conn *ct, const struct sk_buff *skb,
-		     unsigned int dataoff)
+		     unsigned int dataoff, unsigned int *timeouts)
 {
 	enum sctp_conntrack new_state;
 	const struct sctphdr *sh;
@@ -591,7 +615,7 @@ static int nlattr_to_sctp(struct nlattr *cda[], struct nf_conn *ct)
 }
 #endif
 
-#ifdef CONFIG_NF_CONNTRACK_TIMEOUT
+#if IS_ENABLED(CONFIG_NF_CT_NETLINK_TIMEOUT)
 
 #include <linux/netfilter/nfnetlink.h>
 #include <linux/netfilter/nfnetlink_cttimeout.h>
@@ -613,8 +637,6 @@ static int sctp_timeout_nlattr_to_obj(struct nlattr *tb[],
 			timeouts[i] = ntohl(nla_get_be32(tb[i])) * HZ;
 		}
 	}
-
-	timeouts[CTA_TIMEOUT_SCTP_UNSPEC] = timeouts[CTA_TIMEOUT_SCTP_CLOSED];
 	return 0;
 }
 
@@ -646,7 +668,7 @@ sctp_timeout_nla_policy[CTA_TIMEOUT_SCTP_MAX+1] = {
 	[CTA_TIMEOUT_SCTP_HEARTBEAT_SENT]	= { .type = NLA_U32 },
 	[CTA_TIMEOUT_SCTP_HEARTBEAT_ACKED]	= { .type = NLA_U32 },
 };
-#endif /* CONFIG_NF_CONNTRACK_TIMEOUT */
+#endif /* CONFIG_NF_CT_NETLINK_TIMEOUT */
 
 
 #ifdef CONFIG_SYSCTL
@@ -745,11 +767,6 @@ static int sctp_init_net(struct net *net, u_int16_t proto)
 
 		for (i = 0; i < SCTP_CONNTRACK_MAX; i++)
 			sn->timeouts[i] = sctp_timeouts[i];
-
-		/* timeouts[0] is unused, init it so ->timeouts[0] contains
-		 * 'new' timeout, like udp or icmp.
-		 */
-		sn->timeouts[0] = sctp_timeouts[SCTP_CONNTRACK_CLOSED];
 	}
 
 	return sctp_kmemdup_sysctl_table(pn, sn);
@@ -763,10 +780,13 @@ static struct nf_proto_net *sctp_get_net_proto(struct net *net)
 const struct nf_conntrack_l4proto nf_conntrack_l4proto_sctp4 = {
 	.l3proto		= PF_INET,
 	.l4proto 		= IPPROTO_SCTP,
+	.pkt_to_tuple 		= sctp_pkt_to_tuple,
+	.invert_tuple 		= sctp_invert_tuple,
 #ifdef CONFIG_NF_CONNTRACK_PROCFS
 	.print_conntrack	= sctp_print_conntrack,
 #endif
 	.packet 		= sctp_packet,
+	.get_timeouts		= sctp_get_timeouts,
 	.new 			= sctp_new,
 	.error			= sctp_error,
 	.can_early_drop		= sctp_can_early_drop,
@@ -780,7 +800,7 @@ const struct nf_conntrack_l4proto nf_conntrack_l4proto_sctp4 = {
 	.nlattr_to_tuple	= nf_ct_port_nlattr_to_tuple,
 	.nla_policy		= nf_ct_port_nla_policy,
 #endif
-#ifdef CONFIG_NF_CONNTRACK_TIMEOUT
+#if IS_ENABLED(CONFIG_NF_CT_NETLINK_TIMEOUT)
 	.ctnl_timeout		= {
 		.nlattr_to_obj	= sctp_timeout_nlattr_to_obj,
 		.obj_to_nlattr	= sctp_timeout_obj_to_nlattr,
@@ -788,7 +808,7 @@ const struct nf_conntrack_l4proto nf_conntrack_l4proto_sctp4 = {
 		.obj_size	= sizeof(unsigned int) * SCTP_CONNTRACK_MAX,
 		.nla_policy	= sctp_timeout_nla_policy,
 	},
-#endif /* CONFIG_NF_CONNTRACK_TIMEOUT */
+#endif /* CONFIG_NF_CT_NETLINK_TIMEOUT */
 	.init_net		= sctp_init_net,
 	.get_net_proto		= sctp_get_net_proto,
 };
@@ -797,10 +817,13 @@ EXPORT_SYMBOL_GPL(nf_conntrack_l4proto_sctp4);
 const struct nf_conntrack_l4proto nf_conntrack_l4proto_sctp6 = {
 	.l3proto		= PF_INET6,
 	.l4proto 		= IPPROTO_SCTP,
+	.pkt_to_tuple 		= sctp_pkt_to_tuple,
+	.invert_tuple 		= sctp_invert_tuple,
 #ifdef CONFIG_NF_CONNTRACK_PROCFS
 	.print_conntrack	= sctp_print_conntrack,
 #endif
 	.packet 		= sctp_packet,
+	.get_timeouts		= sctp_get_timeouts,
 	.new 			= sctp_new,
 	.error			= sctp_error,
 	.can_early_drop		= sctp_can_early_drop,
@@ -813,8 +836,7 @@ const struct nf_conntrack_l4proto nf_conntrack_l4proto_sctp6 = {
 	.nlattr_tuple_size	= nf_ct_port_nlattr_tuple_size,
 	.nlattr_to_tuple	= nf_ct_port_nlattr_to_tuple,
 	.nla_policy		= nf_ct_port_nla_policy,
-#endif
-#ifdef CONFIG_NF_CONNTRACK_TIMEOUT
+#if IS_ENABLED(CONFIG_NF_CT_NETLINK_TIMEOUT)
 	.ctnl_timeout		= {
 		.nlattr_to_obj	= sctp_timeout_nlattr_to_obj,
 		.obj_to_nlattr	= sctp_timeout_obj_to_nlattr,
@@ -822,7 +844,8 @@ const struct nf_conntrack_l4proto nf_conntrack_l4proto_sctp6 = {
 		.obj_size	= sizeof(unsigned int) * SCTP_CONNTRACK_MAX,
 		.nla_policy	= sctp_timeout_nla_policy,
 	},
-#endif /* CONFIG_NF_CONNTRACK_TIMEOUT */
+#endif /* CONFIG_NF_CT_NETLINK_TIMEOUT */
+#endif
 	.init_net		= sctp_init_net,
 	.get_net_proto		= sctp_get_net_proto,
 };

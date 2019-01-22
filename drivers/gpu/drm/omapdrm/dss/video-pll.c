@@ -134,7 +134,6 @@ static const struct dss_pll_hw dss_dra7_video_pll_hw = {
 	.has_refsel = true,
 
 	.errata_i886 = true,
-	.errata_i932 = true,
 };
 
 struct dss_pll *dss_video_pll_init(struct dss_device *dss,

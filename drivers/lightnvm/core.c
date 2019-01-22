@@ -431,7 +431,7 @@ static int nvm_create_tgt(struct nvm_dev *dev, struct nvm_ioctl_create *create)
 	return 0;
 err_sysfs:
 	if (tt->exit)
-		tt->exit(targetdata, true);
+		tt->exit(targetdata);
 err_init:
 	blk_cleanup_queue(tqueue);
 	tdisk->queue = NULL;
@@ -446,7 +446,7 @@ err_reserve:
 	return ret;
 }
 
-static void __nvm_remove_target(struct nvm_target *t, bool graceful)
+static void __nvm_remove_target(struct nvm_target *t)
 {
 	struct nvm_tgt_type *tt = t->type;
 	struct gendisk *tdisk = t->disk;
@@ -459,7 +459,7 @@ static void __nvm_remove_target(struct nvm_target *t, bool graceful)
 		tt->sysfs_exit(tdisk);
 
 	if (tt->exit)
-		tt->exit(tdisk->private_data, graceful);
+		tt->exit(tdisk->private_data);
 
 	nvm_remove_tgt_dev(t->dev, 1);
 	put_disk(tdisk);
@@ -489,7 +489,7 @@ static int nvm_remove_tgt(struct nvm_dev *dev, struct nvm_ioctl_remove *remove)
 		mutex_unlock(&dev->mlock);
 		return 1;
 	}
-	__nvm_remove_target(t, true);
+	__nvm_remove_target(t);
 	mutex_unlock(&dev->mlock);
 
 	return 0;
@@ -963,7 +963,7 @@ void nvm_unregister(struct nvm_dev *dev)
 	list_for_each_entry_safe(t, tmp, &dev->targets, list) {
 		if (t->dev->parent != dev)
 			continue;
-		__nvm_remove_target(t, false);
+		__nvm_remove_target(t);
 	}
 	mutex_unlock(&dev->mlock);
 

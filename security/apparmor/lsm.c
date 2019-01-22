@@ -39,7 +39,6 @@
 #include "include/policy_ns.h"
 #include "include/procattr.h"
 #include "include/mount.h"
-#include "include/secid.h"
 
 /* Flag indicating whether initialization completed */
 int apparmor_initialized;
@@ -117,8 +116,7 @@ static int apparmor_ptrace_access_check(struct task_struct *child,
 	tracer = begin_current_label_crit_section();
 	tracee = aa_get_task_label(child);
 	error = aa_may_ptrace(tracer, tracee,
-			(mode & PTRACE_MODE_READ) ? AA_PTRACE_READ
-						  : AA_PTRACE_TRACE);
+		  mode == PTRACE_MODE_READ ? AA_PTRACE_READ : AA_PTRACE_TRACE);
 	aa_put_label(tracee);
 	end_current_label_crit_section(tracer);
 
@@ -395,7 +393,7 @@ static int apparmor_inode_getattr(const struct path *path)
 	return common_perm_cond(OP_GETATTR, path, AA_MAY_GETATTR);
 }
 
-static int apparmor_file_open(struct file *file)
+static int apparmor_file_open(struct file *file, const struct cred *cred)
 {
 	struct aa_file_ctx *fctx = file_ctx(file);
 	struct aa_label *label;
@@ -414,7 +412,7 @@ static int apparmor_file_open(struct file *file)
 		return 0;
 	}
 
-	label = aa_get_newest_cred_label(file->f_cred);
+	label = aa_get_newest_cred_label(cred);
 	if (!unconfined(label)) {
 		struct inode *inode = file_inode(file);
 		struct path_cond cond = { inode->i_uid, inode->i_mode };
@@ -710,13 +708,6 @@ static void apparmor_bprm_committed_creds(struct linux_binprm *bprm)
 	aa_clear_task_ctx_trans(task_ctx(current));
 
 	return;
-}
-
-static void apparmor_task_getsecid(struct task_struct *p, u32 *secid)
-{
-	struct aa_label *label = aa_get_task_label(p);
-	*secid = label->secid;
-	aa_put_label(label);
 }
 
 static int apparmor_task_setrlimit(struct task_struct *task,
@@ -1195,20 +1186,8 @@ static struct security_hook_list apparmor_hooks[] __lsm_ro_after_init = {
 
 	LSM_HOOK_INIT(task_free, apparmor_task_free),
 	LSM_HOOK_INIT(task_alloc, apparmor_task_alloc),
-	LSM_HOOK_INIT(task_getsecid, apparmor_task_getsecid),
 	LSM_HOOK_INIT(task_setrlimit, apparmor_task_setrlimit),
 	LSM_HOOK_INIT(task_kill, apparmor_task_kill),
-
-#ifdef CONFIG_AUDIT
-	LSM_HOOK_INIT(audit_rule_init, aa_audit_rule_init),
-	LSM_HOOK_INIT(audit_rule_known, aa_audit_rule_known),
-	LSM_HOOK_INIT(audit_rule_match, aa_audit_rule_match),
-	LSM_HOOK_INIT(audit_rule_free, aa_audit_rule_free),
-#endif
-
-	LSM_HOOK_INIT(secid_to_secctx, apparmor_secid_to_secctx),
-	LSM_HOOK_INIT(secctx_to_secid, apparmor_secctx_to_secid),
-	LSM_HOOK_INIT(release_secctx, apparmor_release_secctx),
 };
 
 /*
@@ -1399,12 +1378,14 @@ static int param_set_audit(const char *val, const struct kernel_param *kp)
 	if (apparmor_initialized && !policy_admin_capable(NULL))
 		return -EPERM;
 
-	i = match_string(audit_mode_names, AUDIT_MAX_INDEX, val);
-	if (i < 0)
-		return -EINVAL;
+	for (i = 0; i < AUDIT_MAX_INDEX; i++) {
+		if (strcmp(val, audit_mode_names[i]) == 0) {
+			aa_g_audit = i;
+			return 0;
+		}
+	}
 
-	aa_g_audit = i;
-	return 0;
+	return -EINVAL;
 }
 
 static int param_get_mode(char *buffer, const struct kernel_param *kp)
@@ -1428,13 +1409,14 @@ static int param_set_mode(const char *val, const struct kernel_param *kp)
 	if (apparmor_initialized && !policy_admin_capable(NULL))
 		return -EPERM;
 
-	i = match_string(aa_profile_mode_names, APPARMOR_MODE_NAMES_MAX_INDEX,
-			 val);
-	if (i < 0)
-		return -EINVAL;
+	for (i = 0; i < APPARMOR_MODE_NAMES_MAX_INDEX; i++) {
+		if (strcmp(val, aa_profile_mode_names[i]) == 0) {
+			aa_g_profile_mode = i;
+			return 0;
+		}
+	}
 
-	aa_g_profile_mode = i;
-	return 0;
+	return -EINVAL;
 }
 
 /*
@@ -1547,8 +1529,6 @@ static int __init apparmor_init(void)
 		apparmor_enabled = false;
 		return 0;
 	}
-
-	aa_secids_init();
 
 	error = aa_setup_dfa_engine();
 	if (error) {

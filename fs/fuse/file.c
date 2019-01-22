@@ -12,7 +12,6 @@
 #include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/sched.h>
-#include <linux/sched/signal.h>
 #include <linux/module.h>
 #include <linux/compat.h>
 #include <linux/swap.h>
@@ -867,7 +866,6 @@ static int fuse_readpages_fill(void *_data, struct page *page)
 	}
 
 	if (WARN_ON(req->num_pages >= req->max_pages)) {
-		unlock_page(page);
 		fuse_put_request(fc, req);
 		return -EIO;
 	}
@@ -2050,7 +2048,7 @@ static void fuse_vma_close(struct vm_area_struct *vma)
  * - sync(2)
  * - try_to_free_pages() with order > PAGE_ALLOC_COSTLY_ORDER
  */
-static vm_fault_t fuse_page_mkwrite(struct vm_fault *vmf)
+static int fuse_page_mkwrite(struct vm_fault *vmf)
 {
 	struct page *page = vmf->page;
 	struct inode *inode = file_inode(vmf->vma->vm_file);

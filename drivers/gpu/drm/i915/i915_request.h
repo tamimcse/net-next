@@ -28,16 +28,13 @@
 #include <linux/dma-fence.h>
 
 #include "i915_gem.h"
-#include "i915_scheduler.h"
 #include "i915_sw_fence.h"
-#include "i915_scheduler.h"
 
 #include <uapi/drm/i915_drm.h>
 
 struct drm_file;
 struct drm_i915_gem_object;
 struct i915_request;
-struct i915_timeline;
 
 struct intel_wait {
 	struct rb_node node;
@@ -49,6 +46,44 @@ struct intel_wait {
 struct intel_signal_node {
 	struct intel_wait wait;
 	struct list_head link;
+};
+
+struct i915_dependency {
+	struct i915_priotree *signaler;
+	struct list_head signal_link;
+	struct list_head wait_link;
+	struct list_head dfs_link;
+	unsigned long flags;
+#define I915_DEPENDENCY_ALLOC BIT(0)
+};
+
+/*
+ * "People assume that time is a strict progression of cause to effect, but
+ * actually, from a nonlinear, non-subjective viewpoint, it's more like a big
+ * ball of wibbly-wobbly, timey-wimey ... stuff." -The Doctor, 2015
+ *
+ * Requests exist in a complex web of interdependencies. Each request
+ * has to wait for some other request to complete before it is ready to be run
+ * (e.g. we have to wait until the pixels have been rendering into a texture
+ * before we can copy from it). We track the readiness of a request in terms
+ * of fences, but we also need to keep the dependency tree for the lifetime
+ * of the request (beyond the life of an individual fence). We use the tree
+ * at various points to reorder the requests whilst keeping the requests
+ * in order with respect to their various dependencies.
+ */
+struct i915_priotree {
+	struct list_head signalers_list; /* those before us, we depend upon */
+	struct list_head waiters_list; /* those after us, they depend upon us */
+	struct list_head link;
+	int priority;
+};
+
+enum {
+	I915_PRIORITY_MIN = I915_CONTEXT_MIN_USER_PRIORITY - 1,
+	I915_PRIORITY_NORMAL = I915_CONTEXT_DEFAULT_PRIORITY,
+	I915_PRIORITY_MAX = I915_CONTEXT_MAX_USER_PRIORITY + 1,
+
+	I915_PRIORITY_INVALID = INT_MIN
 };
 
 struct i915_capture_list {
@@ -93,11 +128,10 @@ struct i915_request {
 	 * i915_request_free() will then decrement the refcount on the
 	 * context.
 	 */
-	struct i915_gem_context *gem_context;
+	struct i915_gem_context *ctx;
 	struct intel_engine_cs *engine;
-	struct intel_context *hw_context;
 	struct intel_ring *ring;
-	struct i915_timeline *timeline;
+	struct intel_timeline *timeline;
 	struct intel_signal_node signaling;
 
 	/*
@@ -120,7 +154,7 @@ struct i915_request {
 	 * to retirement), i.e. bidirectional dependency information for the
 	 * request not tied to individual fences.
 	 */
-	struct i915_sched_node sched;
+	struct i915_priotree priotree;
 	struct i915_dependency dep;
 
 	/**
@@ -133,9 +167,6 @@ struct i915_request {
 
 	/** Position in the ring of the start of the request */
 	u32 head;
-
-	/** Position in the ring of the start of the user packets */
-	u32 infix;
 
 	/**
 	 * Position in the ring of the start of the postfix.
@@ -253,12 +284,12 @@ int i915_request_await_object(struct i915_request *to,
 int i915_request_await_dma_fence(struct i915_request *rq,
 				 struct dma_fence *fence);
 
-void i915_request_add(struct i915_request *rq);
+void __i915_request_add(struct i915_request *rq, bool flush_caches);
+#define i915_request_add(rq) \
+	__i915_request_add(rq, false)
 
 void __i915_request_submit(struct i915_request *request);
 void i915_request_submit(struct i915_request *request);
-
-void i915_request_skip(struct i915_request *request, int error);
 
 void __i915_request_unsubmit(struct i915_request *request);
 void i915_request_unsubmit(struct i915_request *request);
@@ -270,7 +301,6 @@ long i915_request_wait(struct i915_request *rq,
 #define I915_WAIT_INTERRUPTIBLE	BIT(0)
 #define I915_WAIT_LOCKED	BIT(1) /* struct_mutex held, handle GPU reset */
 #define I915_WAIT_ALL		BIT(2) /* used by i915_gem_object_wait() */
-#define I915_WAIT_FOR_IDLE_BOOST BIT(3)
 
 static inline u32 intel_engine_get_seqno(struct intel_engine_cs *engine);
 
@@ -313,10 +343,10 @@ static inline bool i915_request_started(const struct i915_request *rq)
 				 seqno - 1);
 }
 
-static inline bool i915_sched_node_signaled(const struct i915_sched_node *node)
+static inline bool i915_priotree_signaled(const struct i915_priotree *pt)
 {
 	const struct i915_request *rq =
-		container_of(node, const struct i915_request, sched);
+		container_of(pt, const struct i915_request, priotree);
 
 	return i915_request_completed(rq);
 }
@@ -380,7 +410,6 @@ static inline void
 init_request_active(struct i915_gem_active *active,
 		    i915_gem_retire_fn retire)
 {
-	RCU_INIT_POINTER(active->request, NULL);
 	INIT_LIST_HEAD(&active->link);
 	active->retire = retire ?: i915_gem_retire_noop;
 }

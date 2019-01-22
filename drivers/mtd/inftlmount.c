@@ -270,8 +270,7 @@ static int find_boot_record(struct INFTLrecord *inftl)
 		inftl->nb_blocks = ip->lastUnit + 1;
 
 		/* Memory alloc */
-		inftl->PUtable = kmalloc_array(inftl->nb_blocks, sizeof(u16),
-					       GFP_KERNEL);
+		inftl->PUtable = kmalloc(inftl->nb_blocks * sizeof(u16), GFP_KERNEL);
 		if (!inftl->PUtable) {
 			printk(KERN_WARNING "INFTL: allocation of PUtable "
 				"failed (%zd bytes)\n",
@@ -279,8 +278,7 @@ static int find_boot_record(struct INFTLrecord *inftl)
 			return -ENOMEM;
 		}
 
-		inftl->VUtable = kmalloc_array(inftl->nb_blocks, sizeof(u16),
-					       GFP_KERNEL);
+		inftl->VUtable = kmalloc(inftl->nb_blocks * sizeof(u16), GFP_KERNEL);
 		if (!inftl->VUtable) {
 			kfree(inftl->PUtable);
 			printk(KERN_WARNING "INFTL: allocation of VUtable "
@@ -336,37 +334,28 @@ static int memcmpb(void *a, int c, int n)
 static int check_free_sectors(struct INFTLrecord *inftl, unsigned int address,
 	int len, int check_oob)
 {
+	u8 buf[SECTORSIZE + inftl->mbd.mtd->oobsize];
 	struct mtd_info *mtd = inftl->mbd.mtd;
 	size_t retlen;
-	int i, ret;
-	u8 *buf;
+	int i;
 
-	buf = kmalloc(SECTORSIZE + mtd->oobsize, GFP_KERNEL);
-	if (!buf)
-		return -1;
-
-	ret = -1;
 	for (i = 0; i < len; i += SECTORSIZE) {
 		if (mtd_read(mtd, address, SECTORSIZE, &retlen, buf))
-			goto out;
+			return -1;
 		if (memcmpb(buf, 0xff, SECTORSIZE) != 0)
-			goto out;
+			return -1;
 
 		if (check_oob) {
 			if(inftl_read_oob(mtd, address, mtd->oobsize,
 					  &retlen, &buf[SECTORSIZE]) < 0)
-				goto out;
+				return -1;
 			if (memcmpb(buf + SECTORSIZE, 0xff, mtd->oobsize) != 0)
-				goto out;
+				return -1;
 		}
 		address += SECTORSIZE;
 	}
 
-	ret = 0;
-
-out:
-	kfree(buf);
-	return ret;
+	return 0;
 }
 
 /*

@@ -63,19 +63,13 @@
 #include <net/lwtunnel.h>
 #include <net/ip_tunnels.h>
 #include <net/l3mdev.h>
-#include <net/ip.h>
+#include <trace/events/fib6.h>
+
 #include <linux/uaccess.h>
 
 #ifdef CONFIG_SYSCTL
 #include <linux/sysctl.h>
 #endif
-
-static int ip6_rt_type_to_error(u8 fib6_type);
-
-#define CREATE_TRACE_POINTS
-#include <trace/events/fib6.h>
-EXPORT_TRACEPOINT_SYMBOL_GPL(fib6_table_lookup);
-#undef CREATE_TRACE_POINTS
 
 enum rt6_nud_state {
 	RT6_NUD_FAIL_HARD = -3,
@@ -364,14 +358,11 @@ EXPORT_SYMBOL(ip6_dst_alloc);
 
 static void ip6_dst_destroy(struct dst_entry *dst)
 {
-	struct dst_metrics *p = (struct dst_metrics *)DST_METRICS_PTR(dst);
 	struct rt6_info *rt = (struct rt6_info *)dst;
 	struct fib6_info *from;
 	struct inet6_dev *idev;
 
-	if (p != &dst_default_metrics && refcount_dec_and_test(&p->refcnt))
-		kfree(p);
-
+	dst_destroy_metrics_generic(dst);
 	rt6_uncached_list_del(rt);
 
 	idev = rt->rt6i_idev;
@@ -428,11 +419,11 @@ static bool rt6_check_expired(const struct rt6_info *rt)
 	return false;
 }
 
-struct fib6_info *fib6_multipath_select(const struct net *net,
-					struct fib6_info *match,
-					struct flowi6 *fl6, int oif,
-					const struct sk_buff *skb,
-					int strict)
+static struct fib6_info *rt6_multipath_select(const struct net *net,
+					      struct fib6_info *match,
+					     struct flowi6 *fl6, int oif,
+					     const struct sk_buff *skb,
+					     int strict)
 {
 	struct fib6_info *sibling, *next_sibling;
 
@@ -949,6 +940,8 @@ static void ip6_rt_init_dst_reject(struct rt6_info *rt, struct fib6_info *ort)
 
 static void ip6_rt_init_dst(struct rt6_info *rt, struct fib6_info *ort)
 {
+	rt->dst.flags |= fib6_info_dst_flags(ort);
+
 	if (ort->fib6_flags & RTF_REJECT) {
 		ip6_rt_init_dst_reject(rt, ort);
 		return;
@@ -957,7 +950,7 @@ static void ip6_rt_init_dst(struct rt6_info *rt, struct fib6_info *ort)
 	rt->dst.error = 0;
 	rt->dst.output = ip6_output;
 
-	if (ort->fib6_type == RTN_LOCAL || ort->fib6_type == RTN_ANYCAST) {
+	if (ort->fib6_type == RTN_LOCAL) {
 		rt->dst.input = ip6_input;
 	} else if (ipv6_addr_type(&ort->fib6_dst.addr) & IPV6_ADDR_MULTICAST) {
 		rt->dst.input = ip6_mc_input;
@@ -973,10 +966,10 @@ static void ip6_rt_init_dst(struct rt6_info *rt, struct fib6_info *ort)
 	rt->dst.lastuse = jiffies;
 }
 
-/* Caller must already hold reference to @from */
 static void rt6_set_from(struct rt6_info *rt, struct fib6_info *from)
 {
 	rt->rt6i_flags &= ~RTF_EXPIRES;
+	fib6_info_hold(from);
 	rcu_assign_pointer(rt->from, from);
 	dst_init_metrics(&rt->dst, from->fib6_metrics->metrics, true);
 	if (from->fib6_metrics != &dst_default_metrics) {
@@ -985,7 +978,6 @@ static void rt6_set_from(struct rt6_info *rt, struct fib6_info *from)
 	}
 }
 
-/* Caller must already hold reference to @ort */
 static void ip6_rt_copy_init(struct rt6_info *rt, struct fib6_info *ort)
 {
 	struct net_device *dev = fib6_info_nh_dev(ort);
@@ -1001,6 +993,7 @@ static void ip6_rt_copy_init(struct rt6_info *rt, struct fib6_info *ort)
 	rt->rt6i_src = ort->fib6_src;
 #endif
 	rt->rt6i_prefsrc = ort->fib6_prefsrc;
+	rt->dst.lwtstate = lwtstate_get(ort->fib6_nh.nh_lwtstate);
 }
 
 static struct fib6_node* fib6_backtrack(struct fib6_node *fn,
@@ -1013,7 +1006,7 @@ static struct fib6_node* fib6_backtrack(struct fib6_node *fn,
 		pn = rcu_dereference(fn->parent);
 		sn = FIB6_SUBTREE(pn);
 		if (sn && sn != fn)
-			fn = fib6_node_lookup(sn, NULL, saddr);
+			fn = fib6_lookup(sn, NULL, saddr);
 		else
 			fn = pn;
 		if (fn->fn_flags & RTN_RTINFO)
@@ -1045,14 +1038,9 @@ static struct rt6_info *ip6_create_rt_rcu(struct fib6_info *rt)
 	struct net_device *dev = rt->fib6_nh.nh_dev;
 	struct rt6_info *nrt;
 
-	if (!fib6_info_hold_safe(rt))
-		return NULL;
-
 	nrt = ip6_dst_alloc(dev_net(dev), dev, flags);
 	if (nrt)
 		ip6_rt_copy_init(nrt, rt);
-	else
-		fib6_info_release(rt);
 
 	return nrt;
 }
@@ -1071,7 +1059,7 @@ static struct rt6_info *ip6_pol_route_lookup(struct net *net,
 		flags &= ~RT6_LOOKUP_F_IFACE;
 
 	rcu_read_lock();
-	fn = fib6_node_lookup(&table->tb6_root, &fl6->daddr, &fl6->saddr);
+	fn = fib6_lookup(&table->tb6_root, &fl6->daddr, &fl6->saddr);
 restart:
 	f6i = rcu_dereference(fn->leaf);
 	if (!f6i) {
@@ -1080,17 +1068,14 @@ restart:
 		f6i = rt6_device_match(net, f6i, &fl6->saddr,
 				      fl6->flowi6_oif, flags);
 		if (f6i->fib6_nsiblings && fl6->flowi6_oif == 0)
-			f6i = fib6_multipath_select(net, f6i, fl6,
-						    fl6->flowi6_oif, skb,
-						    flags);
+			f6i = rt6_multipath_select(net, f6i, fl6,
+						   fl6->flowi6_oif, skb, flags);
 	}
 	if (f6i == net->ipv6.fib6_null_entry) {
 		fn = fib6_backtrack(fn, &fl6->saddr);
 		if (fn)
 			goto restart;
 	}
-
-	trace_fib6_table_lookup(net, f6i, table, fl6);
 
 	/* Search through exception table */
 	rt = rt6_find_cached_rt(f6i, &fl6->daddr, &fl6->saddr);
@@ -1109,6 +1094,8 @@ restart:
 	}
 
 	rcu_read_unlock();
+
+	trace_fib6_table_lookup(net, rt, table, fl6);
 
 	return rt;
 }
@@ -1184,15 +1171,10 @@ static struct rt6_info *ip6_rt_cache_alloc(struct fib6_info *ort,
 	 *	Clone the route.
 	 */
 
-	if (!fib6_info_hold_safe(ort))
-		return NULL;
-
 	dev = ip6_rt_get_dev_rcu(ort);
 	rt = ip6_dst_alloc(dev_net(dev), dev, 0);
-	if (!rt) {
-		fib6_info_release(ort);
+	if (!rt)
 		return NULL;
-	}
 
 	ip6_rt_copy_init(rt, ort);
 	rt->rt6i_flags |= RTF_CACHE;
@@ -1221,17 +1203,12 @@ static struct rt6_info *ip6_rt_pcpu_alloc(struct fib6_info *rt)
 	struct net_device *dev;
 	struct rt6_info *pcpu_rt;
 
-	if (!fib6_info_hold_safe(rt))
-		return NULL;
-
 	rcu_read_lock();
 	dev = ip6_rt_get_dev_rcu(rt);
 	pcpu_rt = ip6_dst_alloc(dev_net(dev), dev, flags);
 	rcu_read_unlock();
-	if (!pcpu_rt) {
-		fib6_info_release(rt);
+	if (!pcpu_rt)
 		return NULL;
-	}
 	ip6_rt_copy_init(pcpu_rt, rt);
 	pcpu_rt->rt6i_flags |= RTF_PCPU;
 	return pcpu_rt;
@@ -1822,14 +1799,23 @@ void rt6_age_exceptions(struct fib6_info *rt,
 	rcu_read_unlock_bh();
 }
 
-/* must be called with rcu lock held */
-struct fib6_info *fib6_table_lookup(struct net *net, struct fib6_table *table,
-				    int oif, struct flowi6 *fl6, int strict)
+struct rt6_info *ip6_pol_route(struct net *net, struct fib6_table *table,
+			       int oif, struct flowi6 *fl6,
+			       const struct sk_buff *skb, int flags)
 {
 	struct fib6_node *fn, *saved_fn;
 	struct fib6_info *f6i;
+	struct rt6_info *rt;
+	int strict = 0;
 
-	fn = fib6_node_lookup(&table->tb6_root, &fl6->daddr, &fl6->saddr);
+	strict |= flags & RT6_LOOKUP_F_IFACE;
+	strict |= flags & RT6_LOOKUP_F_IGNORE_LINKSTATE;
+	if (net->ipv6.devconf_all->forwarding == 0)
+		strict |= RT6_LOOKUP_F_REACHABLE;
+
+	rcu_read_lock();
+
+	fn = fib6_lookup(&table->tb6_root, &fl6->daddr, &fl6->saddr);
 	saved_fn = fn;
 
 	if (fl6->flowi6_flags & FLOWI_FLAG_SKIP_NH_OIF)
@@ -1837,6 +1823,8 @@ struct fib6_info *fib6_table_lookup(struct net *net, struct fib6_table *table,
 
 redo_rt6_select:
 	f6i = rt6_select(net, fn, oif, strict);
+	if (f6i->fib6_nsiblings)
+		f6i = rt6_multipath_select(net, f6i, fl6, oif, skb, strict);
 	if (f6i == net->ipv6.fib6_null_entry) {
 		fn = fib6_backtrack(fn, &fl6->saddr);
 		if (fn)
@@ -1849,34 +1837,11 @@ redo_rt6_select:
 		}
 	}
 
-	trace_fib6_table_lookup(net, f6i, table, fl6);
-
-	return f6i;
-}
-
-struct rt6_info *ip6_pol_route(struct net *net, struct fib6_table *table,
-			       int oif, struct flowi6 *fl6,
-			       const struct sk_buff *skb, int flags)
-{
-	struct fib6_info *f6i;
-	struct rt6_info *rt;
-	int strict = 0;
-
-	strict |= flags & RT6_LOOKUP_F_IFACE;
-	strict |= flags & RT6_LOOKUP_F_IGNORE_LINKSTATE;
-	if (net->ipv6.devconf_all->forwarding == 0)
-		strict |= RT6_LOOKUP_F_REACHABLE;
-
-	rcu_read_lock();
-
-	f6i = fib6_table_lookup(net, table, oif, fl6, strict);
-	if (f6i->fib6_nsiblings)
-		f6i = fib6_multipath_select(net, f6i, fl6, oif, skb, strict);
-
 	if (f6i == net->ipv6.fib6_null_entry) {
 		rt = net->ipv6.ip6_null_entry;
 		rcu_read_unlock();
 		dst_hold(&rt->dst);
+		trace_fib6_table_lookup(net, rt, table, fl6);
 		return rt;
 	}
 
@@ -1887,6 +1852,7 @@ struct rt6_info *ip6_pol_route(struct net *net, struct fib6_table *table,
 			dst_use_noref(&rt->dst, jiffies);
 
 		rcu_read_unlock();
+		trace_fib6_table_lookup(net, rt, table, fl6);
 		return rt;
 	} else if (unlikely((fl6->flowi6_flags & FLOWI_FLAG_KNOWN_NH) &&
 			    !(f6i->fib6_flags & RTF_GATEWAY))) {
@@ -1912,7 +1878,9 @@ struct rt6_info *ip6_pol_route(struct net *net, struct fib6_table *table,
 			dst_hold(&uncached_rt->dst);
 		}
 
+		trace_fib6_table_lookup(net, uncached_rt, table, fl6);
 		return uncached_rt;
+
 	} else {
 		/* Get a percpu copy */
 
@@ -1926,7 +1894,7 @@ struct rt6_info *ip6_pol_route(struct net *net, struct fib6_table *table,
 
 		local_bh_enable();
 		rcu_read_unlock();
-
+		trace_fib6_table_lookup(net, pcpu_rt, table, fl6);
 		return pcpu_rt;
 	}
 }
@@ -1997,7 +1965,7 @@ out:
 	} else {
 		keys->addrs.v6addrs.src = key_iph->saddr;
 		keys->addrs.v6addrs.dst = key_iph->daddr;
-		keys->tags.flow_label = ip6_flowlabel(key_iph);
+		keys->tags.flow_label = ip6_flowinfo(key_iph);
 		keys->basic.ip_proto = key_iph->nexthdr;
 	}
 }
@@ -2018,7 +1986,7 @@ u32 rt6_multipath_hash(const struct net *net, const struct flowi6 *fl6,
 		} else {
 			hash_keys.addrs.v6addrs.src = fl6->saddr;
 			hash_keys.addrs.v6addrs.dst = fl6->daddr;
-			hash_keys.tags.flow_label = (__force u32)flowi6_get_flowlabel(fl6);
+			hash_keys.tags.flow_label = (__force u32)fl6->flowlabel;
 			hash_keys.basic.ip_proto = fl6->flowi6_proto;
 		}
 		break;
@@ -2323,6 +2291,9 @@ static void __ip6_rt_update_pmtu(struct dst_entry *dst, const struct sock *sk,
 	const struct in6_addr *daddr, *saddr;
 	struct rt6_info *rt6 = (struct rt6_info *)dst;
 
+	if (rt6->rt6i_flags & RTF_LOCAL)
+		return;
+
 	if (dst_metric_locked(dst, RTAX_MTU))
 		return;
 
@@ -2454,7 +2425,7 @@ static struct rt6_info *__ip6_route_redirect(struct net *net,
 	 */
 
 	rcu_read_lock();
-	fn = fib6_node_lookup(&table->tb6_root, &fl6->daddr, &fl6->saddr);
+	fn = fib6_lookup(&table->tb6_root, &fl6->daddr, &fl6->saddr);
 restart:
 	for_each_fib6_node_rt_rcu(fn) {
 		if (rt->fib6_nh.nh_flags & RTNH_F_DEAD)
@@ -2502,13 +2473,13 @@ restart:
 
 out:
 	if (ret)
-		ip6_hold_safe(net, &ret, true);
+		dst_hold(&ret->dst);
 	else
 		ret = ip6_create_rt_rcu(rt);
 
 	rcu_read_unlock();
 
-	trace_fib6_table_lookup(net, rt, table, fl6);
+	trace_fib6_table_lookup(net, ret, table, fl6);
 	return ret;
 };
 
@@ -2620,54 +2591,6 @@ out:
 	mtu = min_t(unsigned int, mtu, IP6_MAX_MTU);
 
 	return mtu - lwtunnel_headroom(dst->lwtstate, mtu);
-}
-
-/* MTU selection:
- * 1. mtu on route is locked - use it
- * 2. mtu from nexthop exception
- * 3. mtu from egress device
- *
- * based on ip6_dst_mtu_forward and exception logic of
- * rt6_find_cached_rt; called with rcu_read_lock
- */
-u32 ip6_mtu_from_fib6(struct fib6_info *f6i, struct in6_addr *daddr,
-		      struct in6_addr *saddr)
-{
-	struct rt6_exception_bucket *bucket;
-	struct rt6_exception *rt6_ex;
-	struct in6_addr *src_key;
-	struct inet6_dev *idev;
-	u32 mtu = 0;
-
-	if (unlikely(fib6_metric_locked(f6i, RTAX_MTU))) {
-		mtu = f6i->fib6_pmtu;
-		if (mtu)
-			goto out;
-	}
-
-	src_key = NULL;
-#ifdef CONFIG_IPV6_SUBTREES
-	if (f6i->fib6_src.plen)
-		src_key = saddr;
-#endif
-
-	bucket = rcu_dereference(f6i->rt6i_exception_bucket);
-	rt6_ex = __rt6_find_exception_rcu(&bucket, daddr, src_key);
-	if (rt6_ex && !rt6_check_expired(rt6_ex->rt6i))
-		mtu = dst_metric_raw(&rt6_ex->rt6i->dst, RTAX_MTU);
-
-	if (likely(!mtu)) {
-		struct net_device *dev = fib6_info_nh_dev(f6i);
-
-		mtu = IPV6_MIN_MTU;
-		idev = __in6_dev_get(dev);
-		if (idev && idev->cnf.mtu6 > mtu)
-			mtu = idev->cnf.mtu6;
-	}
-
-	mtu = min_t(unsigned int, mtu, IP6_MAX_MTU);
-out:
-	return mtu - lwtunnel_headroom(fib6_info_nh_lwt(f6i), mtu);
 }
 
 struct dst_entry *icmp6_dst_alloc(struct net_device *dev,
@@ -3301,10 +3224,8 @@ static int ip6_route_del(struct fib6_config *cfg,
 							      &cfg->fc_src);
 				if (rt_cache) {
 					rc = ip6_del_cached_rt(rt_cache, cfg);
-					if (rc != -ESRCH) {
-						rcu_read_unlock();
+					if (rc != -ESRCH)
 						return rc;
-					}
 				}
 				continue;
 			}
@@ -3319,8 +3240,7 @@ static int ip6_route_del(struct fib6_config *cfg,
 				continue;
 			if (cfg->fc_protocol && cfg->fc_protocol != rt->fib6_protocol)
 				continue;
-			if (!fib6_info_hold_safe(rt))
-				continue;
+			fib6_info_hold(rt);
 			rcu_read_unlock();
 
 			/* if gateway was specified only delete the one hop */
@@ -3426,9 +3346,6 @@ static void rt6_do_redirect(struct dst_entry *dst, struct sock *sk, struct sk_bu
 
 	rcu_read_lock();
 	from = rcu_dereference(rt->from);
-	/* This fib6_info_hold() is safe here because we hold reference to rt
-	 * and rt already holds reference to fib6_info.
-	 */
 	fib6_info_hold(from);
 	rcu_read_unlock();
 
@@ -3490,8 +3407,7 @@ static struct fib6_info *rt6_get_route_info(struct net *net,
 			continue;
 		if (!ipv6_addr_equal(&rt->fib6_nh.nh_gw, gwaddr))
 			continue;
-		if (!fib6_info_hold_safe(rt))
-			continue;
+		fib6_info_hold(rt);
 		break;
 	}
 out:
@@ -3551,8 +3467,8 @@ struct fib6_info *rt6_get_dflt_router(struct net *net,
 		    ipv6_addr_equal(&rt->fib6_nh.nh_gw, addr))
 			break;
 	}
-	if (rt && !fib6_info_hold_safe(rt))
-		rt = NULL;
+	if (rt)
+		fib6_info_hold(rt);
 	rcu_read_unlock();
 	return rt;
 }
@@ -3600,8 +3516,8 @@ restart:
 		struct inet6_dev *idev = dev ? __in6_dev_get(dev) : NULL;
 
 		if (rt->fib6_flags & (RTF_DEFAULT | RTF_ADDRCONF) &&
-		    (!idev || idev->cnf.accept_ra != 2) &&
-		    fib6_info_hold_safe(rt)) {
+		    (!idev || idev->cnf.accept_ra != 2)) {
+			fib6_info_hold(rt);
 			rcu_read_unlock();
 			ip6_del_rt(net, rt);
 			goto restart;
@@ -4155,9 +4071,6 @@ static const struct nla_policy rtm_ipv6_policy[RTA_MAX+1] = {
 	[RTA_UID]		= { .type = NLA_U32 },
 	[RTA_MARK]		= { .type = NLA_U32 },
 	[RTA_TABLE]		= { .type = NLA_U32 },
-	[RTA_IP_PROTO]		= { .type = NLA_U8 },
-	[RTA_SPORT]		= { .type = NLA_U16 },
-	[RTA_DPORT]		= { .type = NLA_U16 },
 };
 
 static int rtm_to_fib6_config(struct sk_buff *skb, struct nlmsghdr *nlh,
@@ -4409,13 +4322,6 @@ static int ip6_route_multipath_add(struct fib6_config *cfg,
 			rt = NULL;
 			goto cleanup;
 		}
-		if (!rt6_qualify_for_ecmp(rt)) {
-			err = -EINVAL;
-			NL_SET_ERR_MSG(extack,
-				       "Device only routes can not be added for IPv6 using the multipath API.");
-			fib6_info_release(rt);
-			goto cleanup;
-		}
 
 		rt->fib6_nh.nh_weight = rtnh->rtnh_hops + 1;
 
@@ -4437,17 +4343,13 @@ static int ip6_route_multipath_add(struct fib6_config *cfg,
 
 	err_nh = NULL;
 	list_for_each_entry(nh, &rt6_nh_list, next) {
+		rt_last = nh->fib6_info;
 		err = __ip6_ins_rt(nh->fib6_info, info, extack);
 		fib6_info_release(nh->fib6_info);
 
-		if (!err) {
-			/* save reference to last route successfully inserted */
-			rt_last = nh->fib6_info;
-
-			/* save reference to first route for notification */
-			if (!rt_notif)
-				rt_notif = nh->fib6_info;
-		}
+		/* save reference to first route for notification */
+		if (!rt_notif && !err)
+			rt_notif = nh->fib6_info;
 
 		/* nh->fib6_info is used or freed at this point, reset to NULL*/
 		nh->fib6_info = NULL;
@@ -4675,31 +4577,20 @@ static int rt6_fill_node(struct net *net, struct sk_buff *skb,
 			 int iif, int type, u32 portid, u32 seq,
 			 unsigned int flags)
 {
-	struct rt6_info *rt6 = (struct rt6_info *)dst;
-	struct rt6key *rt6_dst, *rt6_src;
-	u32 *pmetrics, table, rt6_flags;
-	struct nlmsghdr *nlh;
 	struct rtmsg *rtm;
+	struct nlmsghdr *nlh;
 	long expires = 0;
+	u32 *pmetrics;
+	u32 table;
 
 	nlh = nlmsg_put(skb, portid, seq, type, sizeof(*rtm), flags);
 	if (!nlh)
 		return -EMSGSIZE;
 
-	if (rt6) {
-		rt6_dst = &rt6->rt6i_dst;
-		rt6_src = &rt6->rt6i_src;
-		rt6_flags = rt6->rt6i_flags;
-	} else {
-		rt6_dst = &rt->fib6_dst;
-		rt6_src = &rt->fib6_src;
-		rt6_flags = rt->fib6_flags;
-	}
-
 	rtm = nlmsg_data(nlh);
 	rtm->rtm_family = AF_INET6;
-	rtm->rtm_dst_len = rt6_dst->plen;
-	rtm->rtm_src_len = rt6_src->plen;
+	rtm->rtm_dst_len = rt->fib6_dst.plen;
+	rtm->rtm_src_len = rt->fib6_src.plen;
 	rtm->rtm_tos = 0;
 	if (rt->fib6_table)
 		table = rt->fib6_table->tb6_id;
@@ -4714,7 +4605,7 @@ static int rt6_fill_node(struct net *net, struct sk_buff *skb,
 	rtm->rtm_scope = RT_SCOPE_UNIVERSE;
 	rtm->rtm_protocol = rt->fib6_protocol;
 
-	if (rt6_flags & RTF_CACHE)
+	if (rt->fib6_flags & RTF_CACHE)
 		rtm->rtm_flags |= RTM_F_CLONED;
 
 	if (dest) {
@@ -4722,7 +4613,7 @@ static int rt6_fill_node(struct net *net, struct sk_buff *skb,
 			goto nla_put_failure;
 		rtm->rtm_dst_len = 128;
 	} else if (rtm->rtm_dst_len)
-		if (nla_put_in6_addr(skb, RTA_DST, &rt6_dst->addr))
+		if (nla_put_in6_addr(skb, RTA_DST, &rt->fib6_dst.addr))
 			goto nla_put_failure;
 #ifdef CONFIG_IPV6_SUBTREES
 	if (src) {
@@ -4730,12 +4621,12 @@ static int rt6_fill_node(struct net *net, struct sk_buff *skb,
 			goto nla_put_failure;
 		rtm->rtm_src_len = 128;
 	} else if (rtm->rtm_src_len &&
-		   nla_put_in6_addr(skb, RTA_SRC, &rt6_src->addr))
+		   nla_put_in6_addr(skb, RTA_SRC, &rt->fib6_src.addr))
 		goto nla_put_failure;
 #endif
 	if (iif) {
 #ifdef CONFIG_IPV6_MROUTE
-		if (ipv6_addr_is_multicast(&rt6_dst->addr)) {
+		if (ipv6_addr_is_multicast(&rt->fib6_dst.addr)) {
 			int err = ip6mr_get_route(net, skb, rtm, portid);
 
 			if (err == 0)
@@ -4770,14 +4661,7 @@ static int rt6_fill_node(struct net *net, struct sk_buff *skb,
 	/* For multipath routes, walk the siblings list and add
 	 * each as a nexthop within RTA_MULTIPATH.
 	 */
-	if (rt6) {
-		if (rt6_flags & RTF_GATEWAY &&
-		    nla_put_in6_addr(skb, RTA_GATEWAY, &rt6->rt6i_gateway))
-			goto nla_put_failure;
-
-		if (dst->dev && nla_put_u32(skb, RTA_OIF, dst->dev->ifindex))
-			goto nla_put_failure;
-	} else if (rt->fib6_nsiblings) {
+	if (rt->fib6_nsiblings) {
 		struct fib6_info *sibling, *next_sibling;
 		struct nlattr *mp;
 
@@ -4800,7 +4684,7 @@ static int rt6_fill_node(struct net *net, struct sk_buff *skb,
 			goto nla_put_failure;
 	}
 
-	if (rt6_flags & RTF_EXPIRES) {
+	if (rt->fib6_flags & RTF_EXPIRES) {
 		expires = dst ? dst->expires : rt->expires;
 		expires -= jiffies;
 	}
@@ -4808,7 +4692,7 @@ static int rt6_fill_node(struct net *net, struct sk_buff *skb,
 	if (rtnl_put_cacheinfo(skb, dst, 0, expires, dst ? dst->error : 0) < 0)
 		goto nla_put_failure;
 
-	if (nla_put_u8(skb, RTA_PREF, IPV6_EXTRACT_PREF(rt6_flags)))
+	if (nla_put_u8(skb, RTA_PREF, IPV6_EXTRACT_PREF(rt->fib6_flags)))
 		goto nla_put_failure;
 
 
@@ -4897,19 +4781,6 @@ static int inet6_rtm_getroute(struct sk_buff *in_skb, struct nlmsghdr *nlh,
 					   nla_get_u32(tb[RTA_UID]));
 	else
 		fl6.flowi6_uid = iif ? INVALID_UID : current_uid();
-
-	if (tb[RTA_SPORT])
-		fl6.fl6_sport = nla_get_be16(tb[RTA_SPORT]);
-
-	if (tb[RTA_DPORT])
-		fl6.fl6_dport = nla_get_be16(tb[RTA_DPORT]);
-
-	if (tb[RTA_IP_PROTO]) {
-		err = rtm_getroute_parse_ip_proto(tb[RTA_IP_PROTO],
-						  &fl6.flowi6_proto, extack);
-		if (err)
-			goto errout;
-	}
 
 	if (iif) {
 		struct net_device *dev;
@@ -5055,6 +4926,14 @@ static int ip6_route_dev_notify(struct notifier_block *this,
  */
 
 #ifdef CONFIG_PROC_FS
+
+static const struct file_operations ipv6_route_proc_fops = {
+	.open		= ipv6_route_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= seq_release_net,
+};
+
 static int rt6_stats_seq_show(struct seq_file *seq, void *v)
 {
 	struct net *net = (struct net *)seq->private;
@@ -5069,6 +4948,18 @@ static int rt6_stats_seq_show(struct seq_file *seq, void *v)
 
 	return 0;
 }
+
+static int rt6_stats_seq_open(struct inode *inode, struct file *file)
+{
+	return single_open_net(inode, file, rt6_stats_seq_show);
+}
+
+static const struct file_operations rt6_stats_seq_fops = {
+	.open	 = rt6_stats_seq_open,
+	.read	 = seq_read,
+	.llseek	 = seq_lseek,
+	.release = single_release_net,
+};
 #endif	/* CONFIG_PROC_FS */
 
 #ifdef CONFIG_SYSCTL
@@ -5282,10 +5173,8 @@ static void __net_exit ip6_route_net_exit(struct net *net)
 static int __net_init ip6_route_net_init_late(struct net *net)
 {
 #ifdef CONFIG_PROC_FS
-	proc_create_net("ipv6_route", 0, net->proc_net, &ipv6_route_seq_ops,
-			sizeof(struct ipv6_route_iter));
-	proc_create_net_single("rt6_stats", 0444, net->proc_net,
-			rt6_stats_seq_show, NULL);
+	proc_create("ipv6_route", 0, net->proc_net, &ipv6_route_proc_fops);
+	proc_create("rt6_stats", 0444, net->proc_net, &rt6_stats_seq_fops);
 #endif
 	return 0;
 }

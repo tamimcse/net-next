@@ -1094,7 +1094,7 @@ static void dump_sample(struct perf_evsel *evsel, union perf_event *event,
 
 	sample_type = evsel->attr.sample_type;
 
-	if (evsel__has_callchain(evsel))
+	if (sample_type & PERF_SAMPLE_CALLCHAIN)
 		callchain__printf(evsel, sample);
 
 	if ((sample_type & PERF_SAMPLE_BRANCH_STACK) && !perf_evsel__has_branch_callstack(evsel))
@@ -1973,11 +1973,12 @@ bool perf_session__has_traces(struct perf_session *session, const char *msg)
 	return false;
 }
 
-int map__set_kallsyms_ref_reloc_sym(struct map *map, const char *symbol_name, u64 addr)
+int maps__set_kallsyms_ref_reloc_sym(struct map **maps,
+				     const char *symbol_name, u64 addr)
 {
 	char *bracket;
+	int i;
 	struct ref_reloc_sym *ref;
-	struct kmap *kmap;
 
 	ref = zalloc(sizeof(struct ref_reloc_sym));
 	if (ref == NULL)
@@ -1995,9 +1996,13 @@ int map__set_kallsyms_ref_reloc_sym(struct map *map, const char *symbol_name, u6
 
 	ref->addr = addr;
 
-	kmap = map__kmap(map);
-	if (kmap)
+	for (i = 0; i < MAP__NR_TYPES; ++i) {
+		struct kmap *kmap = map__kmap(maps[i]);
+
+		if (!kmap)
+			continue;
 		kmap->ref_reloc_sym = ref;
+	}
 
 	return 0;
 }

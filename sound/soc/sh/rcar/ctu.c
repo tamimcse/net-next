@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0
-//
-// ctu.c
-//
-// Copyright (c) 2015 Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>
-
+/*
+ * ctu.c
+ *
+ * Copyright (c) 2015 Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
 #include "rsnd.h"
 
 #define CTU_NAME_SIZE	16
@@ -375,7 +378,7 @@ int rsnd_ctu_probe(struct rsnd_priv *priv)
 		goto rsnd_ctu_probe_done;
 	}
 
-	ctu = devm_kcalloc(dev, nr, sizeof(*ctu), GFP_KERNEL);
+	ctu = devm_kzalloc(dev, sizeof(*ctu) * nr, GFP_KERNEL);
 	if (!ctu) {
 		ret = -ENOMEM;
 		goto rsnd_ctu_probe_done;

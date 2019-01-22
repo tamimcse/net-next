@@ -8,7 +8,6 @@
 #include <linux/delay.h>
 #include <linux/idr.h>
 #include <linux/nvmem-provider.h>
-#include <linux/pm_runtime.h>
 #include <linux/sizes.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
@@ -237,14 +236,8 @@ static int tb_switch_nvm_read(void *priv, unsigned int offset, void *val,
 			      size_t bytes)
 {
 	struct tb_switch *sw = priv;
-	int ret;
 
-	pm_runtime_get_sync(&sw->dev);
-	ret = dma_port_flash_read(sw->dma_port, offset, val, bytes);
-	pm_runtime_mark_last_busy(&sw->dev);
-	pm_runtime_put_autosuspend(&sw->dev);
-
-	return ret;
+	return dma_port_flash_read(sw->dma_port, offset, val, bytes);
 }
 
 static int tb_switch_nvm_write(void *priv, unsigned int offset, void *val,
@@ -729,7 +722,6 @@ static int tb_switch_set_authorized(struct tb_switch *sw, unsigned int val)
 	 * the new tunnel too early.
 	 */
 	pci_lock_rescan_remove();
-	pm_runtime_get_sync(&sw->dev);
 
 	switch (val) {
 	/* Approve switch */
@@ -750,8 +742,6 @@ static int tb_switch_set_authorized(struct tb_switch *sw, unsigned int val)
 		break;
 	}
 
-	pm_runtime_mark_last_busy(&sw->dev);
-	pm_runtime_put_autosuspend(&sw->dev);
 	pci_unlock_rescan_remove();
 
 	if (!ret) {
@@ -898,18 +888,9 @@ static ssize_t nvm_authenticate_store(struct device *dev,
 	nvm_clear_auth_status(sw);
 
 	if (val) {
-		if (!sw->nvm->buf) {
-			ret = -EINVAL;
-			goto exit_unlock;
-		}
-
-		pm_runtime_get_sync(&sw->dev);
 		ret = nvm_validate_and_write(sw);
-		if (ret) {
-			pm_runtime_mark_last_busy(&sw->dev);
-			pm_runtime_put_autosuspend(&sw->dev);
+		if (ret)
 			goto exit_unlock;
-		}
 
 		sw->nvm->authenticating = true;
 
@@ -917,8 +898,6 @@ static ssize_t nvm_authenticate_store(struct device *dev,
 			ret = nvm_authenticate_host(sw);
 		else
 			ret = nvm_authenticate_device(sw);
-		pm_runtime_mark_last_busy(&sw->dev);
-		pm_runtime_put_autosuspend(&sw->dev);
 	}
 
 exit_unlock:
@@ -1044,29 +1023,9 @@ static void tb_switch_release(struct device *dev)
 	kfree(sw);
 }
 
-/*
- * Currently only need to provide the callbacks. Everything else is handled
- * in the connection manager.
- */
-static int __maybe_unused tb_switch_runtime_suspend(struct device *dev)
-{
-	return 0;
-}
-
-static int __maybe_unused tb_switch_runtime_resume(struct device *dev)
-{
-	return 0;
-}
-
-static const struct dev_pm_ops tb_switch_pm_ops = {
-	SET_RUNTIME_PM_OPS(tb_switch_runtime_suspend, tb_switch_runtime_resume,
-			   NULL)
-};
-
 struct device_type tb_switch_type = {
 	.name = "thunderbolt_device",
 	.release = tb_switch_release,
-	.pm = &tb_switch_pm_ops,
 };
 
 static int tb_switch_get_generation(struct tb_switch *sw)
@@ -1406,21 +1365,10 @@ int tb_switch_add(struct tb_switch *sw)
 		return ret;
 
 	ret = tb_switch_nvm_add(sw);
-	if (ret) {
+	if (ret)
 		device_del(&sw->dev);
-		return ret;
-	}
 
-	pm_runtime_set_active(&sw->dev);
-	if (sw->rpm) {
-		pm_runtime_set_autosuspend_delay(&sw->dev, TB_AUTOSUSPEND_DELAY);
-		pm_runtime_use_autosuspend(&sw->dev);
-		pm_runtime_mark_last_busy(&sw->dev);
-		pm_runtime_enable(&sw->dev);
-		pm_request_autosuspend(&sw->dev);
-	}
-
-	return 0;
+	return ret;
 }
 
 /**
@@ -1434,11 +1382,6 @@ int tb_switch_add(struct tb_switch *sw)
 void tb_switch_remove(struct tb_switch *sw)
 {
 	int i;
-
-	if (sw->rpm) {
-		pm_runtime_get_sync(&sw->dev);
-		pm_runtime_disable(&sw->dev);
-	}
 
 	/* port 0 is the switch itself and never has a remote */
 	for (i = 1; i <= sw->config.max_port_number; i++) {

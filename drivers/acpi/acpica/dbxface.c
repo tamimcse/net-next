@@ -10,7 +10,6 @@
 #include "amlcode.h"
 #include "acdebug.h"
 #include "acinterp.h"
-#include "acparser.h"
 
 #define _COMPONENT          ACPI_CA_DEBUGGER
 ACPI_MODULE_NAME("dbxface")
@@ -263,17 +262,10 @@ acpi_db_single_step(struct acpi_walk_state *walk_state,
 			}
 		}
 
-		/* Now we can disassemble and display it */
+		/* Now we can display it */
 
 #ifdef ACPI_DISASSEMBLER
 		acpi_dm_disassemble(walk_state, display_op, ACPI_UINT32_MAX);
-#else
-		/*
-		 * The AML Disassembler is not configured - at least we can
-		 * display the opcode value and name
-		 */
-		acpi_os_printf("AML Opcode: %4.4X %s\n", op->common.aml_opcode,
-			       acpi_ps_get_opcode_name(op->common.aml_opcode));
 #endif
 
 		if ((op->common.aml_opcode == AML_IF_OP) ||

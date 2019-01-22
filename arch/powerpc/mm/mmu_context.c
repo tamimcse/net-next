@@ -57,10 +57,8 @@ void switch_mm_irqs_off(struct mm_struct *prev, struct mm_struct *next,
 		 * in switch_slb(), and/or the store of paca->mm_ctx_id in
 		 * copy_mm_to_paca().
 		 *
-		 * On the other side, the barrier is in mm/tlb-radix.c for
-		 * radix which orders earlier stores to clear the PTEs vs
-		 * the load of mm_cpumask. And pte_xchg which does the same
-		 * thing for hash.
+		 * On the read side the barrier is in pte_xchg(), which orders
+		 * the store to the PTE vs the load of mm_cpumask.
 		 *
 		 * This full barrier is needed by membarrier when switching
 		 * between processes after store to rq->curr, before user-space

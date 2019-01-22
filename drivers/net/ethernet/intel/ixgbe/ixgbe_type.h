@@ -599,15 +599,13 @@ struct ixgbe_nvm_version {
 #define IXGBE_SECTXCTRL_STORE_FORWARD   0x00000004
 
 #define IXGBE_SECTXSTAT_SECTX_RDY       0x00000001
-#define IXGBE_SECTXSTAT_SECTX_OFF_DIS   0x00000002
-#define IXGBE_SECTXSTAT_ECC_TXERR       0x00000004
+#define IXGBE_SECTXSTAT_ECC_TXERR       0x00000002
 
 #define IXGBE_SECRXCTRL_SECRX_DIS       0x00000001
 #define IXGBE_SECRXCTRL_RX_DIS          0x00000002
 
 #define IXGBE_SECRXSTAT_SECRX_RDY       0x00000001
-#define IXGBE_SECRXSTAT_SECRX_OFF_DIS   0x00000002
-#define IXGBE_SECRXSTAT_ECC_RXERR       0x00000004
+#define IXGBE_SECRXSTAT_ECC_RXERR       0x00000002
 
 /* LinkSec (MacSec) Registers */
 #define IXGBE_LSECTXCAP         0x08A00
@@ -2518,7 +2516,6 @@ enum {
 /* Translated register #defines */
 #define IXGBE_PVFTDH(P)		(0x06010 + (0x40 * (P)))
 #define IXGBE_PVFTDT(P)		(0x06018 + (0x40 * (P)))
-#define IXGBE_PVFTXDCTL(P)	(0x06028 + (0x40 * (P)))
 #define IXGBE_PVFTDWBAL(P)	(0x06038 + (0x40 * (P)))
 #define IXGBE_PVFTDWBAH(P)	(0x0603C + (0x40 * (P)))
 

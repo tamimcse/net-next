@@ -3,7 +3,6 @@ TARGETS = android
 TARGETS += bpf
 TARGETS += breakpoints
 TARGETS += capabilities
-TARGETS += cgroup
 TARGETS += cpufreq
 TARGETS += cpu-hotplug
 TARGETS += efivarfs
@@ -29,12 +28,9 @@ TARGETS += powerpc
 TARGETS += proc
 TARGETS += pstore
 TARGETS += ptrace
-TARGETS += rseq
-TARGETS += rtc
 TARGETS += seccomp
 TARGETS += sigaltstack
 TARGETS += size
-TARGETS += sparc64
 TARGETS += splice
 TARGETS += static_keys
 TARGETS += sync
@@ -138,8 +134,7 @@ ifdef INSTALL_PATH
 	echo "else" >> $(ALL_SCRIPT)
 	echo "  OUTPUT=/dev/stdout" >> $(ALL_SCRIPT)
 	echo "fi" >> $(ALL_SCRIPT)
-	echo "export KSFT_TAP_LEVEL=1" >> $(ALL_SCRIPT)
-	echo "export skip=4" >> $(ALL_SCRIPT)
+	echo "export KSFT_TAP_LEVEL=`echo 1`" >> $(ALL_SCRIPT)
 
 	for TARGET in $(TARGETS); do \
 		BUILD_TARGET=$$BUILD/$$TARGET;	\

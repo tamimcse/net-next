@@ -65,13 +65,7 @@
 /* Mapping from NFS error code to "errno" error code. */
 #define errno_NFSERR_IO		EIO
 
-struct compound_hdr;
 static int nfs4_stat_to_errno(int);
-static void encode_layoutget(struct xdr_stream *xdr,
-			     const struct nfs4_layoutget_args *args,
-			     struct compound_hdr *hdr);
-static int decode_layoutget(struct xdr_stream *xdr, struct rpc_rqst *req,
-			     struct nfs4_layoutget_res *res);
 
 /* NFSv4 COMPOUND tags are only wanted for debugging purposes */
 #ifdef DEBUG
@@ -430,8 +424,6 @@ static int decode_layoutget(struct xdr_stream *xdr, struct rpc_rqst *req,
 #define decode_sequence_maxsz	0
 #define encode_layoutreturn_maxsz 0
 #define decode_layoutreturn_maxsz 0
-#define encode_layoutget_maxsz	0
-#define decode_layoutget_maxsz	0
 #endif /* CONFIG_NFS_V4_1 */
 
 #define NFS4_enc_compound_sz	(1024)  /* XXX: large enough? */
@@ -484,16 +476,14 @@ static int decode_layoutget(struct xdr_stream *xdr, struct rpc_rqst *req,
 				encode_open_maxsz + \
 				encode_access_maxsz + \
 				encode_getfh_maxsz + \
-				encode_getattr_maxsz + \
-				encode_layoutget_maxsz)
+				encode_getattr_maxsz)
 #define NFS4_dec_open_sz        (compound_decode_hdr_maxsz + \
 				decode_sequence_maxsz + \
 				decode_putfh_maxsz + \
 				decode_open_maxsz + \
 				decode_access_maxsz + \
 				decode_getfh_maxsz + \
-				decode_getattr_maxsz + \
-				decode_layoutget_maxsz)
+				decode_getattr_maxsz)
 #define NFS4_enc_open_confirm_sz \
 				(compound_encode_hdr_maxsz + \
 				 encode_putfh_maxsz + \
@@ -507,15 +497,13 @@ static int decode_layoutget(struct xdr_stream *xdr, struct rpc_rqst *req,
 					encode_putfh_maxsz + \
 					encode_open_maxsz + \
 					encode_access_maxsz + \
-					encode_getattr_maxsz + \
-					encode_layoutget_maxsz)
+					encode_getattr_maxsz)
 #define NFS4_dec_open_noattr_sz	(compound_decode_hdr_maxsz + \
 					decode_sequence_maxsz + \
 					decode_putfh_maxsz + \
 					decode_open_maxsz + \
 					decode_access_maxsz + \
-					decode_getattr_maxsz + \
-					decode_layoutget_maxsz)
+					decode_getattr_maxsz)
 #define NFS4_enc_open_downgrade_sz \
 				(compound_encode_hdr_maxsz + \
 				 encode_sequence_maxsz + \
@@ -1069,7 +1057,6 @@ static void encode_attrs(struct xdr_stream *xdr, const struct iattr *iap,
 				const struct nfs_server *server,
 				const uint32_t attrmask[])
 {
-	struct timespec ts;
 	char owner_name[IDMAP_NAMESZ];
 	char owner_group[IDMAP_NAMESZ];
 	int owner_namelen = 0;
@@ -1158,16 +1145,14 @@ static void encode_attrs(struct xdr_stream *xdr, const struct iattr *iap,
 	if (bmval[1] & FATTR4_WORD1_TIME_ACCESS_SET) {
 		if (iap->ia_valid & ATTR_ATIME_SET) {
 			*p++ = cpu_to_be32(NFS4_SET_TO_CLIENT_TIME);
-			ts = timespec64_to_timespec(iap->ia_atime);
-			p = xdr_encode_nfstime4(p, &ts);
+			p = xdr_encode_nfstime4(p, &iap->ia_atime);
 		} else
 			*p++ = cpu_to_be32(NFS4_SET_TO_SERVER_TIME);
 	}
 	if (bmval[1] & FATTR4_WORD1_TIME_MODIFY_SET) {
 		if (iap->ia_valid & ATTR_MTIME_SET) {
 			*p++ = cpu_to_be32(NFS4_SET_TO_CLIENT_TIME);
-			ts = timespec64_to_timespec(iap->ia_mtime);
-			p = xdr_encode_nfstime4(p, &ts);
+			p = xdr_encode_nfstime4(p, &iap->ia_mtime);
 		} else
 			*p++ = cpu_to_be32(NFS4_SET_TO_SERVER_TIME);
 	}
@@ -2085,13 +2070,6 @@ encode_layoutreturn(struct xdr_stream *xdr,
 		    struct compound_hdr *hdr)
 {
 }
-
-static void
-encode_layoutget(struct xdr_stream *xdr,
-		      const struct nfs4_layoutget_args *args,
-		      struct compound_hdr *hdr)
-{
-}
 #endif /* CONFIG_NFS_V4_1 */
 
 /*
@@ -2338,12 +2316,6 @@ static void nfs4_xdr_enc_open(struct rpc_rqst *req, struct xdr_stream *xdr,
 	if (args->access)
 		encode_access(xdr, args->access, &hdr);
 	encode_getfattr_open(xdr, args->bitmask, args->open_bitmap, &hdr);
-	if (args->lg_args) {
-		encode_layoutget(xdr, args->lg_args, &hdr);
-		xdr_inline_pages(&req->rq_rcv_buf, hdr.replen << 2,
-				 args->lg_args->layout.pages,
-				 0, args->lg_args->layout.pglen);
-	}
 	encode_nops(&hdr);
 }
 
@@ -2384,12 +2356,6 @@ static void nfs4_xdr_enc_open_noattr(struct rpc_rqst *req,
 	if (args->access)
 		encode_access(xdr, args->access, &hdr);
 	encode_getfattr_open(xdr, args->bitmask, args->open_bitmap, &hdr);
-	if (args->lg_args) {
-		encode_layoutget(xdr, args->lg_args, &hdr);
-		xdr_inline_pages(&req->rq_rcv_buf, hdr.replen << 2,
-				 args->lg_args->layout.pages,
-				 0, args->lg_args->layout.pglen);
-	}
 	encode_nops(&hdr);
 }
 
@@ -6058,7 +6024,7 @@ static int decode_layoutget(struct xdr_stream *xdr, struct rpc_rqst *req,
 
 	status = decode_op_hdr(xdr, OP_LAYOUTGET);
 	if (status)
-		goto out;
+		return status;
 	p = xdr_inline_decode(xdr, 4);
 	if (unlikely(!p))
 		goto out_overflow;
@@ -6071,8 +6037,7 @@ static int decode_layoutget(struct xdr_stream *xdr, struct rpc_rqst *req,
 	if (!layout_count) {
 		dprintk("%s: server responded with empty layout array\n",
 			__func__);
-		status = -EINVAL;
-		goto out;
+		return -EINVAL;
 	}
 
 	p = xdr_inline_decode(xdr, 28);
@@ -6097,8 +6062,7 @@ static int decode_layoutget(struct xdr_stream *xdr, struct rpc_rqst *req,
 		dprintk("NFS: server cheating in layoutget reply: "
 				"layout len %u > recvd %u\n",
 				res->layoutp->len, recvd);
-		status = -EINVAL;
-		goto out;
+		return -EINVAL;
 	}
 
 	if (layout_count > 1) {
@@ -6111,13 +6075,10 @@ static int decode_layoutget(struct xdr_stream *xdr, struct rpc_rqst *req,
 			__func__, layout_count);
 	}
 
-out:
-	res->status = status;
-	return status;
+	return 0;
 out_overflow:
 	print_overflow_msg(__func__, xdr);
-	status = -EIO;
-	goto out;
+	return -EIO;
 }
 
 static int decode_layoutreturn(struct xdr_stream *xdr,
@@ -6216,13 +6177,6 @@ int decode_layoutreturn(struct xdr_stream *xdr,
 {
 	return 0;
 }
-
-static int decode_layoutget(struct xdr_stream *xdr, struct rpc_rqst *req,
-			    struct nfs4_layoutget_res *res)
-{
-	return 0;
-}
-
 #endif /* CONFIG_NFS_V4_1 */
 
 /*
@@ -6669,8 +6623,6 @@ static int nfs4_xdr_dec_open(struct rpc_rqst *rqstp, struct xdr_stream *xdr,
 	if (res->access_request)
 		decode_access(xdr, &res->access_supported, &res->access_result);
 	decode_getfattr_label(xdr, res->f_attr, res->f_label, res->server);
-	if (res->lg_res)
-		decode_layoutget(xdr, rqstp, res->lg_res);
 out:
 	return status;
 }
@@ -6723,8 +6675,6 @@ static int nfs4_xdr_dec_open_noattr(struct rpc_rqst *rqstp,
 	if (res->access_request)
 		decode_access(xdr, &res->access_supported, &res->access_result);
 	decode_getfattr(xdr, res->f_attr, res->server);
-	if (res->lg_res)
-		decode_layoutget(xdr, rqstp, res->lg_res);
 out:
 	return status;
 }
@@ -7789,7 +7739,6 @@ const struct rpc_procinfo nfs4_procedures[] = {
 	PROC42(LAYOUTSTATS,	enc_layoutstats,	dec_layoutstats),
 	PROC42(CLONE,		enc_clone,		dec_clone),
 	PROC42(COPY,		enc_copy,		dec_copy),
-	PROC42(OFFLOAD_CANCEL,	enc_offload_cancel,	dec_offload_cancel),
 	PROC(LOOKUPP,		enc_lookupp,		dec_lookupp),
 };
 

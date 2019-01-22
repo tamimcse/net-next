@@ -179,7 +179,7 @@ bool afs_select_fileserver(struct afs_fs_cursor *fc)
 			 */
 			if (fc->flags & AFS_FS_CURSOR_VNOVOL) {
 				fc->ac.error = -EREMOTEIO;
-				goto next_server;
+				goto failed;
 			}
 
 			write_lock(&vnode->volume->servers_lock);
@@ -201,7 +201,7 @@ bool afs_select_fileserver(struct afs_fs_cursor *fc)
 			 */
 			if (vnode->volume->servers == fc->server_list) {
 				fc->ac.error = -EREMOTEIO;
-				goto next_server;
+				goto failed;
 			}
 
 			/* Try again */
@@ -310,10 +310,6 @@ bool afs_select_fileserver(struct afs_fs_cursor *fc)
 	case -ETIME:
 		_debug("no conn");
 		goto iterate_address;
-
-	case -ECONNRESET:
-		_debug("call reset");
-		goto failed;
 	}
 
 restart_from_beginning:
@@ -354,8 +350,8 @@ use_server:
 	 * break request before we've finished decoding the reply and
 	 * installing the vnode.
 	 */
-	fc->ac.error = afs_register_server_cb_interest(vnode, fc->server_list,
-						       fc->index);
+	fc->ac.error = afs_register_server_cb_interest(
+		vnode, &fc->server_list->servers[fc->index]);
 	if (fc->ac.error < 0)
 		goto failed;
 
@@ -373,16 +369,8 @@ use_server:
 	if (!test_bit(AFS_SERVER_FL_PROBED, &server->flags)) {
 		fc->ac.alist = afs_get_addrlist(alist);
 
-		if (!afs_probe_fileserver(fc)) {
-			switch (fc->ac.error) {
-			case -ENOMEM:
-			case -ERESTARTSYS:
-			case -EINTR:
-				goto failed;
-			default:
-				goto next_server;
-			}
-		}
+		if (!afs_probe_fileserver(fc))
+			goto failed;
 	}
 
 	if (!fc->ac.alist)

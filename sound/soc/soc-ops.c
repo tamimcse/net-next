@@ -1,15 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0+
-//
-// soc-ops.c  --  Generic ASoC operations
-//
-// Copyright 2005 Wolfson Microelectronics PLC.
-// Copyright 2005 Openedhand Ltd.
-// Copyright (C) 2010 Slimlogic Ltd.
-// Copyright (C) 2010 Texas Instruments Inc.
-//
-// Author: Liam Girdwood <lrg@slimlogic.co.uk>
-//         with code, comments and ideas from :-
-//         Richard Purdie <richard@openedhand.com>
+/*
+ * soc-ops.c  --  Generic ASoC operations
+ *
+ * Copyright 2005 Wolfson Microelectronics PLC.
+ * Copyright 2005 Openedhand Ltd.
+ * Copyright (C) 2010 Slimlogic Ltd.
+ * Copyright (C) 2010 Texas Instruments Inc.
+ *
+ * Author: Liam Girdwood <lrg@slimlogic.co.uk>
+ *         with code, comments and ideas from :-
+ *         Richard Purdie <richard@openedhand.com>
+ *
+ *  This program is free software; you can redistribute  it and/or modify it
+ *  under  the terms of  the GNU General  Public License as published by the
+ *  Free Software Foundation;  either version 2 of the  License, or (at your
+ *  option) any later version.
+ */
 
 #include <linux/module.h>
 #include <linux/moduleparam.h>

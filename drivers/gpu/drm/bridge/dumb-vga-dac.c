@@ -55,10 +55,8 @@ static int dumb_vga_get_modes(struct drm_connector *connector)
 		goto fallback;
 	}
 
-	drm_connector_update_edid_property(connector, edid);
-	ret = drm_add_edid_modes(connector, edid);
-	kfree(edid);
-	return ret;
+	drm_mode_connector_update_edid_property(connector, edid);
+	return drm_add_edid_modes(connector, edid);
 
 fallback:
 	/*
@@ -122,7 +120,7 @@ static int dumb_vga_attach(struct drm_bridge *bridge)
 		return ret;
 	}
 
-	drm_connector_attach_encoder(&vga->connector,
+	drm_mode_connector_attach_encoder(&vga->connector,
 					  bridge->encoder);
 
 	return 0;

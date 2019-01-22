@@ -19,7 +19,6 @@
 #include <linux/kthread.h>
 #include <linux/interrupt.h>
 #include <linux/ntb.h>
-#include <linux/pci.h>
 
 MODULE_DESCRIPTION("Microsemi Switchtec(tm) NTB Driver");
 MODULE_VERSION("0.1");
@@ -1488,7 +1487,7 @@ static int switchtec_ntb_add(struct device *dev,
 
 	stdev->sndev = NULL;
 
-	if (stdev->pdev->class != (PCI_CLASS_BRIDGE_OTHER << 8))
+	if (stdev->pdev->class != MICROSEMI_NTB_CLASSCODE)
 		return -ENODEV;
 
 	sndev = kzalloc_node(sizeof(*sndev), GFP_KERNEL, dev_to_node(dev));

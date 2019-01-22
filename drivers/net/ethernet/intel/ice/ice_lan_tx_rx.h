@@ -265,7 +265,6 @@ enum ice_rx_flex_desc_status_error_0_bits {
 struct ice_rlan_ctx {
 	u16 head;
 	u16 cpuid; /* bigger than needed, see above for reason */
-#define ICE_RLAN_BASE_S 7
 	u64 base;
 	u16 qlen;
 #define ICE_RLAN_CTX_DBUF_S 7

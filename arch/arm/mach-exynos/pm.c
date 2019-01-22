@@ -22,6 +22,8 @@
 #include <asm/suspend.h>
 #include <asm/cacheflush.h>
 
+#include <mach/map.h>
+
 #include "common.h"
 
 static inline void __iomem *exynos_boot_vector_addr(void)
@@ -170,7 +172,7 @@ void exynos_enter_aftr(void)
 	cpu_suspend(0, exynos_aftr_finisher);
 
 	if (read_cpuid_part() == ARM_CPU_PART_CORTEX_A9) {
-		exynos_scu_enable();
+		scu_enable(S5P_VA_SCU);
 		if (call_firmware_op(resume) == -ENOSYS)
 			exynos_cpu_restore_register();
 	}

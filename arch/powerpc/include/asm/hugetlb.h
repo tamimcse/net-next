@@ -84,6 +84,9 @@ static inline pte_t *hugepte_offset(hugepd_t hpd, unsigned long addr,
 	return dir + idx;
 }
 
+pte_t *huge_pte_offset_and_shift(struct mm_struct *mm,
+				 unsigned long addr, unsigned *shift);
+
 void flush_dcache_icache_hugepage(struct page *page);
 
 int slice_is_hugepage_only_range(struct mm_struct *mm, unsigned long addr,
@@ -163,9 +166,22 @@ static inline pte_t huge_pte_wrprotect(pte_t pte)
 	return pte_wrprotect(pte);
 }
 
-extern int huge_ptep_set_access_flags(struct vm_area_struct *vma,
-				      unsigned long addr, pte_t *ptep,
-				      pte_t pte, int dirty);
+static inline int huge_ptep_set_access_flags(struct vm_area_struct *vma,
+					     unsigned long addr, pte_t *ptep,
+					     pte_t pte, int dirty)
+{
+#ifdef HUGETLB_NEED_PRELOAD
+	/*
+	 * The "return 1" forces a call of update_mmu_cache, which will write a
+	 * TLB entry.  Without this, platforms that don't do a write of the TLB
+	 * entry in the TLB miss handler asm will fault ad infinitum.
+	 */
+	ptep_set_access_flags(vma, addr, ptep, pte, dirty);
+	return 1;
+#else
+	return ptep_set_access_flags(vma, addr, ptep, pte, dirty);
+#endif
+}
 
 static inline pte_t huge_ptep_get(pte_t *ptep)
 {
@@ -186,7 +202,7 @@ static inline void flush_hugetlb_page(struct vm_area_struct *vma,
 static inline pte_t *hugepte_offset(hugepd_t hpd, unsigned long addr,
 				    unsigned pdshift)
 {
-	return NULL;
+	return 0;
 }
 #endif /* CONFIG_HUGETLB_PAGE */
 

@@ -378,7 +378,6 @@ static void musb_advance_schedule(struct musb *musb, struct urb *urb,
 				qh = first_qh(head);
 				break;
 			}
-			/* else: fall through */
 
 		case USB_ENDPOINT_XFER_ISOC:
 		case USB_ENDPOINT_XFER_INT:
@@ -991,9 +990,7 @@ static void musb_bulk_nak_timeout(struct musb *musb, struct musb_hw_ep *ep,
 			/* set tx_reinit and schedule the next qh */
 			ep->tx_reinit = 1;
 		}
-
-		if (next_qh)
-			musb_start_urb(musb, is_in, next_qh);
+		musb_start_urb(musb, is_in, next_qh);
 	}
 }
 
@@ -2525,11 +2522,8 @@ static int musb_bus_suspend(struct usb_hcd *hcd)
 {
 	struct musb	*musb = hcd_to_musb(hcd);
 	u8		devctl;
-	int		ret;
 
-	ret = musb_port_suspend(musb, true);
-	if (ret)
-		return ret;
+	musb_port_suspend(musb, true);
 
 	if (!is_host_active(musb))
 		return 0;
@@ -2736,7 +2730,7 @@ int musb_host_alloc(struct musb *musb)
 
 void musb_host_cleanup(struct musb *musb)
 {
-	if (musb->port_mode == MUSB_PERIPHERAL)
+	if (musb->port_mode == MUSB_PORT_MODE_GADGET)
 		return;
 	usb_remove_hcd(musb->hcd);
 }
@@ -2751,13 +2745,13 @@ int musb_host_setup(struct musb *musb, int power_budget)
 	int ret;
 	struct usb_hcd *hcd = musb->hcd;
 
-	if (musb->port_mode == MUSB_HOST) {
+	if (musb->port_mode == MUSB_PORT_MODE_HOST) {
 		MUSB_HST_MODE(musb);
+		musb->xceiv->otg->default_a = 1;
 		musb->xceiv->otg->state = OTG_STATE_A_IDLE;
 	}
 	otg_set_host(musb->xceiv->otg, &hcd->self);
-	/* don't support otg protocols */
-	hcd->self.otg_port = 0;
+	hcd->self.otg_port = 1;
 	musb->xceiv->otg->host = &hcd->self;
 	hcd->power_budget = 2 * (power_budget ? : 250);
 	hcd->skip_phy_initialization = 1;

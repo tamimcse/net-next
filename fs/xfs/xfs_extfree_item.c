@@ -1,7 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2000-2001,2005 Silicon Graphics, Inc.
  * All Rights Reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it would be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write the Free Software Foundation,
+ * Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 #include "xfs.h"
 #include "xfs_fs.h"
@@ -156,7 +168,7 @@ STATIC void
 xfs_efi_item_unlock(
 	struct xfs_log_item	*lip)
 {
-	if (test_bit(XFS_LI_ABORTED, &lip->li_flags))
+	if (lip->li_flags & XFS_LI_ABORTED)
 		xfs_efi_release(EFI_ITEM(lip));
 }
 
@@ -390,7 +402,7 @@ xfs_efd_item_unlock(
 {
 	struct xfs_efd_log_item	*efdp = EFD_ITEM(lip);
 
-	if (test_bit(XFS_LI_ABORTED, &lip->li_flags)) {
+	if (lip->li_flags & XFS_LI_ABORTED) {
 		xfs_efi_release(efdp->efd_efip);
 		xfs_efd_item_free(efdp);
 	}
@@ -530,7 +542,7 @@ xfs_efi_recover(
 	for (i = 0; i < efip->efi_format.efi_nextents; i++) {
 		extp = &efip->efi_format.efi_extents[i];
 		error = xfs_trans_free_extent(tp, efdp, extp->ext_start,
-					      extp->ext_len, &oinfo, false);
+					      extp->ext_len, &oinfo);
 		if (error)
 			goto abort_error;
 

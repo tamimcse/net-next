@@ -251,10 +251,10 @@ static bool wm8903_volatile_register(struct device *dev, unsigned int reg)
 	case WM8903_DC_SERVO_READBACK_2:
 	case WM8903_DC_SERVO_READBACK_3:
 	case WM8903_DC_SERVO_READBACK_4:
-		return true;
+		return 1;
 
 	default:
-		return false;
+		return 0;
 	}
 }
 

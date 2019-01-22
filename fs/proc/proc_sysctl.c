@@ -554,8 +554,9 @@ static struct dentry *proc_sys_lookup(struct inode *dir, struct dentry *dentry,
 	if (!inode)
 		goto out;
 
+	err = NULL;
 	d_set_d_op(dentry, &proc_sys_dentry_operations);
-	err = d_splice_alias(inode, dentry);
+	d_add(dentry, inode);
 
 out:
 	if (h)
@@ -683,7 +684,6 @@ static bool proc_sys_fill_cache(struct file *file,
 		if (IS_ERR(child))
 			return false;
 		if (d_in_lookup(child)) {
-			struct dentry *res;
 			inode = proc_sys_make_inode(dir->d_sb, head, table);
 			if (!inode) {
 				d_lookup_done(child);
@@ -691,16 +691,7 @@ static bool proc_sys_fill_cache(struct file *file,
 				return false;
 			}
 			d_set_d_op(child, &proc_sys_dentry_operations);
-			res = d_splice_alias(inode, child);
-			d_lookup_done(child);
-			if (unlikely(res)) {
-				if (IS_ERR(res)) {
-					dput(child);
-					return false;
-				}
-				dput(child);
-				child = res;
-			}
+			d_add(child, inode);
 		}
 	}
 	inode = d_inode(child);
@@ -1426,7 +1417,7 @@ static int register_leaf_sysctl_tables(const char *path, char *pos,
 	/* If there are mixed files and directories we need a new table */
 	if (nr_dirs && nr_files) {
 		struct ctl_table *new;
-		files = kcalloc(nr_files + 1, sizeof(struct ctl_table),
+		files = kzalloc(sizeof(struct ctl_table) * (nr_files + 1),
 				GFP_KERNEL);
 		if (!files)
 			goto out;

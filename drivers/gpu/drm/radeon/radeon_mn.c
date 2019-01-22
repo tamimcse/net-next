@@ -118,38 +118,25 @@ static void radeon_mn_release(struct mmu_notifier *mn,
  * We block for all BOs between start and end to be idle and
  * unmap them by move them into system domain again.
  */
-static int radeon_mn_invalidate_range_start(struct mmu_notifier *mn,
+static void radeon_mn_invalidate_range_start(struct mmu_notifier *mn,
 					     struct mm_struct *mm,
 					     unsigned long start,
-					     unsigned long end,
-					     bool blockable)
+					     unsigned long end)
 {
 	struct radeon_mn *rmn = container_of(mn, struct radeon_mn, mn);
 	struct ttm_operation_ctx ctx = { false, false };
 	struct interval_tree_node *it;
-	int ret = 0;
 
 	/* notification is exclusive, but interval is inclusive */
 	end -= 1;
 
-	/* TODO we should be able to split locking for interval tree and
-	 * the tear down.
-	 */
-	if (blockable)
-		mutex_lock(&rmn->lock);
-	else if (!mutex_trylock(&rmn->lock))
-		return -EAGAIN;
+	mutex_lock(&rmn->lock);
 
 	it = interval_tree_iter_first(&rmn->objects, start, end);
 	while (it) {
 		struct radeon_mn_node *node;
 		struct radeon_bo *bo;
 		long r;
-
-		if (!blockable) {
-			ret = -EAGAIN;
-			goto out_unlock;
-		}
 
 		node = container_of(it, struct radeon_mn_node, it);
 		it = interval_tree_iter_next(it, start, end);
@@ -179,10 +166,7 @@ static int radeon_mn_invalidate_range_start(struct mmu_notifier *mn,
 		}
 	}
 	
-out_unlock:
 	mutex_unlock(&rmn->lock);
-
-	return ret;
 }
 
 static const struct mmu_notifier_ops radeon_mn_ops = {

@@ -27,7 +27,6 @@
 #include "smb2proto.h"
 #include "smb2status.h"
 #include "smb2glob.h"
-#include "trace.h"
 
 struct status_to_posix_error {
 	__le32 smb2_status;
@@ -2451,16 +2450,13 @@ smb2_print_status(__le32 status)
 int
 map_smb2_to_linux_error(char *buf, bool log_err)
 {
-	struct smb2_sync_hdr *shdr = (struct smb2_sync_hdr *)buf;
+	struct smb2_sync_hdr *shdr = get_sync_hdr(buf);
 	unsigned int i;
 	int rc = -EIO;
 	__le32 smb2err = shdr->Status;
 
-	if (smb2err == 0) {
-		trace_smb3_cmd_done(shdr->TreeId, shdr->SessionId,
-			le16_to_cpu(shdr->Command), le64_to_cpu(shdr->MessageId));
+	if (smb2err == 0)
 		return 0;
-	}
 
 	/* mask facility */
 	if (log_err && (smb2err != STATUS_MORE_PROCESSING_REQUIRED) &&
@@ -2482,8 +2478,5 @@ map_smb2_to_linux_error(char *buf, bool log_err)
 	cifs_dbg(FYI, "Mapping SMB2 status code 0x%08x to POSIX err %d\n",
 		 __le32_to_cpu(smb2err), rc);
 
-	trace_smb3_cmd_err(shdr->TreeId, shdr->SessionId,
-			le16_to_cpu(shdr->Command),
-			le64_to_cpu(shdr->MessageId), le32_to_cpu(smb2err), rc);
 	return rc;
 }

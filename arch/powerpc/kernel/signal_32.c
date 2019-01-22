@@ -25,10 +25,9 @@
 #include <linux/errno.h>
 #include <linux/elf.h>
 #include <linux/ptrace.h>
-#include <linux/pagemap.h>
 #include <linux/ratelimit.h>
-#include <linux/syscalls.h>
 #ifdef CONFIG_PPC64
+#include <linux/syscalls.h>
 #include <linux/compat.h>
 #else
 #include <linux/wait.h>
@@ -58,6 +57,10 @@
 
 
 #ifdef CONFIG_PPC64
+#define sys_rt_sigreturn	compat_sys_rt_sigreturn
+#define sys_swapcontext	compat_sys_swapcontext
+#define sys_sigreturn	compat_sys_sigreturn
+
 #define old_sigaction	old_sigaction32
 #define sigcontext	sigcontext32
 #define mcontext	mcontext32
@@ -1038,15 +1041,11 @@ static int do_setcontext_tm(struct ucontext __user *ucp,
 }
 #endif
 
-#ifdef CONFIG_PPC64
-COMPAT_SYSCALL_DEFINE3(swapcontext, struct ucontext __user *, old_ctx,
-		       struct ucontext __user *, new_ctx, int, ctx_size)
-#else
-SYSCALL_DEFINE3(swapcontext, struct ucontext __user *, old_ctx,
-		       struct ucontext __user *, new_ctx, long, ctx_size)
-#endif
+long sys_swapcontext(struct ucontext __user *old_ctx,
+		     struct ucontext __user *new_ctx,
+		     int ctx_size, int r6, int r7, int r8, struct pt_regs *regs)
 {
-	struct pt_regs *regs = current_pt_regs();
+	unsigned char tmp __maybe_unused;
 	int ctx_has_vsx_region = 0;
 
 #ifdef CONFIG_PPC64
@@ -1110,8 +1109,9 @@ SYSCALL_DEFINE3(swapcontext, struct ucontext __user *, old_ctx,
 	}
 	if (new_ctx == NULL)
 		return 0;
-	if (!access_ok(VERIFY_READ, new_ctx, ctx_size) ||
-	    fault_in_pages_readable((u8 __user *)new_ctx, ctx_size))
+	if (!access_ok(VERIFY_READ, new_ctx, ctx_size)
+	    || __get_user(tmp, (u8 __user *) new_ctx)
+	    || __get_user(tmp, (u8 __user *) new_ctx + ctx_size - 1))
 		return -EFAULT;
 
 	/*
@@ -1132,14 +1132,10 @@ SYSCALL_DEFINE3(swapcontext, struct ucontext __user *, old_ctx,
 	return 0;
 }
 
-#ifdef CONFIG_PPC64
-COMPAT_SYSCALL_DEFINE0(rt_sigreturn)
-#else
-SYSCALL_DEFINE0(rt_sigreturn)
-#endif
+long sys_rt_sigreturn(int r3, int r4, int r5, int r6, int r7, int r8,
+		     struct pt_regs *regs)
 {
 	struct rt_sigframe __user *rt_sf;
-	struct pt_regs *regs = current_pt_regs();
 #ifdef CONFIG_PPC_TRANSACTIONAL_MEM
 	struct ucontext __user *uc_transact;
 	unsigned long msr_hi;
@@ -1228,12 +1224,14 @@ SYSCALL_DEFINE0(rt_sigreturn)
 }
 
 #ifdef CONFIG_PPC32
-SYSCALL_DEFINE3(debug_setcontext, struct ucontext __user *, ctx,
-			 int, ndbg, struct sig_dbg_op __user *, dbg)
+int sys_debug_setcontext(struct ucontext __user *ctx,
+			 int ndbg, struct sig_dbg_op __user *dbg,
+			 int r6, int r7, int r8,
+			 struct pt_regs *regs)
 {
-	struct pt_regs *regs = current_pt_regs();
 	struct sig_dbg_op op;
 	int i;
+	unsigned char tmp __maybe_unused;
 	unsigned long new_msr = regs->msr;
 #ifdef CONFIG_PPC_ADV_DEBUG_REGS
 	unsigned long new_dbcr0 = current->thread.debug.dbcr0;
@@ -1289,8 +1287,9 @@ SYSCALL_DEFINE3(debug_setcontext, struct ucontext __user *, ctx,
 	current->thread.debug.dbcr0 = new_dbcr0;
 #endif
 
-	if (!access_ok(VERIFY_READ, ctx, sizeof(*ctx)) ||
-	    fault_in_pages_readable((u8 __user *)ctx, sizeof(*ctx)))
+	if (!access_ok(VERIFY_READ, ctx, sizeof(*ctx))
+	    || __get_user(tmp, (u8 __user *) ctx)
+	    || __get_user(tmp, (u8 __user *) (ctx + 1) - 1))
 		return -EFAULT;
 
 	/*
@@ -1420,13 +1419,9 @@ badframe:
 /*
  * Do a signal return; undo the signal stack.
  */
-#ifdef CONFIG_PPC64
-COMPAT_SYSCALL_DEFINE0(sigreturn)
-#else
-SYSCALL_DEFINE0(sigreturn)
-#endif
+long sys_sigreturn(int r3, int r4, int r5, int r6, int r7, int r8,
+		       struct pt_regs *regs)
 {
-	struct pt_regs *regs = current_pt_regs();
 	struct sigframe __user *sf;
 	struct sigcontext __user *sc;
 	struct sigcontext sigctx;

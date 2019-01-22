@@ -349,15 +349,9 @@ static int mlx5_cmd_set_fte(struct mlx5_core_dev *dev,
 
 	vlan = MLX5_ADDR_OF(flow_context, in_flow_context, push_vlan);
 
-	MLX5_SET(vlan, vlan, ethtype, fte->action.vlan[0].ethtype);
-	MLX5_SET(vlan, vlan, vid, fte->action.vlan[0].vid);
-	MLX5_SET(vlan, vlan, prio, fte->action.vlan[0].prio);
-
-	vlan = MLX5_ADDR_OF(flow_context, in_flow_context, push_vlan_2);
-
-	MLX5_SET(vlan, vlan, ethtype, fte->action.vlan[1].ethtype);
-	MLX5_SET(vlan, vlan, vid, fte->action.vlan[1].vid);
-	MLX5_SET(vlan, vlan, prio, fte->action.vlan[1].prio);
+	MLX5_SET(vlan, vlan, ethtype, fte->action.vlan.ethtype);
+	MLX5_SET(vlan, vlan, vid, fte->action.vlan.vid);
+	MLX5_SET(vlan, vlan, prio, fte->action.vlan.prio);
 
 	in_match_value = MLX5_ADDR_OF(flow_context, in_flow_context,
 				      match_value);
@@ -368,34 +362,19 @@ static int mlx5_cmd_set_fte(struct mlx5_core_dev *dev,
 		int list_size = 0;
 
 		list_for_each_entry(dst, &fte->node.children, node.list) {
-			unsigned int id, type = dst->dest_attr.type;
+			unsigned int id;
 
-			if (type == MLX5_FLOW_DESTINATION_TYPE_COUNTER)
+			if (dst->dest_attr.type == MLX5_FLOW_DESTINATION_TYPE_COUNTER)
 				continue;
 
-			switch (type) {
-			case MLX5_FLOW_DESTINATION_TYPE_FLOW_TABLE_NUM:
-				id = dst->dest_attr.ft_num;
-				type = MLX5_FLOW_DESTINATION_TYPE_FLOW_TABLE;
-				break;
-			case MLX5_FLOW_DESTINATION_TYPE_FLOW_TABLE:
+			MLX5_SET(dest_format_struct, in_dests, destination_type,
+				 dst->dest_attr.type);
+			if (dst->dest_attr.type ==
+			    MLX5_FLOW_DESTINATION_TYPE_FLOW_TABLE) {
 				id = dst->dest_attr.ft->id;
-				break;
-			case MLX5_FLOW_DESTINATION_TYPE_VPORT:
-				id = dst->dest_attr.vport.num;
-				MLX5_SET(dest_format_struct, in_dests,
-					 destination_eswitch_owner_vhca_id_valid,
-					 dst->dest_attr.vport.vhca_id_valid);
-				MLX5_SET(dest_format_struct, in_dests,
-					 destination_eswitch_owner_vhca_id,
-					 dst->dest_attr.vport.vhca_id);
-				break;
-			default:
+			} else {
 				id = dst->dest_attr.tir_num;
 			}
-
-			MLX5_SET(dest_format_struct, in_dests, destination_type,
-				 type);
 			MLX5_SET(dest_format_struct, in_dests, destination_id, id);
 			in_dests += MLX5_ST_SZ_BYTES(dest_format_struct);
 			list_size++;

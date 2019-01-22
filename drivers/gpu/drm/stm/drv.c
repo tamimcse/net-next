@@ -72,6 +72,8 @@ static struct drm_driver drv_driver = {
 	.gem_prime_vmap = drm_gem_cma_prime_vmap,
 	.gem_prime_vunmap = drm_gem_cma_prime_vunmap,
 	.gem_prime_mmap = drm_gem_cma_prime_mmap,
+	.enable_vblank = ltdc_crtc_enable_vblank,
+	.disable_vblank = ltdc_crtc_disable_vblank,
 };
 
 static int drv_load(struct drm_device *ddev)
@@ -148,16 +150,16 @@ static int stm_drm_platform_probe(struct platform_device *pdev)
 
 	ret = drv_load(ddev);
 	if (ret)
-		goto err_put;
+		goto err_unref;
 
 	ret = drm_dev_register(ddev, 0);
 	if (ret)
-		goto err_put;
+		goto err_unref;
 
 	return 0;
 
-err_put:
-	drm_dev_put(ddev);
+err_unref:
+	drm_dev_unref(ddev);
 
 	return ret;
 }
@@ -170,7 +172,7 @@ static int stm_drm_platform_remove(struct platform_device *pdev)
 
 	drm_dev_unregister(ddev);
 	drv_unload(ddev);
-	drm_dev_put(ddev);
+	drm_dev_unref(ddev);
 
 	return 0;
 }

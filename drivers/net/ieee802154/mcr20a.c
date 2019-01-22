@@ -15,11 +15,10 @@
  */
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/gpio/consumer.h>
+#include <linux/gpio.h>
 #include <linux/spi/spi.h>
 #include <linux/workqueue.h>
 #include <linux/interrupt.h>
-#include <linux/irq.h>
 #include <linux/skbuff.h>
 #include <linux/of_gpio.h>
 #include <linux/regmap.h>
@@ -1268,7 +1267,7 @@ mcr20a_probe(struct spi_device *spi)
 	ret = mcr20a_get_platform_data(spi, pdata);
 	if (ret < 0) {
 		dev_crit(&spi->dev, "mcr20a_get_platform_data failed.\n");
-		goto free_pdata;
+		return ret;
 	}
 
 	/* init reset gpio */
@@ -1276,7 +1275,7 @@ mcr20a_probe(struct spi_device *spi)
 		ret = devm_gpio_request_one(&spi->dev, pdata->rst_gpio,
 					    GPIOF_OUT_INIT_HIGH, "reset");
 		if (ret)
-			goto free_pdata;
+			return ret;
 	}
 
 	/* reset mcr20a */
@@ -1292,8 +1291,7 @@ mcr20a_probe(struct spi_device *spi)
 	hw = ieee802154_alloc_hw(sizeof(*lp), &mcr20a_hw_ops);
 	if (!hw) {
 		dev_crit(&spi->dev, "ieee802154_alloc_hw failed\n");
-		ret = -ENOMEM;
-		goto free_pdata;
+		return -ENOMEM;
 	}
 
 	/* init mcr20a local data */
@@ -1310,10 +1308,8 @@ mcr20a_probe(struct spi_device *spi)
 	/* init buf */
 	lp->buf = devm_kzalloc(&spi->dev, SPI_COMMAND_BUFFER, GFP_KERNEL);
 
-	if (!lp->buf) {
-		ret = -ENOMEM;
-		goto free_dev;
-	}
+	if (!lp->buf)
+		return -ENOMEM;
 
 	mcr20a_setup_tx_spi_messages(lp);
 	mcr20a_setup_rx_spi_messages(lp);
@@ -1370,8 +1366,6 @@ mcr20a_probe(struct spi_device *spi)
 
 free_dev:
 	ieee802154_free_hw(lp->hw);
-free_pdata:
-	kfree(pdata);
 
 	return ret;
 }

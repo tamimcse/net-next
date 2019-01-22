@@ -399,12 +399,18 @@ static int __ref get_nid_for_pfn(unsigned long pfn)
 }
 
 /* register memory section under specified node if it spans that node */
-int register_mem_sect_under_node(struct memory_block *mem_blk, void *arg)
+int register_mem_sect_under_node(struct memory_block *mem_blk, int nid,
+				 bool check_nid)
 {
-	int ret, nid = *(int *)arg;
+	int ret;
 	unsigned long pfn, sect_start_pfn, sect_end_pfn;
 
+	if (!mem_blk)
+		return -EFAULT;
+
 	mem_blk->nid = nid;
+	if (!node_online(nid))
+		return 0;
 
 	sect_start_pfn = section_nr_to_pfn(mem_blk->start_section_nr);
 	sect_end_pfn = section_nr_to_pfn(mem_blk->end_section_nr);
@@ -427,7 +433,7 @@ int register_mem_sect_under_node(struct memory_block *mem_blk, void *arg)
 		 * case, during hotplug we know that all pages in the memory
 		 * block belong to the same node.
 		 */
-		if (system_state == SYSTEM_BOOTING) {
+		if (check_nid) {
 			page_nid = get_nid_for_pfn(pfn);
 			if (page_nid < 0)
 				continue;
@@ -484,10 +490,40 @@ int unregister_mem_sect_under_nodes(struct memory_block *mem_blk,
 	return 0;
 }
 
-int link_mem_sections(int nid, unsigned long start_pfn, unsigned long end_pfn)
+int link_mem_sections(int nid, unsigned long start_pfn, unsigned long nr_pages)
 {
-	return walk_memory_range(start_pfn, end_pfn, (void *)&nid,
-					register_mem_sect_under_node);
+	unsigned long end_pfn = start_pfn + nr_pages;
+	unsigned long pfn;
+	struct memory_block *mem_blk = NULL;
+	int err = 0;
+
+	for (pfn = start_pfn; pfn < end_pfn; pfn += PAGES_PER_SECTION) {
+		unsigned long section_nr = pfn_to_section_nr(pfn);
+		struct mem_section *mem_sect;
+		int ret;
+
+		if (!present_section_nr(section_nr))
+			continue;
+		mem_sect = __nr_to_section(section_nr);
+
+		/* same memblock ? */
+		if (mem_blk)
+			if ((section_nr >= mem_blk->start_section_nr) &&
+			    (section_nr <= mem_blk->end_section_nr))
+				continue;
+
+		mem_blk = find_memory_block_hinted(mem_sect, mem_blk);
+
+		ret = register_mem_sect_under_node(mem_blk, nid, true);
+		if (!err)
+			err = ret;
+
+		/* discard ref obtained in find_memory_block() */
+	}
+
+	if (mem_blk)
+		kobject_put(&mem_blk->dev.kobj);
+	return err;
 }
 
 #ifdef CONFIG_HUGETLBFS

@@ -35,7 +35,6 @@
  */
 
 #define I915_CSR_GLK "i915/glk_dmc_ver1_04.bin"
-MODULE_FIRMWARE(I915_CSR_GLK);
 #define GLK_CSR_VERSION_REQUIRED	CSR_VERSION(1, 4)
 
 #define I915_CSR_CNL "i915/cnl_dmc_ver1_07.bin"
@@ -298,10 +297,7 @@ static uint32_t *parse_csr_fw(struct drm_i915_private *dev_priv,
 
 	csr->version = css_header->version;
 
-	if (csr->fw_path == i915_modparams.dmc_firmware_path) {
-		/* Bypass version check for firmware override. */
-		required_version = csr->version;
-	} else if (IS_CANNONLAKE(dev_priv)) {
+	if (IS_CANNONLAKE(dev_priv)) {
 		required_version = CNL_CSR_VERSION_REQUIRED;
 	} else if (IS_GEMINILAKE(dev_priv)) {
 		required_version = GLK_CSR_VERSION_REQUIRED;
@@ -456,9 +452,7 @@ void intel_csr_ucode_init(struct drm_i915_private *dev_priv)
 	if (!HAS_CSR(dev_priv))
 		return;
 
-	if (i915_modparams.dmc_firmware_path)
-		csr->fw_path = i915_modparams.dmc_firmware_path;
-	else if (IS_CANNONLAKE(dev_priv))
+	if (IS_CANNONLAKE(dev_priv))
 		csr->fw_path = I915_CSR_CNL;
 	else if (IS_GEMINILAKE(dev_priv))
 		csr->fw_path = I915_CSR_GLK;

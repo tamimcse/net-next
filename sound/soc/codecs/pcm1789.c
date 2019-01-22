@@ -3,7 +3,7 @@
 // Copyright (C) 2018 Bootlin
 // Mylène Josserand <mylene.josserand@bootlin.com>
 
-#include <linux/gpio/consumer.h>
+#include <linux/gpio.h>
 #include <linux/module.h>
 #include <linux/workqueue.h>
 
@@ -262,7 +262,8 @@ int pcm1789_common_exit(struct device *dev)
 {
 	struct pcm1789_private *priv = dev_get_drvdata(dev);
 
-	flush_work(&priv->work);
+	if (&priv->work)
+		flush_work(&priv->work);
 
 	return 0;
 }

@@ -3,6 +3,19 @@
 // Socionext UniPhier AIO ALSA driver for LD11/LD20.
 //
 // Copyright (c) 2016-2018 Socionext Inc.
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; version 2
+// of the License.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include <linux/module.h>
 
@@ -286,7 +299,7 @@ static struct snd_soc_dai_driver uniphier_aio_dai_ld11[] = {
 			.formats     = SNDRV_PCM_FMTBIT_S32_LE,
 			.rates       = SNDRV_PCM_RATE_48000,
 			.channels_min = 2,
-			.channels_max = 8,
+			.channels_max = 2,
 		},
 		.ops = &uniphier_aio_i2s_ops,
 	},

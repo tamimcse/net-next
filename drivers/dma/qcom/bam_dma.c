@@ -451,7 +451,6 @@ static void bam_reset_channel(struct bam_chan *bchan)
 /**
  * bam_chan_init_hw - Initialize channel hardware
  * @bchan: bam channel
- * @dir: DMA transfer direction
  *
  * This function resets and initializes the BAM channel
  */
@@ -525,14 +524,6 @@ static int bam_alloc_chan(struct dma_chan *chan)
 	return 0;
 }
 
-static int bam_pm_runtime_get_sync(struct device *dev)
-{
-	if (pm_runtime_enabled(dev))
-		return pm_runtime_get_sync(dev);
-
-	return 0;
-}
-
 /**
  * bam_free_chan - Frees dma resources associated with specific channel
  * @chan: specified channel
@@ -548,7 +539,7 @@ static void bam_free_chan(struct dma_chan *chan)
 	unsigned long flags;
 	int ret;
 
-	ret = bam_pm_runtime_get_sync(bdev->dev);
+	ret = pm_runtime_get_sync(bdev->dev);
 	if (ret < 0)
 		return;
 
@@ -674,7 +665,7 @@ static struct dma_async_tx_descriptor *bam_prep_slave_sg(struct dma_chan *chan,
 				remainder = 0;
 			}
 
-			async_desc->length += le16_to_cpu(desc->size);
+			async_desc->length += desc->size;
 			desc++;
 		} while (remainder > 0);
 	}
@@ -688,7 +679,7 @@ err_out:
 
 /**
  * bam_dma_terminate_all - terminate all transactions on a channel
- * @chan: bam dma channel
+ * @bchan: bam dma channel
  *
  * Dequeues and frees all transactions
  * No callbacks are done
@@ -729,7 +720,7 @@ static int bam_pause(struct dma_chan *chan)
 	unsigned long flag;
 	int ret;
 
-	ret = bam_pm_runtime_get_sync(bdev->dev);
+	ret = pm_runtime_get_sync(bdev->dev);
 	if (ret < 0)
 		return ret;
 
@@ -755,7 +746,7 @@ static int bam_resume(struct dma_chan *chan)
 	unsigned long flag;
 	int ret;
 
-	ret = bam_pm_runtime_get_sync(bdev->dev);
+	ret = pm_runtime_get_sync(bdev->dev);
 	if (ret < 0)
 		return ret;
 
@@ -861,7 +852,7 @@ static irqreturn_t bam_dma_irq(int irq, void *data)
 	if (srcs & P_IRQ)
 		tasklet_schedule(&bdev->task);
 
-	ret = bam_pm_runtime_get_sync(bdev->dev);
+	ret = pm_runtime_get_sync(bdev->dev);
 	if (ret < 0)
 		return ret;
 
@@ -919,8 +910,7 @@ static enum dma_status bam_tx_status(struct dma_chan *chan, dma_cookie_t cookie,
 				continue;
 
 			for (i = 0; i < async_desc->num_desc; i++)
-				residue += le16_to_cpu(
-						async_desc->curr_desc[i].size);
+				residue += async_desc->curr_desc[i].size;
 		}
 	}
 
@@ -960,7 +950,7 @@ static void bam_apply_new_config(struct bam_chan *bchan,
 
 /**
  * bam_start_dma - start next transaction
- * @bchan: bam dma channel
+ * @bchan - bam dma channel
  */
 static void bam_start_dma(struct bam_chan *bchan)
 {
@@ -979,7 +969,7 @@ static void bam_start_dma(struct bam_chan *bchan)
 	if (!vd)
 		return;
 
-	ret = bam_pm_runtime_get_sync(bdev->dev);
+	ret = pm_runtime_get_sync(bdev->dev);
 	if (ret < 0)
 		return;
 

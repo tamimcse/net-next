@@ -80,72 +80,53 @@ static void log_dpcd(uint8_t type,
 static ssize_t dm_dp_aux_transfer(struct drm_dp_aux *aux,
 				  struct drm_dp_aux_msg *msg)
 {
-	ssize_t result = 0;
-	enum i2caux_transaction_action action;
-	enum aux_transaction_type type;
+	enum i2c_mot_mode mot = (msg->request & DP_AUX_I2C_MOT) ?
+		I2C_MOT_TRUE : I2C_MOT_FALSE;
+	enum ddc_result res;
+	ssize_t read_bytes;
 
 	if (WARN_ON(msg->size > 16))
 		return -E2BIG;
 
 	switch (msg->request & ~DP_AUX_I2C_MOT) {
 	case DP_AUX_NATIVE_READ:
-		type = AUX_TRANSACTION_TYPE_DP;
-		action = I2CAUX_TRANSACTION_ACTION_DP_READ;
-
-		result = dc_link_aux_transfer(TO_DM_AUX(aux)->ddc_service,
-					      msg->address,
-					      &msg->reply,
-					      msg->buffer,
-					      msg->size,
-					      type,
-					      action);
-		break;
+		read_bytes = dal_ddc_service_read_dpcd_data(
+				TO_DM_AUX(aux)->ddc_service,
+				false,
+				I2C_MOT_UNDEF,
+				msg->address,
+				msg->buffer,
+				msg->size);
+		return read_bytes;
 	case DP_AUX_NATIVE_WRITE:
-		type = AUX_TRANSACTION_TYPE_DP;
-		action = I2CAUX_TRANSACTION_ACTION_DP_WRITE;
-
-		dc_link_aux_transfer(TO_DM_AUX(aux)->ddc_service,
-				     msg->address,
-				     &msg->reply,
-				     msg->buffer,
-				     msg->size,
-				     type,
-				     action);
-		result = msg->size;
+		res = dal_ddc_service_write_dpcd_data(
+				TO_DM_AUX(aux)->ddc_service,
+				false,
+				I2C_MOT_UNDEF,
+				msg->address,
+				msg->buffer,
+				msg->size);
 		break;
 	case DP_AUX_I2C_READ:
-		type = AUX_TRANSACTION_TYPE_I2C;
-		if (msg->request & DP_AUX_I2C_MOT)
-			action = I2CAUX_TRANSACTION_ACTION_I2C_READ_MOT;
-		else
-			action = I2CAUX_TRANSACTION_ACTION_I2C_READ;
-
-		result = dc_link_aux_transfer(TO_DM_AUX(aux)->ddc_service,
-					      msg->address,
-					      &msg->reply,
-					      msg->buffer,
-					      msg->size,
-					      type,
-					      action);
-		break;
+		read_bytes = dal_ddc_service_read_dpcd_data(
+				TO_DM_AUX(aux)->ddc_service,
+				true,
+				mot,
+				msg->address,
+				msg->buffer,
+				msg->size);
+		return read_bytes;
 	case DP_AUX_I2C_WRITE:
-		type = AUX_TRANSACTION_TYPE_I2C;
-		if (msg->request & DP_AUX_I2C_MOT)
-			action = I2CAUX_TRANSACTION_ACTION_I2C_WRITE_MOT;
-		else
-			action = I2CAUX_TRANSACTION_ACTION_I2C_WRITE;
-
-		dc_link_aux_transfer(TO_DM_AUX(aux)->ddc_service,
-				     msg->address,
-				     &msg->reply,
-				     msg->buffer,
-				     msg->size,
-				     type,
-				     action);
-		result = msg->size;
+		res = dal_ddc_service_write_dpcd_data(
+				TO_DM_AUX(aux)->ddc_service,
+				true,
+				mot,
+				msg->address,
+				msg->buffer,
+				msg->size);
 		break;
 	default:
-		return -EINVAL;
+		return 0;
 	}
 
 #ifdef TRACE_DPCD
@@ -156,10 +137,7 @@ static ssize_t dm_dp_aux_transfer(struct drm_dp_aux *aux,
 		 r == DDC_RESULT_SUCESSFULL);
 #endif
 
-	if (result < 0) /* DC doesn't know about kernel error codes */
-		result = -EIO;
-
-	return result;
+	return msg->size;
 }
 
 static enum drm_connector_status
@@ -251,7 +229,7 @@ static int dm_dp_mst_get_modes(struct drm_connector *connector)
 		edid = drm_dp_mst_get_edid(connector, &aconnector->mst_port->mst_mgr, aconnector->port);
 
 		if (!edid) {
-			drm_connector_update_edid_property(
+			drm_mode_connector_update_edid_property(
 				&aconnector->base,
 				NULL);
 			return ret;
@@ -279,7 +257,7 @@ static int dm_dp_mst_get_modes(struct drm_connector *connector)
 					connector, aconnector->edid);
 	}
 
-	drm_connector_update_edid_property(
+	drm_mode_connector_update_edid_property(
 					&aconnector->base, aconnector->edid);
 
 	ret = drm_add_edid_modes(connector, aconnector->edid);
@@ -363,7 +341,7 @@ dm_dp_add_mst_connector(struct drm_dp_mst_topology_mgr *mgr,
 						aconnector, connector->base.id, aconnector->mst_port);
 
 			aconnector->port = port;
-			drm_connector_set_path_property(connector, pathprop);
+			drm_mode_connector_set_path_property(connector, pathprop);
 
 			drm_connector_list_iter_end(&conn_iter);
 			aconnector->mst_connected = true;
@@ -411,7 +389,7 @@ dm_dp_add_mst_connector(struct drm_dp_mst_topology_mgr *mgr,
 		dev->mode_config.tile_property,
 		0);
 
-	drm_connector_set_path_property(connector, pathprop);
+	drm_mode_connector_set_path_property(connector, pathprop);
 
 	/*
 	 * Initialize connector state before adding the connectror to drm and
@@ -459,7 +437,7 @@ static void dm_dp_mst_hotplug(struct drm_dp_mst_topology_mgr *mgr)
 static void dm_dp_mst_link_status_reset(struct drm_connector *connector)
 {
 	mutex_lock(&connector->dev->mode_config.mutex);
-	drm_connector_set_link_status_property(connector, DRM_MODE_LINK_STATUS_BAD);
+	drm_mode_connector_set_link_status_property(connector, DRM_MODE_LINK_STATUS_BAD);
 	mutex_unlock(&connector->dev->mode_config.mutex);
 }
 

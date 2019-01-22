@@ -14,7 +14,8 @@
 
 #ifdef __KERNEL__
 
-#include <asm/asm-const.h>
+#include <asm/asm-compat.h>
+#include <asm/feature-fixups.h>
 
 /* firmware feature bitmask values */
 

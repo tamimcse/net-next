@@ -32,6 +32,7 @@
 #include <linux/platform_data/omapdss.h>
 #include "omap_hwmod.h"
 #include "omap_device.h"
+#include "omap-pm.h"
 #include "common.h"
 
 #include "soc.h"
@@ -125,6 +126,11 @@ static void omap_dsi_disable_pads(int dsi_id, unsigned lane_mask)
 		omap4_dsi_mux_pads(dsi_id, 0);
 }
 
+static int omap_dss_set_min_bus_tput(struct device *dev, unsigned long tput)
+{
+	return omap_pm_set_min_bus_tput(dev, OCP_INITIATOR_AGENT, tput);
+}
+
 static enum omapdss_version __init omap_display_get_version(void)
 {
 	if (cpu_is_omap24xx())
@@ -163,6 +169,7 @@ static int __init omapdss_init_fbdev(void)
 	static struct omap_dss_board_info board_data = {
 		.dsi_enable_pads = omap_dsi_enable_pads,
 		.dsi_disable_pads = omap_dsi_disable_pads,
+		.set_min_bus_tput = omap_dss_set_min_bus_tput,
 	};
 	struct device_node *node;
 	int r;
@@ -385,7 +392,7 @@ static struct device_node * __init omapdss_find_dss_of_node(void)
 	return NULL;
 }
 
-static int __init omapdss_init_of(void)
+int __init omapdss_init_of(void)
 {
 	int r;
 	struct device_node *node;
@@ -415,4 +422,3 @@ static int __init omapdss_init_of(void)
 
 	return omapdss_init_fbdev();
 }
-omap_device_initcall(omapdss_init_of);

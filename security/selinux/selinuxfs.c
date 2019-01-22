@@ -167,13 +167,11 @@ static ssize_t sel_write_enforce(struct file *file, const char __user *buf,
 				      NULL);
 		if (length)
 			goto out;
-		audit_log(audit_context(), GFP_KERNEL, AUDIT_MAC_STATUS,
-			"enforcing=%d old_enforcing=%d auid=%u ses=%u"
-			" enabled=%d old-enabled=%d lsm=selinux res=1",
+		audit_log(current->audit_context, GFP_KERNEL, AUDIT_MAC_STATUS,
+			"enforcing=%d old_enforcing=%d auid=%u ses=%u",
 			new_value, old_value,
 			from_kuid(&init_user_ns, audit_get_loginuid(current)),
-			audit_get_sessionid(current),
-			selinux_enabled, selinux_enabled);
+			audit_get_sessionid(current));
 		enforcing_set(state, new_value);
 		if (new_value)
 			avc_ss_reset(state->avc, 0);
@@ -281,7 +279,6 @@ static ssize_t sel_write_disable(struct file *file, const char __user *buf,
 	char *page;
 	ssize_t length;
 	int new_value;
-	int enforcing;
 
 	if (count >= PAGE_SIZE)
 		return -ENOMEM;
@@ -299,16 +296,13 @@ static ssize_t sel_write_disable(struct file *file, const char __user *buf,
 		goto out;
 
 	if (new_value) {
-		enforcing = enforcing_enabled(fsi->state);
 		length = selinux_disable(fsi->state);
 		if (length)
 			goto out;
-		audit_log(audit_context(), GFP_KERNEL, AUDIT_MAC_STATUS,
-			"enforcing=%d old_enforcing=%d auid=%u ses=%u"
-			" enabled=%d old-enabled=%d lsm=selinux res=1",
-			enforcing, enforcing,
+		audit_log(current->audit_context, GFP_KERNEL, AUDIT_MAC_STATUS,
+			"selinux=0 auid=%u ses=%u",
 			from_kuid(&init_user_ns, audit_get_loginuid(current)),
-			audit_get_sessionid(current), 0, 1);
+			audit_get_sessionid(current));
 	}
 
 	length = count;
@@ -441,19 +435,25 @@ static int sel_release_policy(struct inode *inode, struct file *filp)
 static ssize_t sel_read_policy(struct file *filp, char __user *buf,
 			       size_t count, loff_t *ppos)
 {
+	struct selinux_fs_info *fsi = file_inode(filp)->i_sb->s_fs_info;
 	struct policy_load_memory *plm = filp->private_data;
 	int ret;
+
+	mutex_lock(&fsi->mutex);
 
 	ret = avc_has_perm(&selinux_state,
 			   current_sid(), SECINITSID_SECURITY,
 			  SECCLASS_SECURITY, SECURITY__READ_POLICY, NULL);
 	if (ret)
-		return ret;
+		goto out;
 
-	return simple_read_from_buffer(buf, count, ppos, plm->data, plm->len);
+	ret = simple_read_from_buffer(buf, count, ppos, plm->data, plm->len);
+out:
+	mutex_unlock(&fsi->mutex);
+	return ret;
 }
 
-static vm_fault_t sel_mmap_policy_fault(struct vm_fault *vmf)
+static int sel_mmap_policy_fault(struct vm_fault *vmf)
 {
 	struct policy_load_memory *plm = vmf->vma->vm_file->private_data;
 	unsigned long offset;
@@ -575,8 +575,8 @@ static ssize_t sel_write_load(struct file *file, const char __user *buf,
 	length = count;
 
 out1:
-	audit_log(audit_context(), GFP_KERNEL, AUDIT_MAC_POLICY_LOAD,
-		"auid=%u ses=%u lsm=selinux res=1",
+	audit_log(current->audit_context, GFP_KERNEL, AUDIT_MAC_POLICY_LOAD,
+		"policy loaded auid=%u ses=%u",
 		from_kuid(&init_user_ns, audit_get_loginuid(current)),
 		audit_get_sessionid(current));
 out:
@@ -614,7 +614,7 @@ static ssize_t sel_write_context(struct file *file, char *buf, size_t size)
 
 	length = -ERANGE;
 	if (len > SIMPLE_TRANSACTION_LIMIT) {
-		pr_err("SELinux: %s:  context size (%u) exceeds "
+		printk(KERN_ERR "SELinux: %s:  context size (%u) exceeds "
 			"payload max\n", __func__, len);
 		goto out;
 	}
@@ -767,7 +767,7 @@ static ssize_t sel_write_relabel(struct file *file, char *buf, size_t size);
 static ssize_t sel_write_user(struct file *file, char *buf, size_t size);
 static ssize_t sel_write_member(struct file *file, char *buf, size_t size);
 
-static ssize_t (*const write_op[])(struct file *, char *, size_t) = {
+static ssize_t (*write_op[])(struct file *, char *, size_t) = {
 	[SEL_ACCESS] = sel_write_access,
 	[SEL_CREATE] = sel_write_create,
 	[SEL_RELABEL] = sel_write_relabel,
@@ -950,7 +950,7 @@ static ssize_t sel_write_create(struct file *file, char *buf, size_t size)
 
 	length = -ERANGE;
 	if (len > SIMPLE_TRANSACTION_LIMIT) {
-		pr_err("SELinux: %s:  context size (%u) exceeds "
+		printk(KERN_ERR "SELinux: %s:  context size (%u) exceeds "
 			"payload max\n", __func__, len);
 		goto out;
 	}
@@ -1141,7 +1141,7 @@ static ssize_t sel_write_member(struct file *file, char *buf, size_t size)
 
 	length = -ERANGE;
 	if (len > SIMPLE_TRANSACTION_LIMIT) {
-		pr_err("SELinux: %s:  context size (%u) exceeds "
+		printk(KERN_ERR "SELinux: %s:  context size (%u) exceeds "
 			"payload max\n", __func__, len);
 		goto out;
 	}
@@ -1182,29 +1182,25 @@ static ssize_t sel_read_bool(struct file *filep, char __user *buf,
 	ret = -EINVAL;
 	if (index >= fsi->bool_num || strcmp(name,
 					     fsi->bool_pending_names[index]))
-		goto out_unlock;
+		goto out;
 
 	ret = -ENOMEM;
 	page = (char *)get_zeroed_page(GFP_KERNEL);
 	if (!page)
-		goto out_unlock;
+		goto out;
 
 	cur_enforcing = security_get_bool_value(fsi->state, index);
 	if (cur_enforcing < 0) {
 		ret = cur_enforcing;
-		goto out_unlock;
+		goto out;
 	}
 	length = scnprintf(page, PAGE_SIZE, "%d %d", cur_enforcing,
 			  fsi->bool_pending_values[index]);
-	mutex_unlock(&fsi->mutex);
 	ret = simple_read_from_buffer(buf, count, ppos, page, length);
-out_free:
+out:
+	mutex_unlock(&fsi->mutex);
 	free_page((unsigned long)page);
 	return ret;
-
-out_unlock:
-	mutex_unlock(&fsi->mutex);
-	goto out_free;
 }
 
 static ssize_t sel_write_bool(struct file *filep, const char __user *buf,
@@ -1216,17 +1212,6 @@ static ssize_t sel_write_bool(struct file *filep, const char __user *buf,
 	int new_value;
 	unsigned index = file_inode(filep)->i_ino & SEL_INO_MASK;
 	const char *name = filep->f_path.dentry->d_name.name;
-
-	if (count >= PAGE_SIZE)
-		return -ENOMEM;
-
-	/* No partial writes. */
-	if (*ppos != 0)
-		return -EINVAL;
-
-	page = memdup_user_nul(buf, count);
-	if (IS_ERR(page))
-		return PTR_ERR(page);
 
 	mutex_lock(&fsi->mutex);
 
@@ -1241,6 +1226,22 @@ static ssize_t sel_write_bool(struct file *filep, const char __user *buf,
 	if (index >= fsi->bool_num || strcmp(name,
 					     fsi->bool_pending_names[index]))
 		goto out;
+
+	length = -ENOMEM;
+	if (count >= PAGE_SIZE)
+		goto out;
+
+	/* No partial writes. */
+	length = -EINVAL;
+	if (*ppos != 0)
+		goto out;
+
+	page = memdup_user_nul(buf, count);
+	if (IS_ERR(page)) {
+		length = PTR_ERR(page);
+		page = NULL;
+		goto out;
+	}
 
 	length = -EINVAL;
 	if (sscanf(page, "%d", &new_value) != 1)
@@ -1273,17 +1274,6 @@ static ssize_t sel_commit_bools_write(struct file *filep,
 	ssize_t length;
 	int new_value;
 
-	if (count >= PAGE_SIZE)
-		return -ENOMEM;
-
-	/* No partial writes. */
-	if (*ppos != 0)
-		return -EINVAL;
-
-	page = memdup_user_nul(buf, count);
-	if (IS_ERR(page))
-		return PTR_ERR(page);
-
 	mutex_lock(&fsi->mutex);
 
 	length = avc_has_perm(&selinux_state,
@@ -1292,6 +1282,22 @@ static ssize_t sel_commit_bools_write(struct file *filep,
 			      NULL);
 	if (length)
 		goto out;
+
+	length = -ENOMEM;
+	if (count >= PAGE_SIZE)
+		goto out;
+
+	/* No partial writes. */
+	length = -EINVAL;
+	if (*ppos != 0)
+		goto out;
+
+	page = memdup_user_nul(buf, count);
+	if (IS_ERR(page)) {
+		length = PTR_ERR(page);
+		page = NULL;
+		goto out;
+	}
 
 	length = -EINVAL;
 	if (sscanf(page, "%d", &new_value) != 1)
@@ -1365,18 +1371,13 @@ static int sel_make_bools(struct selinux_fs_info *fsi)
 
 		ret = -ENOMEM;
 		inode = sel_make_inode(dir->d_sb, S_IFREG | S_IRUGO | S_IWUSR);
-		if (!inode) {
-			dput(dentry);
+		if (!inode)
 			goto out;
-		}
 
 		ret = -ENAMETOOLONG;
 		len = snprintf(page, PAGE_SIZE, "/%s/%s", BOOL_DIR_NAME, names[i]);
-		if (len >= PAGE_SIZE) {
-			dput(dentry);
-			iput(inode);
+		if (len >= PAGE_SIZE)
 			goto out;
-		}
 
 		isec = (struct inode_security_struct *)inode->i_security;
 		ret = security_genfs_sid(fsi->state, "selinuxfs", page,
@@ -1591,10 +1592,8 @@ static int sel_make_avc_files(struct dentry *dir)
 			return -ENOMEM;
 
 		inode = sel_make_inode(dir->d_sb, S_IFREG|files[i].mode);
-		if (!inode) {
-			dput(dentry);
+		if (!inode)
 			return -ENOMEM;
-		}
 
 		inode->i_fop = files[i].ops;
 		inode->i_ino = ++fsi->last_ino;
@@ -1639,10 +1638,8 @@ static int sel_make_initcon_files(struct dentry *dir)
 			return -ENOMEM;
 
 		inode = sel_make_inode(dir->d_sb, S_IFREG|S_IRUGO);
-		if (!inode) {
-			dput(dentry);
+		if (!inode)
 			return -ENOMEM;
-		}
 
 		inode->i_fop = &sel_initcon_ops;
 		inode->i_ino = i|SEL_INITCON_INO_OFFSET;
@@ -1742,10 +1739,8 @@ static int sel_make_perm_files(char *objclass, int classvalue,
 
 		rc = -ENOMEM;
 		inode = sel_make_inode(dir->d_sb, S_IFREG|S_IRUGO);
-		if (!inode) {
-			dput(dentry);
+		if (!inode)
 			goto out;
-		}
 
 		inode->i_fop = &sel_perm_ops;
 		/* i+1 since perm values are 1-indexed */
@@ -1774,10 +1769,8 @@ static int sel_make_class_dir_entries(char *classname, int index,
 		return -ENOMEM;
 
 	inode = sel_make_inode(dir->d_sb, S_IFREG|S_IRUGO);
-	if (!inode) {
-		dput(dentry);
+	if (!inode)
 		return -ENOMEM;
-	}
 
 	inode->i_fop = &sel_class_ops;
 	inode->i_ino = sel_class_to_ino(index);
@@ -1851,10 +1844,8 @@ static int sel_make_policycap(struct selinux_fs_info *fsi)
 			return -ENOMEM;
 
 		inode = sel_make_inode(fsi->sb, S_IFREG | 0444);
-		if (inode == NULL) {
-			dput(dentry);
+		if (inode == NULL)
 			return -ENOMEM;
-		}
 
 		inode->i_fop = &sel_policycap_ops;
 		inode->i_ino = iter | SEL_POLICYCAP_INO_OFFSET;
@@ -1947,10 +1938,8 @@ static int sel_fill_super(struct super_block *sb, void *data, int silent)
 
 	ret = -ENOMEM;
 	inode = sel_make_inode(sb, S_IFCHR | S_IRUGO | S_IWUGO);
-	if (!inode) {
-		dput(dentry);
+	if (!inode)
 		goto err;
-	}
 
 	inode->i_ino = ++fsi->last_ino;
 	isec = (struct inode_security_struct *)inode->i_security;
@@ -2001,7 +1990,7 @@ static int sel_fill_super(struct super_block *sb, void *data, int silent)
 		goto err;
 	return 0;
 err:
-	pr_err("SELinux: %s:  failed while creating inodes\n",
+	printk(KERN_ERR "SELinux: %s:  failed while creating inodes\n",
 		__func__);
 
 	selinux_fs_info_free(sb);
@@ -2051,7 +2040,7 @@ static int __init init_sel_fs(void)
 
 	selinux_null.mnt = selinuxfs_mount = kern_mount(&sel_fs_type);
 	if (IS_ERR(selinuxfs_mount)) {
-		pr_err("selinuxfs:  could not mount!\n");
+		printk(KERN_ERR "selinuxfs:  could not mount!\n");
 		err = PTR_ERR(selinuxfs_mount);
 		selinuxfs_mount = NULL;
 	}

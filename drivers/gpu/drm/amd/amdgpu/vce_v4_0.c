@@ -39,8 +39,6 @@
 #include "mmhub/mmhub_1_0_offset.h"
 #include "mmhub/mmhub_1_0_sh_mask.h"
 
-#include "ivsrcid/vce/irqsrcs_vce_4_0.h"
-
 #define VCE_STATUS_VCPU_REPORT_FW_LOADED_MASK	0x02
 
 #define VCE_V4_0_FW_SIZE	(384 * 1024)
@@ -62,9 +60,9 @@ static uint64_t vce_v4_0_ring_get_rptr(struct amdgpu_ring *ring)
 {
 	struct amdgpu_device *adev = ring->adev;
 
-	if (ring->me == 0)
+	if (ring == &adev->vce.ring[0])
 		return RREG32(SOC15_REG_OFFSET(VCE, 0, mmVCE_RB_RPTR));
-	else if (ring->me == 1)
+	else if (ring == &adev->vce.ring[1])
 		return RREG32(SOC15_REG_OFFSET(VCE, 0, mmVCE_RB_RPTR2));
 	else
 		return RREG32(SOC15_REG_OFFSET(VCE, 0, mmVCE_RB_RPTR3));
@@ -84,9 +82,9 @@ static uint64_t vce_v4_0_ring_get_wptr(struct amdgpu_ring *ring)
 	if (ring->use_doorbell)
 		return adev->wb.wb[ring->wptr_offs];
 
-	if (ring->me == 0)
+	if (ring == &adev->vce.ring[0])
 		return RREG32(SOC15_REG_OFFSET(VCE, 0, mmVCE_RB_WPTR));
-	else if (ring->me == 1)
+	else if (ring == &adev->vce.ring[1])
 		return RREG32(SOC15_REG_OFFSET(VCE, 0, mmVCE_RB_WPTR2));
 	else
 		return RREG32(SOC15_REG_OFFSET(VCE, 0, mmVCE_RB_WPTR3));
@@ -110,10 +108,10 @@ static void vce_v4_0_ring_set_wptr(struct amdgpu_ring *ring)
 		return;
 	}
 
-	if (ring->me == 0)
+	if (ring == &adev->vce.ring[0])
 		WREG32(SOC15_REG_OFFSET(VCE, 0, mmVCE_RB_WPTR),
 			lower_32_bits(ring->wptr));
-	else if (ring->me == 1)
+	else if (ring == &adev->vce.ring[1])
 		WREG32(SOC15_REG_OFFSET(VCE, 0, mmVCE_RB_WPTR2),
 			lower_32_bits(ring->wptr));
 	else
@@ -419,7 +417,6 @@ static int vce_v4_0_sw_init(void *handle)
 {
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 	struct amdgpu_ring *ring;
-
 	unsigned size;
 	int r, i;
 
@@ -439,7 +436,7 @@ static int vce_v4_0_sw_init(void *handle)
 		const struct common_firmware_header *hdr;
 		unsigned size = amdgpu_bo_size(adev->vce.vcpu_bo);
 
-		adev->vce.saved_bo = kvmalloc(size, GFP_KERNEL);
+		adev->vce.saved_bo = kmalloc(size, GFP_KERNEL);
 		if (!adev->vce.saved_bo)
 			return -ENOMEM;
 
@@ -475,11 +472,6 @@ static int vce_v4_0_sw_init(void *handle)
 			return r;
 	}
 
-
-	r = amdgpu_vce_entity_init(adev);
-	if (r)
-		return r;
-
 	r = amdgpu_virt_alloc_mm_table(adev);
 	if (r)
 		return r;
@@ -496,7 +488,7 @@ static int vce_v4_0_sw_fini(void *handle)
 	amdgpu_virt_free_mm_table(adev);
 
 	if (adev->firmware.load_type == AMDGPU_FW_LOAD_PSP) {
-		kvfree(adev->vce.saved_bo);
+		kfree(adev->vce.saved_bo);
 		adev->vce.saved_bo = NULL;
 	}
 
@@ -1089,17 +1081,14 @@ static const struct amdgpu_ring_funcs vce_v4_0_ring_vm_funcs = {
 	.end_use = amdgpu_vce_ring_end_use,
 	.emit_wreg = vce_v4_0_emit_wreg,
 	.emit_reg_wait = vce_v4_0_emit_reg_wait,
-	.emit_reg_write_reg_wait = amdgpu_ring_emit_reg_write_reg_wait_helper,
 };
 
 static void vce_v4_0_set_ring_funcs(struct amdgpu_device *adev)
 {
 	int i;
 
-	for (i = 0; i < adev->vce.num_rings; i++) {
+	for (i = 0; i < adev->vce.num_rings; i++)
 		adev->vce.ring[i].funcs = &vce_v4_0_ring_vm_funcs;
-		adev->vce.ring[i].me = i;
-	}
 	DRM_INFO("VCE enabled in VM mode\n");
 }
 

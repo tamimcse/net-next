@@ -219,7 +219,7 @@ int msm_gem_mmap(struct file *filp, struct vm_area_struct *vma)
 	return msm_gem_mmap_obj(vma->vm_private_data, vma);
 }
 
-vm_fault_t msm_gem_fault(struct vm_fault *vmf)
+int msm_gem_fault(struct vm_fault *vmf)
 {
 	struct vm_area_struct *vma = vmf->vma;
 	struct drm_gem_object *obj = vma->vm_private_data;
@@ -227,18 +227,15 @@ vm_fault_t msm_gem_fault(struct vm_fault *vmf)
 	struct page **pages;
 	unsigned long pfn;
 	pgoff_t pgoff;
-	int err;
-	vm_fault_t ret;
+	int ret;
 
 	/*
 	 * vm_ops.open/drm_gem_mmap_obj and close get and put
 	 * a reference on obj. So, we dont need to hold one here.
 	 */
-	err = mutex_lock_interruptible(&msm_obj->lock);
-	if (err) {
-		ret = VM_FAULT_NOPAGE;
+	ret = mutex_lock_interruptible(&msm_obj->lock);
+	if (ret)
 		goto out;
-	}
 
 	if (WARN_ON(msm_obj->madv != MSM_MADV_WILLNEED)) {
 		mutex_unlock(&msm_obj->lock);
@@ -248,7 +245,7 @@ vm_fault_t msm_gem_fault(struct vm_fault *vmf)
 	/* make sure we have pages attached now */
 	pages = get_pages(obj);
 	if (IS_ERR(pages)) {
-		ret = vmf_error(PTR_ERR(pages));
+		ret = PTR_ERR(pages);
 		goto out_unlock;
 	}
 
@@ -260,11 +257,27 @@ vm_fault_t msm_gem_fault(struct vm_fault *vmf)
 	VERB("Inserting %p pfn %lx, pa %lx", (void *)vmf->address,
 			pfn, pfn << PAGE_SHIFT);
 
-	ret = vmf_insert_mixed(vma, vmf->address, __pfn_to_pfn_t(pfn, PFN_DEV));
+	ret = vm_insert_mixed(vma, vmf->address, __pfn_to_pfn_t(pfn, PFN_DEV));
+
 out_unlock:
 	mutex_unlock(&msm_obj->lock);
 out:
-	return ret;
+	switch (ret) {
+	case -EAGAIN:
+	case 0:
+	case -ERESTARTSYS:
+	case -EINTR:
+	case -EBUSY:
+		/*
+		 * EBUSY is ok: this just means that another thread
+		 * already did the job.
+		 */
+		return VM_FAULT_NOPAGE;
+	case -ENOMEM:
+		return VM_FAULT_OOM;
+	default:
+		return VM_FAULT_SIGBUS;
+	}
 }
 
 /** get mmap offset */

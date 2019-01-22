@@ -648,7 +648,6 @@ static int adav80x_set_pll(struct snd_soc_component *component, int pll_id,
 			pll_ctrl1 |= ADAV80X_PLL_CTRL1_PLLDIV;
 			break;
 		}
-		/* fall through */
 	default:
 		return -EINVAL;
 	}

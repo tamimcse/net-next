@@ -383,7 +383,7 @@ static unsigned long *dwc2_get_ls_map(struct dwc2_hsotg *hsotg,
 	/* Get the map and adjust if this is a multi_tt hub */
 	map = qh->dwc_tt->periodic_bitmaps;
 	if (qh->dwc_tt->usb_tt->multi)
-		map += DWC2_ELEMENTS_PER_LS_BITMAP * (qh->ttport - 1);
+		map += DWC2_ELEMENTS_PER_LS_BITMAP * qh->ttport;
 
 	return map;
 }
@@ -679,7 +679,6 @@ static int dwc2_hs_pmap_schedule(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh,
  *
  * @hsotg:       The HCD state structure for the DWC OTG controller.
  * @qh:          QH for the periodic transfer.
- * @index:       Transfer index
  */
 static void dwc2_hs_pmap_unschedule(struct dwc2_hsotg *hsotg,
 				    struct dwc2_qh *qh, int index)
@@ -1277,7 +1276,7 @@ static void dwc2_do_unreserve(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh)
  * release the reservation.  This worker is called after the appropriate
  * delay.
  *
- * @t: Address to a qh unreserve_work.
+ * @work: Pointer to a qh unreserve_work.
  */
 static void dwc2_unreserve_timer_fn(struct timer_list *t)
 {
@@ -1510,7 +1509,7 @@ static void dwc2_qh_init(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh,
 	bool ep_is_in = !!dwc2_hcd_is_pipe_in(&urb->pipe_info);
 	bool ep_is_isoc = (ep_type == USB_ENDPOINT_XFER_ISOC);
 	bool ep_is_int = (ep_type == USB_ENDPOINT_XFER_INT);
-	u32 hprt = dwc2_readl(hsotg, HPRT0);
+	u32 hprt = dwc2_readl(hsotg->regs + HPRT0);
 	u32 prtspd = (hprt & HPRT0_SPD_MASK) >> HPRT0_SPD_SHIFT;
 	bool do_split = (prtspd == HPRT0_SPD_HIGH_SPEED &&
 			 dev_speed != USB_SPEED_HIGH);
@@ -1632,7 +1631,7 @@ static void dwc2_qh_init(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh,
  * @hsotg:        The HCD state structure for the DWC OTG controller
  * @urb:          Holds the information about the device/endpoint needed
  *                to initialize the QH
- * @mem_flags:   Flags for allocating memory.
+ * @atomic_alloc: Flag to do atomic allocation if needed
  *
  * Return: Pointer to the newly allocated QH, or NULL on error
  */
@@ -1696,9 +1695,6 @@ void dwc2_hcd_qh_free(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh)
 
 	if (qh->desc_list)
 		dwc2_hcd_qh_free_ddma(hsotg, qh);
-	else if (hsotg->unaligned_cache && qh->dw_align_buf)
-		kmem_cache_free(hsotg->unaligned_cache, qh->dw_align_buf);
-
 	kfree(qh);
 }
 
@@ -1747,9 +1743,9 @@ int dwc2_hcd_qh_add(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh)
 	if (status)
 		return status;
 	if (!hsotg->periodic_qh_count) {
-		intr_mask = dwc2_readl(hsotg, GINTMSK);
+		intr_mask = dwc2_readl(hsotg->regs + GINTMSK);
 		intr_mask |= GINTSTS_SOF;
-		dwc2_writel(hsotg, intr_mask, GINTMSK);
+		dwc2_writel(intr_mask, hsotg->regs + GINTMSK);
 	}
 	hsotg->periodic_qh_count++;
 
@@ -1788,9 +1784,9 @@ void dwc2_hcd_qh_unlink(struct dwc2_hsotg *hsotg, struct dwc2_qh *qh)
 	hsotg->periodic_qh_count--;
 	if (!hsotg->periodic_qh_count &&
 	    !hsotg->params.dma_desc_enable) {
-		intr_mask = dwc2_readl(hsotg, GINTMSK);
+		intr_mask = dwc2_readl(hsotg->regs + GINTMSK);
 		intr_mask &= ~GINTSTS_SOF;
-		dwc2_writel(hsotg, intr_mask, GINTMSK);
+		dwc2_writel(intr_mask, hsotg->regs + GINTMSK);
 	}
 }
 

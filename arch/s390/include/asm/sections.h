@@ -4,4 +4,6 @@
 
 #include <asm-generic/sections.h>
 
+extern char _ehead[];
+
 #endif

@@ -472,7 +472,6 @@ static int atp_status_check(struct urb *urb)
 				dev->info->datalen, dev->urb->actual_length);
 			dev->overflow_warned = true;
 		}
-		/* fall through */
 	case -ECONNRESET:
 	case -ENOENT:
 	case -ESHUTDOWN:
@@ -811,7 +810,7 @@ static int atp_open(struct input_dev *input)
 {
 	struct atp *dev = input_get_drvdata(input);
 
-	if (usb_submit_urb(dev->urb, GFP_KERNEL))
+	if (usb_submit_urb(dev->urb, GFP_ATOMIC))
 		return -EIO;
 
 	dev->open = true;
@@ -977,7 +976,7 @@ static int atp_recover(struct atp *dev)
 	if (error)
 		return error;
 
-	if (dev->open && usb_submit_urb(dev->urb, GFP_KERNEL))
+	if (dev->open && usb_submit_urb(dev->urb, GFP_ATOMIC))
 		return -EIO;
 
 	return 0;
@@ -995,7 +994,7 @@ static int atp_resume(struct usb_interface *iface)
 {
 	struct atp *dev = usb_get_intfdata(iface);
 
-	if (dev->open && usb_submit_urb(dev->urb, GFP_KERNEL))
+	if (dev->open && usb_submit_urb(dev->urb, GFP_ATOMIC))
 		return -EIO;
 
 	return 0;

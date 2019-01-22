@@ -80,7 +80,7 @@ struct brcmf_fw_name {
 
 struct brcmf_fw_request *
 brcmf_fw_alloc_request(u32 chip, u32 chiprev,
-		       const struct brcmf_firmware_mapping mapping_table[],
+		       struct brcmf_firmware_mapping mapping_table[],
 		       u32 table_size, struct brcmf_fw_name *fwnames,
 		       u32 n_fwnames);
 

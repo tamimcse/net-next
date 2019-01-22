@@ -16,16 +16,14 @@
     |        ia64: | TODO |
     |        m68k: | TODO |
     |  microblaze: | TODO |
-    |        mips: |  ok  |
-    |       nds32: | TODO |
+    |        mips: | TODO |
     |       nios2: | TODO |
-    |    openrisc: |  ok  |
+    |    openrisc: | TODO |
     |      parisc: | TODO |
     |     powerpc: | TODO |
-    |       riscv: | TODO |
     |        s390: | TODO |
     |          sh: | TODO |
-    |       sparc: |  ok  |
+    |       sparc: | TODO |
     |          um: | TODO |
     |   unicore32: | TODO |
     |         x86: |  ok  |

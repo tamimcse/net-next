@@ -19,10 +19,11 @@
 #include <linux/string.h>
 #include <linux/timer.h>
 #include <linux/poll.h>
-#include <linux/kernel.h>
 
 #include <net/inet_sock.h>
 #include <net/request_sock.h>
+
+#define INET_CSK_DEBUG 1
 
 /* Cancel timers, when they are not required. */
 #undef INET_CSK_CLEAR_TIMERS
@@ -168,8 +169,7 @@ enum inet_csk_ack_state_t {
 	ICSK_ACK_SCHED	= 1,
 	ICSK_ACK_TIMER  = 2,
 	ICSK_ACK_PUSHED = 4,
-	ICSK_ACK_PUSHED2 = 8,
-	ICSK_ACK_NOW = 16	/* Send the next ACK immediately (once) */
+	ICSK_ACK_PUSHED2 = 8
 };
 
 void inet_csk_init_xmit_timers(struct sock *sk,
@@ -196,6 +196,10 @@ static inline void inet_csk_delack_init(struct sock *sk)
 void inet_csk_delete_keepalive_timer(struct sock *sk);
 void inet_csk_reset_keepalive_timer(struct sock *sk, unsigned long timeout);
 
+#ifdef INET_CSK_DEBUG
+extern const char inet_csk_timer_bug_msg[];
+#endif
+
 static inline void inet_csk_clear_xmit_timer(struct sock *sk, const int what)
 {
 	struct inet_connection_sock *icsk = inet_csk(sk);
@@ -210,9 +214,12 @@ static inline void inet_csk_clear_xmit_timer(struct sock *sk, const int what)
 #ifdef INET_CSK_CLEAR_TIMERS
 		sk_stop_timer(sk, &icsk->icsk_delack_timer);
 #endif
-	} else {
-		pr_debug("inet_csk BUG: unknown timer value\n");
 	}
+#ifdef INET_CSK_DEBUG
+	else {
+		pr_debug("%s", inet_csk_timer_bug_msg);
+	}
+#endif
 }
 
 /*
@@ -225,8 +232,10 @@ static inline void inet_csk_reset_xmit_timer(struct sock *sk, const int what,
 	struct inet_connection_sock *icsk = inet_csk(sk);
 
 	if (when > max_when) {
+#ifdef INET_CSK_DEBUG
 		pr_debug("reset_xmit_timer: sk=%p %d when=0x%lx, caller=%p\n",
-			 sk, what, when, (void *)_THIS_IP_);
+			 sk, what, when, current_text_addr());
+#endif
 		when = max_when;
 	}
 
@@ -240,9 +249,12 @@ static inline void inet_csk_reset_xmit_timer(struct sock *sk, const int what,
 		icsk->icsk_ack.pending |= ICSK_ACK_TIMER;
 		icsk->icsk_ack.timeout = jiffies + when;
 		sk_reset_timer(sk, &icsk->icsk_delack_timer, icsk->icsk_ack.timeout);
-	} else {
-		pr_debug("inet_csk BUG: unknown timer value\n");
 	}
+#ifdef INET_CSK_DEBUG
+	else {
+		pr_debug("%s", inet_csk_timer_bug_msg);
+	}
+#endif
 }
 
 static inline unsigned long

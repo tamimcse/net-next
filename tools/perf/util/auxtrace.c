@@ -56,7 +56,6 @@
 #include "intel-pt.h"
 #include "intel-bts.h"
 #include "arm-spe.h"
-#include "s390-cpumsf.h"
 
 #include "sane_ctype.h"
 #include "symbol/kallsyms.h"
@@ -203,9 +202,6 @@ static int auxtrace_queues__grow(struct auxtrace_queues *queues,
 	for (i = 0; i < queues->nr_queues; i++) {
 		list_splice_tail(&queues->queue_array[i].head,
 				 &queue_array[i].head);
-		queue_array[i].tid = queues->queue_array[i].tid;
-		queue_array[i].cpu = queues->queue_array[i].cpu;
-		queue_array[i].set = queues->queue_array[i].set;
 		queue_array[i].priv = queues->queue_array[i].priv;
 	}
 
@@ -924,8 +920,6 @@ int perf_event__process_auxtrace_info(struct perf_tool *tool __maybe_unused,
 		return arm_spe_process_auxtrace_info(event, session);
 	case PERF_AUXTRACE_CS_ETM:
 		return cs_etm__process_auxtrace_info(event, session);
-	case PERF_AUXTRACE_S390_CPUMSF:
-		return s390_cpumsf_process_auxtrace_info(event, session);
 	case PERF_AUXTRACE_UNKNOWN:
 	default:
 		return -EINVAL;
@@ -1685,7 +1679,7 @@ struct sym_args {
 static bool kern_sym_match(struct sym_args *args, const char *name, char type)
 {
 	/* A function with the same name, and global or the n'th found or any */
-	return kallsyms__is_function(type) &&
+	return symbol_type__is_a(type, MAP__FUNCTION) &&
 	       !strcmp(name, args->name) &&
 	       ((args->global && isupper(type)) ||
 		(args->selected && ++(args->cnt) == args->idx) ||
@@ -1790,7 +1784,7 @@ static int find_entire_kern_cb(void *arg, const char *name __maybe_unused,
 {
 	struct sym_args *args = arg;
 
-	if (!kallsyms__is_function(type))
+	if (!symbol_type__is_a(type, MAP__FUNCTION))
 		return 0;
 
 	if (!args->started) {
@@ -1921,7 +1915,7 @@ static void print_duplicate_syms(struct dso *dso, const char *sym_name)
 
 	pr_err("Multiple symbols with name '%s'\n", sym_name);
 
-	sym = dso__first_symbol(dso);
+	sym = dso__first_symbol(dso, MAP__FUNCTION);
 	while (sym) {
 		if (dso_sym_match(sym, sym_name, &cnt, -1)) {
 			pr_err("#%d\t0x%"PRIx64"\t%c\t%s\n",
@@ -1951,7 +1945,7 @@ static int find_dso_sym(struct dso *dso, const char *sym_name, u64 *start,
 	*start = 0;
 	*size = 0;
 
-	sym = dso__first_symbol(dso);
+	sym = dso__first_symbol(dso, MAP__FUNCTION);
 	while (sym) {
 		if (*start) {
 			if (!*size)
@@ -1978,8 +1972,8 @@ static int find_dso_sym(struct dso *dso, const char *sym_name, u64 *start,
 
 static int addr_filter__entire_dso(struct addr_filter *filt, struct dso *dso)
 {
-	struct symbol *first_sym = dso__first_symbol(dso);
-	struct symbol *last_sym = dso__last_symbol(dso);
+	struct symbol *first_sym = dso__first_symbol(dso, MAP__FUNCTION);
+	struct symbol *last_sym = dso__last_symbol(dso, MAP__FUNCTION);
 
 	if (!first_sym || !last_sym) {
 		pr_err("Failed to determine filter for %s\nNo symbols found.\n",

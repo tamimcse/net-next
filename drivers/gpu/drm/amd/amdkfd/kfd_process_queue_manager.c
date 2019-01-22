@@ -119,6 +119,9 @@ static int create_cp_queue(struct process_queue_manager *pqm,
 	/* Doorbell initialized in user space*/
 	q_properties->doorbell_ptr = NULL;
 
+	q_properties->doorbell_off =
+			kfd_queue_id_to_doorbell(dev, pqm->process, qid);
+
 	/* let DQM handle it*/
 	q_properties->vmid = 0;
 	q_properties->queue_id = qid;
@@ -186,7 +189,8 @@ int pqm_create_queue(struct process_queue_manager *pqm,
 
 	switch (type) {
 	case KFD_QUEUE_TYPE_SDMA:
-		if (dev->dqm->queue_count >= get_num_sdma_queues(dev->dqm)) {
+		if (dev->dqm->queue_count >=
+			CIK_SDMA_QUEUES_PER_ENGINE * CIK_SDMA_ENGINE_NUM) {
 			pr_err("Over-subscription is not allowed for SDMA.\n");
 			retval = -EPERM;
 			goto err_create_queue;
@@ -208,7 +212,7 @@ int pqm_create_queue(struct process_queue_manager *pqm,
 		     KFD_SCHED_POLICY_HWS_NO_OVERSUBSCRIPTION) &&
 		((dev->dqm->processes_count >= dev->vm_info.vmid_num_kfd) ||
 		(dev->dqm->queue_count >= get_queues_num(dev->dqm)))) {
-			pr_debug("Over-subscription is not allowed when amdkfd.sched_policy == 1\n");
+			pr_err("Over-subscription is not allowed in radeon_kfd.sched_policy == 1\n");
 			retval = -EPERM;
 			goto err_create_queue;
 		}
@@ -240,19 +244,9 @@ int pqm_create_queue(struct process_queue_manager *pqm,
 	}
 
 	if (retval != 0) {
-		pr_err("Pasid %d DQM create queue %d failed. ret %d\n",
-			pqm->process->pasid, type, retval);
+		pr_err("DQM create queue failed\n");
 		goto err_create_queue;
 	}
-
-	if (q)
-		/* Return the doorbell offset within the doorbell page
-		 * to the caller so it can be passed up to user mode
-		 * (in bytes).
-		 */
-		properties->doorbell_off =
-			(q->properties.doorbell_off * sizeof(uint32_t)) &
-			(kfd_doorbell_process_slice(dev) - 1);
 
 	pr_debug("PQM After DQM create queue\n");
 
@@ -319,14 +313,9 @@ int pqm_destroy_queue(struct process_queue_manager *pqm, unsigned int qid)
 		dqm = pqn->q->device->dqm;
 		retval = dqm->ops.destroy_queue(dqm, &pdd->qpd, pqn->q);
 		if (retval) {
-			pr_err("Pasid %d destroy queue %d failed, ret %d\n",
-				pqm->process->pasid,
-				pqn->q->properties.queue_id, retval);
-			if (retval != -ETIME)
-				goto err_destroy_queue;
+			pr_debug("Destroy queue failed, returned %d\n", retval);
+			goto err_destroy_queue;
 		}
-		kfree(pqn->q->properties.cu_mask);
-		pqn->q->properties.cu_mask = NULL;
 		uninit_queue(pqn->q);
 	}
 
@@ -367,34 +356,6 @@ int pqm_update_queue(struct process_queue_manager *pqm, unsigned int qid,
 	return 0;
 }
 
-int pqm_set_cu_mask(struct process_queue_manager *pqm, unsigned int qid,
-			struct queue_properties *p)
-{
-	int retval;
-	struct process_queue_node *pqn;
-
-	pqn = get_queue_by_qid(pqm, qid);
-	if (!pqn) {
-		pr_debug("No queue %d exists for update operation\n", qid);
-		return -EFAULT;
-	}
-
-	/* Free the old CU mask memory if it is already allocated, then
-	 * allocate memory for the new CU mask.
-	 */
-	kfree(pqn->q->properties.cu_mask);
-
-	pqn->q->properties.cu_mask_count = p->cu_mask_count;
-	pqn->q->properties.cu_mask = p->cu_mask;
-
-	retval = pqn->q->device->dqm->ops.update_queue(pqn->q->device->dqm,
-							pqn->q);
-	if (retval != 0)
-		return retval;
-
-	return 0;
-}
-
 struct kernel_queue *pqm_get_kernel_queue(
 					struct process_queue_manager *pqm,
 					unsigned int qid)
@@ -416,7 +377,7 @@ int pqm_debugfs_mqds(struct seq_file *m, void *data)
 	struct process_queue_node *pqn;
 	struct queue *q;
 	enum KFD_MQD_TYPE mqd_type;
-	struct mqd_manager *mqd_mgr;
+	struct mqd_manager *mqd_manager;
 	int r = 0;
 
 	list_for_each_entry(pqn, &pqm->queues, process_queue_list) {
@@ -439,11 +400,11 @@ int pqm_debugfs_mqds(struct seq_file *m, void *data)
 					   q->properties.type, q->device->id);
 				continue;
 			}
-			mqd_mgr = q->device->dqm->ops.get_mqd_manager(
+			mqd_manager = q->device->dqm->ops.get_mqd_manager(
 				q->device->dqm, mqd_type);
 		} else if (pqn->kq) {
 			q = pqn->kq->queue;
-			mqd_mgr = pqn->kq->mqd_mgr;
+			mqd_manager = pqn->kq->mqd;
 			switch (q->properties.type) {
 			case KFD_QUEUE_TYPE_DIQ:
 				seq_printf(m, "  DIQ on device %x\n",
@@ -463,7 +424,7 @@ int pqm_debugfs_mqds(struct seq_file *m, void *data)
 			continue;
 		}
 
-		r = mqd_mgr->debugfs_show_mqd(m, q->mqd);
+		r = mqd_manager->debugfs_show_mqd(m, q->mqd);
 		if (r != 0)
 			break;
 	}

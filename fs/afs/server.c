@@ -67,6 +67,12 @@ struct afs_server *afs_find_server(struct afs_net *net,
 							      sizeof(struct in6_addr));
 					if (diff == 0)
 						goto found;
+					if (diff < 0) {
+						// TODO: Sort the list
+						//if (i == alist->nr_ipv4)
+						//	goto not_found;
+						break;
+					}
 				}
 			}
 		} else {
@@ -81,10 +87,17 @@ struct afs_server *afs_find_server(struct afs_net *net,
 							(u32 __force)b->sin6_addr.s6_addr32[3]);
 					if (diff == 0)
 						goto found;
+					if (diff < 0) {
+						// TODO: Sort the list
+						//if (i == 0)
+						//	goto not_found;
+						break;
+					}
 				}
 			}
 		}
 
+	//not_found:
 		server = NULL;
 	found:
 		if (server && !atomic_inc_not_zero(&server->usage))
@@ -228,7 +241,7 @@ static struct afs_server *afs_alloc_server(struct afs_net *net,
 	server->flags = (1UL << AFS_SERVER_FL_NEW);
 	server->update_at = ktime_get_real_seconds() + afs_server_update_delay;
 	rwlock_init(&server->fs_lock);
-	INIT_HLIST_HEAD(&server->cb_volumes);
+	INIT_LIST_HEAD(&server->cb_interests);
 	rwlock_init(&server->cb_break_lock);
 
 	afs_inc_servers_outstanding(net);
@@ -382,16 +395,14 @@ static void afs_destroy_server(struct afs_net *net, struct afs_server *server)
 	struct afs_addr_list *alist = rcu_access_pointer(server->addresses);
 	struct afs_addr_cursor ac = {
 		.alist	= alist,
+		.addr	= &alist->addrs[0],
 		.start	= alist->index,
-		.index	= 0,
-		.addr	= &alist->addrs[alist->index],
+		.index	= alist->index,
 		.error	= 0,
 	};
 	_enter("%p", server);
 
-	if (test_bit(AFS_SERVER_FL_MAY_HAVE_CB, &server->flags))
-		afs_fs_give_up_all_callbacks(net, server, &ac, NULL);
-
+	afs_fs_give_up_all_callbacks(net, server, &ac, NULL);
 	call_rcu(&server->rcu, afs_server_rcu);
 	afs_dec_servers_outstanding(net);
 }

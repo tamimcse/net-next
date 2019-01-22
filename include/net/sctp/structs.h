@@ -48,7 +48,7 @@
 #define __sctp_structs_h__
 
 #include <linux/ktime.h>
-#include <linux/rhashtable-types.h>
+#include <linux/rhashtable.h>
 #include <linux/socket.h>	/* linux/in.h needs this!!    */
 #include <linux/in.h>		/* We get struct sockaddr_in. */
 #include <linux/in6.h>		/* We get struct in6_addr     */
@@ -57,7 +57,6 @@
 #include <linux/atomic.h>		/* This gets us atomic counters.  */
 #include <linux/skbuff.h>	/* We need sk_buff_head. */
 #include <linux/workqueue.h>	/* We need tq_struct.	 */
-#include <linux/flex_array.h>	/* We need flex_array.   */
 #include <linux/sctp.h>		/* We need sctp* header structs.  */
 #include <net/sctp/auth.h>	/* We need auth specific structs */
 #include <net/ip.h>		/* For inet_skb_parm */
@@ -194,9 +193,6 @@ struct sctp_sock {
 	/* This is the max_retrans value for new associations. */
 	__u16 pathmaxrxt;
 
-	__u32 flowlabel;
-	__u8  dscp;
-
 	/* The initial Path MTU to use for new associations. */
 	__u32 pathmtu;
 
@@ -224,7 +220,6 @@ struct sctp_sock {
 	__u32 adaptation_ind;
 	__u32 pd_point;
 	__u16	nodelay:1,
-		reuse:1,
 		disable_fragments:1,
 		v4mapped:1,
 		frag_interleave:1,
@@ -399,35 +394,37 @@ void sctp_stream_update(struct sctp_stream *stream, struct sctp_stream *new);
 
 /* What is the current SSN number for this stream? */
 #define sctp_ssn_peek(stream, type, sid) \
-	(sctp_stream_##type((stream), (sid))->ssn)
+	((stream)->type[sid].ssn)
 
 /* Return the next SSN number for this stream.	*/
 #define sctp_ssn_next(stream, type, sid) \
-	(sctp_stream_##type((stream), (sid))->ssn++)
+	((stream)->type[sid].ssn++)
 
 /* Skip over this ssn and all below. */
 #define sctp_ssn_skip(stream, type, sid, ssn) \
-	(sctp_stream_##type((stream), (sid))->ssn = ssn + 1)
+	((stream)->type[sid].ssn = ssn + 1)
 
 /* What is the current MID number for this stream? */
 #define sctp_mid_peek(stream, type, sid) \
-	(sctp_stream_##type((stream), (sid))->mid)
+	((stream)->type[sid].mid)
 
 /* Return the next MID number for this stream.  */
 #define sctp_mid_next(stream, type, sid) \
-	(sctp_stream_##type((stream), (sid))->mid++)
+	((stream)->type[sid].mid++)
 
 /* Skip over this mid and all below. */
 #define sctp_mid_skip(stream, type, sid, mid) \
-	(sctp_stream_##type((stream), (sid))->mid = mid + 1)
+	((stream)->type[sid].mid = mid + 1)
+
+#define sctp_stream_in(asoc, sid) (&(asoc)->stream.in[sid])
 
 /* What is the current MID_uo number for this stream? */
 #define sctp_mid_uo_peek(stream, type, sid) \
-	(sctp_stream_##type((stream), (sid))->mid_uo)
+	((stream)->type[sid].mid_uo)
 
 /* Return the next MID_uo number for this stream.  */
 #define sctp_mid_uo_next(stream, type, sid) \
-	(sctp_stream_##type((stream), (sid))->mid_uo++)
+	((stream)->type[sid].mid_uo++)
 
 /*
  * Pointers to address related SCTP functions.
@@ -897,9 +894,6 @@ struct sctp_transport {
 	 */
 	__u16 pathmaxrxt;
 
-	__u32 flowlabel;
-	__u8  dscp;
-
 	/* This is the partially failed retrans value for the transport
 	 * and will be initialized from the assocs value.  This can be changed
 	 * using the SCTP_PEER_ADDR_THLDS socket option
@@ -1138,11 +1132,6 @@ struct sctp_input_cb {
 	struct sctp_af *af;
 };
 #define SCTP_INPUT_CB(__skb)	((struct sctp_input_cb *)&((__skb)->cb[0]))
-
-struct sctp_output_cb {
-	struct sk_buff *last;
-};
-#define SCTP_OUTPUT_CB(__skb)	((struct sctp_output_cb *)&((__skb)->cb[0]))
 
 static inline const struct sk_buff *sctp_gso_headskb(const struct sk_buff *skb)
 {
@@ -1439,8 +1428,8 @@ struct sctp_stream_in {
 };
 
 struct sctp_stream {
-	struct flex_array *out;
-	struct flex_array *in;
+	struct sctp_stream_out *out;
+	struct sctp_stream_in *in;
 	__u16 outcnt;
 	__u16 incnt;
 	/* Current stream being sent, if any */
@@ -1461,23 +1450,6 @@ struct sctp_stream {
 	};
 	struct sctp_stream_interleave *si;
 };
-
-static inline struct sctp_stream_out *sctp_stream_out(
-	const struct sctp_stream *stream,
-	__u16 sid)
-{
-	return flex_array_get(stream->out, sid);
-}
-
-static inline struct sctp_stream_in *sctp_stream_in(
-	const struct sctp_stream *stream,
-	__u16 sid)
-{
-	return flex_array_get(stream->in, sid);
-}
-
-#define SCTP_SO(s, i) sctp_stream_out((s), (i))
-#define SCTP_SI(s, i) sctp_stream_in((s), (i))
 
 #define SCTP_STREAM_CLOSED		0x00
 #define SCTP_STREAM_OPEN		0x01
@@ -1793,9 +1765,6 @@ struct sctp_association {
 	 * association.
 	 */
 	__u16 pathmaxrxt;
-
-	__u32 flowlabel;
-	__u8  dscp;
 
 	/* Flag that path mtu update is pending */
 	__u8   pmtu_pending;

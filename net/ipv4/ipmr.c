@@ -60,7 +60,6 @@
 #include <linux/netfilter_ipv4.h>
 #include <linux/compat.h>
 #include <linux/export.h>
-#include <linux/rhashtable.h>
 #include <net/ip_tunnels.h>
 #include <net/checksum.h>
 #include <net/netlink.h>
@@ -1052,7 +1051,7 @@ static int ipmr_cache_report(struct mr_table *mrt,
 	struct sk_buff *skb;
 	int ret;
 
-	if (assert == IGMPMSG_WHOLEPKT || assert == IGMPMSG_WRVIFWHOLE)
+	if (assert == IGMPMSG_WHOLEPKT)
 		skb = skb_realloc_headroom(pkt, sizeof(struct iphdr));
 	else
 		skb = alloc_skb(128, GFP_ATOMIC);
@@ -1060,7 +1059,7 @@ static int ipmr_cache_report(struct mr_table *mrt,
 	if (!skb)
 		return -ENOBUFS;
 
-	if (assert == IGMPMSG_WHOLEPKT || assert == IGMPMSG_WRVIFWHOLE) {
+	if (assert == IGMPMSG_WHOLEPKT) {
 		/* Ugly, but we have no choice with this interface.
 		 * Duplicate old header, fix ihl, length etc.
 		 * And all this only to mangle msg->im_msgtype and
@@ -1071,12 +1070,9 @@ static int ipmr_cache_report(struct mr_table *mrt,
 		skb_reset_transport_header(skb);
 		msg = (struct igmpmsg *)skb_network_header(skb);
 		memcpy(msg, skb_network_header(pkt), sizeof(struct iphdr));
-		msg->im_msgtype = assert;
+		msg->im_msgtype = IGMPMSG_WHOLEPKT;
 		msg->im_mbz = 0;
-		if (assert == IGMPMSG_WRVIFWHOLE)
-			msg->im_vif = vifi;
-		else
-			msg->im_vif = mrt->mroute_reg_vif_num;
+		msg->im_vif = mrt->mroute_reg_vif_num;
 		ip_hdr(skb)->ihl = sizeof(struct iphdr) >> 2;
 		ip_hdr(skb)->tot_len = htons(ntohs(ip_hdr(pkt)->tot_len) +
 					     sizeof(struct iphdr));
@@ -1375,7 +1371,6 @@ int ip_mroute_setsockopt(struct sock *sk, int optname, char __user *optval,
 	struct mr_table *mrt;
 	struct vifctl vif;
 	struct mfcctl mfc;
-	bool do_wrvifwhole;
 	u32 uval;
 
 	/* There's one exception to the lock - MRT_DONE which needs to unlock */
@@ -1506,12 +1501,10 @@ int ip_mroute_setsockopt(struct sock *sk, int optname, char __user *optval,
 			break;
 		}
 
-		do_wrvifwhole = (val == IGMPMSG_WRVIFWHOLE);
 		val = !!val;
 		if (val != mrt->mroute_do_pim) {
 			mrt->mroute_do_pim = val;
 			mrt->mroute_do_assert = val;
-			mrt->mroute_do_wrvifwhole = do_wrvifwhole;
 		}
 		break;
 	case MRT_TABLE:
@@ -1989,9 +1982,6 @@ static void ip_mr_forward(struct net *net, struct mr_table *mrt,
 			       MFC_ASSERT_THRESH)) {
 			c->_c.mfc_un.res.last_assert = jiffies;
 			ipmr_cache_report(mrt, skb, true_vifi, IGMPMSG_WRONGVIF);
-			if (mrt->mroute_do_wrvifwhole)
-				ipmr_cache_report(mrt, skb, true_vifi,
-						  IGMPMSG_WRVIFWHOLE);
 		}
 		goto dont_forward;
 	}
@@ -2668,9 +2658,7 @@ static bool ipmr_fill_table(struct mr_table *mrt, struct sk_buff *skb)
 			mrt->mroute_reg_vif_num) ||
 	    nla_put_u8(skb, IPMRA_TABLE_MROUTE_DO_ASSERT,
 		       mrt->mroute_do_assert) ||
-	    nla_put_u8(skb, IPMRA_TABLE_MROUTE_DO_PIM, mrt->mroute_do_pim) ||
-	    nla_put_u8(skb, IPMRA_TABLE_MROUTE_DO_WRVIFWHOLE,
-		       mrt->mroute_do_wrvifwhole))
+	    nla_put_u8(skb, IPMRA_TABLE_MROUTE_DO_PIM, mrt->mroute_do_pim))
 		return false;
 
 	return true;
@@ -2841,6 +2829,19 @@ static const struct seq_operations ipmr_vif_seq_ops = {
 	.show  = ipmr_vif_seq_show,
 };
 
+static int ipmr_vif_open(struct inode *inode, struct file *file)
+{
+	return seq_open_net(inode, file, &ipmr_vif_seq_ops,
+			    sizeof(struct mr_vif_iter));
+}
+
+static const struct file_operations ipmr_vif_fops = {
+	.open    = ipmr_vif_open,
+	.read    = seq_read,
+	.llseek  = seq_lseek,
+	.release = seq_release_net,
+};
+
 static void *ipmr_mfc_seq_start(struct seq_file *seq, loff_t *pos)
 {
 	struct net *net = seq_file_net(seq);
@@ -2899,6 +2900,19 @@ static const struct seq_operations ipmr_mfc_seq_ops = {
 	.next  = mr_mfc_seq_next,
 	.stop  = mr_mfc_seq_stop,
 	.show  = ipmr_mfc_seq_show,
+};
+
+static int ipmr_mfc_open(struct inode *inode, struct file *file)
+{
+	return seq_open_net(inode, file, &ipmr_mfc_seq_ops,
+			    sizeof(struct mr_mfc_iter));
+}
+
+static const struct file_operations ipmr_mfc_fops = {
+	.open    = ipmr_mfc_open,
+	.read    = seq_read,
+	.llseek  = seq_lseek,
+	.release = seq_release_net,
 };
 #endif
 
@@ -2964,11 +2978,9 @@ static int __net_init ipmr_net_init(struct net *net)
 
 #ifdef CONFIG_PROC_FS
 	err = -ENOMEM;
-	if (!proc_create_net("ip_mr_vif", 0, net->proc_net, &ipmr_vif_seq_ops,
-			sizeof(struct mr_vif_iter)))
+	if (!proc_create("ip_mr_vif", 0, net->proc_net, &ipmr_vif_fops))
 		goto proc_vif_fail;
-	if (!proc_create_net("ip_mr_cache", 0, net->proc_net, &ipmr_mfc_seq_ops,
-			sizeof(struct mr_mfc_iter)))
+	if (!proc_create("ip_mr_cache", 0, net->proc_net, &ipmr_mfc_fops))
 		goto proc_cache_fail;
 #endif
 	return 0;

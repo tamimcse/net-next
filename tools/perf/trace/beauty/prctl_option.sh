@@ -1,6 +1,6 @@
 #!/bin/sh
 
-[ $# -eq 1 ] && header_dir=$1 || header_dir=tools/include/uapi/linux/
+header_dir=$1
 
 printf "static const char *prctl_options[] = {\n"
 regex='^#define[[:space:]]+PR_([GS]ET\w+)[[:space:]]*([[:xdigit:]]+).*'

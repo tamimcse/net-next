@@ -131,7 +131,7 @@ encode_fattr(struct svc_rqst *rqstp, __be32 *p, struct svc_fh *fhp,
 {
 	struct dentry	*dentry = fhp->fh_dentry;
 	int type;
-	struct timespec64 time;
+	struct timespec time;
 	u32 f;
 
 	type = (stat->mode & S_IFMT);

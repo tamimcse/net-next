@@ -1,9 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * FPGA Bridge Framework Driver
  *
  *  Copyright (C) 2013-2016 Altera Corporation, All Rights Reserved.
  *  Copyright (C) 2017 Intel Corporation
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include <linux/fpga/fpga-bridge.h>
 #include <linux/idr.h>
@@ -121,7 +132,6 @@ static int fpga_bridge_dev_match(struct device *dev, const void *data)
 /**
  * fpga_bridge_get - get an exclusive reference to a fpga bridge
  * @dev:	parent device that fpga bridge was registered with
- * @info:	fpga manager info
  *
  * Given a device, get an exclusive reference to a fpga bridge.
  *
@@ -318,29 +328,28 @@ static struct attribute *fpga_bridge_attrs[] = {
 ATTRIBUTE_GROUPS(fpga_bridge);
 
 /**
- * fpga_bridge_create - create and initialize a struct fpga_bridge
+ * fpga_bridge_register - register a fpga bridge driver
  * @dev:	FPGA bridge device from pdev
  * @name:	FPGA bridge name
  * @br_ops:	pointer to structure of fpga bridge ops
  * @priv:	FPGA bridge private data
  *
- * Return: struct fpga_bridge or NULL
+ * Return: 0 for success, error code otherwise.
  */
-struct fpga_bridge *fpga_bridge_create(struct device *dev, const char *name,
-				       const struct fpga_bridge_ops *br_ops,
-				       void *priv)
+int fpga_bridge_register(struct device *dev, const char *name,
+			 const struct fpga_bridge_ops *br_ops, void *priv)
 {
 	struct fpga_bridge *bridge;
 	int id, ret = 0;
 
 	if (!name || !strlen(name)) {
 		dev_err(dev, "Attempt to register with no name!\n");
-		return NULL;
+		return -EINVAL;
 	}
 
 	bridge = kzalloc(sizeof(*bridge), GFP_KERNEL);
 	if (!bridge)
-		return NULL;
+		return -ENOMEM;
 
 	id = ida_simple_get(&fpga_bridge_ida, 0, 0, GFP_KERNEL);
 	if (id < 0) {
@@ -361,62 +370,40 @@ struct fpga_bridge *fpga_bridge_create(struct device *dev, const char *name,
 	bridge->dev.parent = dev;
 	bridge->dev.of_node = dev->of_node;
 	bridge->dev.id = id;
+	dev_set_drvdata(dev, bridge);
 
 	ret = dev_set_name(&bridge->dev, "br%d", id);
 	if (ret)
 		goto error_device;
 
-	return bridge;
+	ret = device_add(&bridge->dev);
+	if (ret)
+		goto error_device;
+
+	of_platform_populate(dev->of_node, NULL, NULL, dev);
+
+	dev_info(bridge->dev.parent, "fpga bridge [%s] registered\n",
+		 bridge->name);
+
+	return 0;
 
 error_device:
 	ida_simple_remove(&fpga_bridge_ida, id);
 error_kfree:
 	kfree(bridge);
 
-	return NULL;
-}
-EXPORT_SYMBOL_GPL(fpga_bridge_create);
-
-/**
- * fpga_bridge_free - free a fpga bridge and its id
- * @bridge:	FPGA bridge struct created by fpga_bridge_create
- */
-void fpga_bridge_free(struct fpga_bridge *bridge)
-{
-	ida_simple_remove(&fpga_bridge_ida, bridge->dev.id);
-	kfree(bridge);
-}
-EXPORT_SYMBOL_GPL(fpga_bridge_free);
-
-/**
- * fpga_bridge_register - register a fpga bridge
- * @bridge:	FPGA bridge struct created by fpga_bridge_create
- *
- * Return: 0 for success, error code otherwise.
- */
-int fpga_bridge_register(struct fpga_bridge *bridge)
-{
-	struct device *dev = &bridge->dev;
-	int ret;
-
-	ret = device_add(dev);
-	if (ret)
-		return ret;
-
-	of_platform_populate(dev->of_node, NULL, NULL, dev);
-
-	dev_info(dev->parent, "fpga bridge [%s] registered\n", bridge->name);
-
-	return 0;
+	return ret;
 }
 EXPORT_SYMBOL_GPL(fpga_bridge_register);
 
 /**
- * fpga_bridge_unregister - unregister and free a fpga bridge
- * @bridge:	FPGA bridge struct created by fpga_bridge_create
+ * fpga_bridge_unregister - unregister a fpga bridge driver
+ * @dev: FPGA bridge device from pdev
  */
-void fpga_bridge_unregister(struct fpga_bridge *bridge)
+void fpga_bridge_unregister(struct device *dev)
 {
+	struct fpga_bridge *bridge = dev_get_drvdata(dev);
+
 	/*
 	 * If the low level driver provides a method for putting bridge into
 	 * a desired state upon unregister, do it.
@@ -432,7 +419,8 @@ static void fpga_bridge_dev_release(struct device *dev)
 {
 	struct fpga_bridge *bridge = to_fpga_bridge(dev);
 
-	fpga_bridge_free(bridge);
+	ida_simple_remove(&fpga_bridge_ida, bridge->dev.id);
+	kfree(bridge);
 }
 
 static int __init fpga_bridge_dev_init(void)

@@ -15,7 +15,6 @@
 #include <linux/integrity.h>
 #include <crypto/sha.h>
 #include <linux/key.h>
-#include <linux/audit.h>
 
 /* iint action cache flags */
 #define IMA_MEASURE		0x00000001
@@ -144,8 +143,6 @@ int integrity_kernel_read(struct file *file, loff_t offset,
 #define INTEGRITY_KEYRING_MODULE	2
 #define INTEGRITY_KEYRING_MAX		3
 
-extern struct dentry *integrity_dir;
-
 #ifdef CONFIG_INTEGRITY_SIGNATURE
 
 int integrity_digsig_verify(const unsigned int id, const char *sig, int siglen,
@@ -200,13 +197,6 @@ static inline void evm_load_x509(void)
 void integrity_audit_msg(int audit_msgno, struct inode *inode,
 			 const unsigned char *fname, const char *op,
 			 const char *cause, int result, int info);
-
-static inline struct audit_buffer *
-integrity_audit_log_start(struct audit_context *ctx, gfp_t gfp_mask, int type)
-{
-	return audit_log_start(ctx, gfp_mask, type);
-}
-
 #else
 static inline void integrity_audit_msg(int audit_msgno, struct inode *inode,
 				       const unsigned char *fname,
@@ -214,11 +204,4 @@ static inline void integrity_audit_msg(int audit_msgno, struct inode *inode,
 				       int result, int info)
 {
 }
-
-static inline struct audit_buffer *
-integrity_audit_log_start(struct audit_context *ctx, gfp_t gfp_mask, int type)
-{
-	return NULL;
-}
-
 #endif

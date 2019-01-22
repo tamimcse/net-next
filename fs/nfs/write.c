@@ -1375,9 +1375,12 @@ static void nfs_initiate_write(struct nfs_pgio_header *hdr,
 	int priority = flush_task_priority(how);
 
 	task_setup_data->priority = priority;
-	rpc_ops->write_setup(hdr, msg, &task_setup_data->rpc_client);
+	rpc_ops->write_setup(hdr, msg);
 	trace_nfs_initiate_write(hdr->inode, hdr->io_start, hdr->good_bytes,
 				 hdr->args.stable);
+
+	nfs4_state_protect_write(NFS_SERVER(hdr->inode)->nfs_client,
+				 &task_setup_data->rpc_client, msg, hdr);
 }
 
 /* If a nfs_flush_* function fails, it should remove reqs from @head and
@@ -1406,8 +1409,6 @@ static void nfs_async_write_error(struct list_head *head)
 static void nfs_async_write_reschedule_io(struct nfs_pgio_header *hdr)
 {
 	nfs_async_write_error(&hdr->pages);
-	filemap_fdatawrite_range(hdr->inode->i_mapping, hdr->args.offset,
-			hdr->args.offset + hdr->args.count - 1);
 }
 
 static const struct nfs_pgio_completion_ops nfs_async_write_completion_ops = {
@@ -1668,10 +1669,13 @@ int nfs_initiate_commit(struct rpc_clnt *clnt, struct nfs_commit_data *data,
 		.priority = priority,
 	};
 	/* Set up the initial task struct.  */
-	nfs_ops->commit_setup(data, &msg, &task_setup_data.rpc_client);
+	nfs_ops->commit_setup(data, &msg);
 	trace_nfs_initiate_commit(data);
 
 	dprintk("NFS: initiated commit call\n");
+
+	nfs4_state_protect(NFS_SERVER(data->inode)->nfs_client,
+		NFS_SP4_MACH_CRED_COMMIT, &task_setup_data.rpc_client, &msg);
 
 	task = rpc_run_task(&task_setup_data);
 	if (IS_ERR(task))

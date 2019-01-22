@@ -104,6 +104,11 @@ struct i915_gem_context;
 
 void intel_lr_context_resume(struct drm_i915_private *dev_priv);
 
-void intel_execlists_set_default_submission(struct intel_engine_cs *engine);
+static inline uint64_t
+intel_lr_context_descriptor(struct i915_gem_context *ctx,
+			    struct intel_engine_cs *engine)
+{
+	return ctx->engine[engine->id].lrc_desc;
+}
 
 #endif /* _INTEL_LRC_H_ */

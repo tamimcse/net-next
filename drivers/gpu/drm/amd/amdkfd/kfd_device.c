@@ -20,23 +20,20 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#if defined(CONFIG_AMD_IOMMU_V2_MODULE) || defined(CONFIG_AMD_IOMMU_V2)
+#include <linux/amd-iommu.h>
+#endif
 #include <linux/bsearch.h>
 #include <linux/pci.h>
 #include <linux/slab.h>
 #include "kfd_priv.h"
 #include "kfd_device_queue_manager.h"
 #include "kfd_pm4_headers_vi.h"
-#include "cwsr_trap_handler.h"
+#include "cwsr_trap_handler_gfx8.asm"
 #include "kfd_iommu.h"
 
 #define MQD_SIZE_ALIGNED 768
-
-/*
- * kfd_locked is used to lock the kfd driver during suspend or reset
- * once locked, kfd driver will stop any further GPU execution.
- * create process (open) will return -EAGAIN.
- */
-static atomic_t kfd_locked = ATOMIC_INIT(0);
+static atomic_t kfd_device_suspended = ATOMIC_INIT(0);
 
 #ifdef KFD_SUPPORT_IOMMU_V2
 static const struct kfd_device_info kaveri_device_info = {
@@ -44,7 +41,6 @@ static const struct kfd_device_info kaveri_device_info = {
 	.max_pasid_bits = 16,
 	/* max num of queues for KV.TODO should be a dynamic value */
 	.max_no_of_hqd	= 24,
-	.doorbell_size  = 4,
 	.ih_ring_entry_size = 4 * sizeof(uint32_t),
 	.event_interrupt_class = &event_interrupt_class_cik,
 	.num_of_watch_points = 4,
@@ -52,7 +48,6 @@ static const struct kfd_device_info kaveri_device_info = {
 	.supports_cwsr = false,
 	.needs_iommu_device = true,
 	.needs_pci_atomics = false,
-	.num_sdma_engines = 2,
 };
 
 static const struct kfd_device_info carrizo_device_info = {
@@ -60,7 +55,6 @@ static const struct kfd_device_info carrizo_device_info = {
 	.max_pasid_bits = 16,
 	/* max num of queues for CZ.TODO should be a dynamic value */
 	.max_no_of_hqd	= 24,
-	.doorbell_size  = 4,
 	.ih_ring_entry_size = 4 * sizeof(uint32_t),
 	.event_interrupt_class = &event_interrupt_class_cik,
 	.num_of_watch_points = 4,
@@ -68,22 +62,6 @@ static const struct kfd_device_info carrizo_device_info = {
 	.supports_cwsr = true,
 	.needs_iommu_device = true,
 	.needs_pci_atomics = false,
-	.num_sdma_engines = 2,
-};
-
-static const struct kfd_device_info raven_device_info = {
-	.asic_family = CHIP_RAVEN,
-	.max_pasid_bits = 16,
-	.max_no_of_hqd  = 24,
-	.doorbell_size  = 8,
-	.ih_ring_entry_size = 8 * sizeof(uint32_t),
-	.event_interrupt_class = &event_interrupt_class_v9,
-	.num_of_watch_points = 4,
-	.mqd_size_aligned = MQD_SIZE_ALIGNED,
-	.supports_cwsr = true,
-	.needs_iommu_device = true,
-	.needs_pci_atomics = true,
-	.num_sdma_engines = 1,
 };
 #endif
 
@@ -92,7 +70,6 @@ static const struct kfd_device_info hawaii_device_info = {
 	.max_pasid_bits = 16,
 	/* max num of queues for KV.TODO should be a dynamic value */
 	.max_no_of_hqd	= 24,
-	.doorbell_size  = 4,
 	.ih_ring_entry_size = 4 * sizeof(uint32_t),
 	.event_interrupt_class = &event_interrupt_class_cik,
 	.num_of_watch_points = 4,
@@ -100,14 +77,12 @@ static const struct kfd_device_info hawaii_device_info = {
 	.supports_cwsr = false,
 	.needs_iommu_device = false,
 	.needs_pci_atomics = false,
-	.num_sdma_engines = 2,
 };
 
 static const struct kfd_device_info tonga_device_info = {
 	.asic_family = CHIP_TONGA,
 	.max_pasid_bits = 16,
 	.max_no_of_hqd  = 24,
-	.doorbell_size  = 4,
 	.ih_ring_entry_size = 4 * sizeof(uint32_t),
 	.event_interrupt_class = &event_interrupt_class_cik,
 	.num_of_watch_points = 4,
@@ -115,14 +90,12 @@ static const struct kfd_device_info tonga_device_info = {
 	.supports_cwsr = false,
 	.needs_iommu_device = false,
 	.needs_pci_atomics = true,
-	.num_sdma_engines = 2,
 };
 
 static const struct kfd_device_info tonga_vf_device_info = {
 	.asic_family = CHIP_TONGA,
 	.max_pasid_bits = 16,
 	.max_no_of_hqd  = 24,
-	.doorbell_size  = 4,
 	.ih_ring_entry_size = 4 * sizeof(uint32_t),
 	.event_interrupt_class = &event_interrupt_class_cik,
 	.num_of_watch_points = 4,
@@ -130,14 +103,12 @@ static const struct kfd_device_info tonga_vf_device_info = {
 	.supports_cwsr = false,
 	.needs_iommu_device = false,
 	.needs_pci_atomics = false,
-	.num_sdma_engines = 2,
 };
 
 static const struct kfd_device_info fiji_device_info = {
 	.asic_family = CHIP_FIJI,
 	.max_pasid_bits = 16,
 	.max_no_of_hqd  = 24,
-	.doorbell_size  = 4,
 	.ih_ring_entry_size = 4 * sizeof(uint32_t),
 	.event_interrupt_class = &event_interrupt_class_cik,
 	.num_of_watch_points = 4,
@@ -145,14 +116,12 @@ static const struct kfd_device_info fiji_device_info = {
 	.supports_cwsr = true,
 	.needs_iommu_device = false,
 	.needs_pci_atomics = true,
-	.num_sdma_engines = 2,
 };
 
 static const struct kfd_device_info fiji_vf_device_info = {
 	.asic_family = CHIP_FIJI,
 	.max_pasid_bits = 16,
 	.max_no_of_hqd  = 24,
-	.doorbell_size  = 4,
 	.ih_ring_entry_size = 4 * sizeof(uint32_t),
 	.event_interrupt_class = &event_interrupt_class_cik,
 	.num_of_watch_points = 4,
@@ -160,7 +129,6 @@ static const struct kfd_device_info fiji_vf_device_info = {
 	.supports_cwsr = true,
 	.needs_iommu_device = false,
 	.needs_pci_atomics = false,
-	.num_sdma_engines = 2,
 };
 
 
@@ -168,7 +136,6 @@ static const struct kfd_device_info polaris10_device_info = {
 	.asic_family = CHIP_POLARIS10,
 	.max_pasid_bits = 16,
 	.max_no_of_hqd  = 24,
-	.doorbell_size  = 4,
 	.ih_ring_entry_size = 4 * sizeof(uint32_t),
 	.event_interrupt_class = &event_interrupt_class_cik,
 	.num_of_watch_points = 4,
@@ -176,14 +143,12 @@ static const struct kfd_device_info polaris10_device_info = {
 	.supports_cwsr = true,
 	.needs_iommu_device = false,
 	.needs_pci_atomics = true,
-	.num_sdma_engines = 2,
 };
 
 static const struct kfd_device_info polaris10_vf_device_info = {
 	.asic_family = CHIP_POLARIS10,
 	.max_pasid_bits = 16,
 	.max_no_of_hqd  = 24,
-	.doorbell_size  = 4,
 	.ih_ring_entry_size = 4 * sizeof(uint32_t),
 	.event_interrupt_class = &event_interrupt_class_cik,
 	.num_of_watch_points = 4,
@@ -191,14 +156,12 @@ static const struct kfd_device_info polaris10_vf_device_info = {
 	.supports_cwsr = true,
 	.needs_iommu_device = false,
 	.needs_pci_atomics = false,
-	.num_sdma_engines = 2,
 };
 
 static const struct kfd_device_info polaris11_device_info = {
 	.asic_family = CHIP_POLARIS11,
 	.max_pasid_bits = 16,
 	.max_no_of_hqd  = 24,
-	.doorbell_size  = 4,
 	.ih_ring_entry_size = 4 * sizeof(uint32_t),
 	.event_interrupt_class = &event_interrupt_class_cik,
 	.num_of_watch_points = 4,
@@ -206,37 +169,6 @@ static const struct kfd_device_info polaris11_device_info = {
 	.supports_cwsr = true,
 	.needs_iommu_device = false,
 	.needs_pci_atomics = true,
-	.num_sdma_engines = 2,
-};
-
-static const struct kfd_device_info vega10_device_info = {
-	.asic_family = CHIP_VEGA10,
-	.max_pasid_bits = 16,
-	.max_no_of_hqd  = 24,
-	.doorbell_size  = 8,
-	.ih_ring_entry_size = 8 * sizeof(uint32_t),
-	.event_interrupt_class = &event_interrupt_class_v9,
-	.num_of_watch_points = 4,
-	.mqd_size_aligned = MQD_SIZE_ALIGNED,
-	.supports_cwsr = true,
-	.needs_iommu_device = false,
-	.needs_pci_atomics = false,
-	.num_sdma_engines = 2,
-};
-
-static const struct kfd_device_info vega10_vf_device_info = {
-	.asic_family = CHIP_VEGA10,
-	.max_pasid_bits = 16,
-	.max_no_of_hqd  = 24,
-	.doorbell_size  = 8,
-	.ih_ring_entry_size = 8 * sizeof(uint32_t),
-	.event_interrupt_class = &event_interrupt_class_v9,
-	.num_of_watch_points = 4,
-	.mqd_size_aligned = MQD_SIZE_ALIGNED,
-	.supports_cwsr = true,
-	.needs_iommu_device = false,
-	.needs_pci_atomics = false,
-	.num_sdma_engines = 2,
 };
 
 
@@ -274,7 +206,6 @@ static const struct kfd_deviceid supported_devices[] = {
 	{ 0x9875, &carrizo_device_info },	/* Carrizo */
 	{ 0x9876, &carrizo_device_info },	/* Carrizo */
 	{ 0x9877, &carrizo_device_info },	/* Carrizo */
-	{ 0x15DD, &raven_device_info },		/* Raven */
 #endif
 	{ 0x67A0, &hawaii_device_info },	/* Hawaii */
 	{ 0x67A1, &hawaii_device_info },	/* Hawaii */
@@ -319,15 +250,6 @@ static const struct kfd_deviceid supported_devices[] = {
 	{ 0x67EB, &polaris11_device_info },	/* Polaris11 */
 	{ 0x67EF, &polaris11_device_info },	/* Polaris11 */
 	{ 0x67FF, &polaris11_device_info },	/* Polaris11 */
-	{ 0x6860, &vega10_device_info },	/* Vega10 */
-	{ 0x6861, &vega10_device_info },	/* Vega10 */
-	{ 0x6862, &vega10_device_info },	/* Vega10 */
-	{ 0x6863, &vega10_device_info },	/* Vega10 */
-	{ 0x6864, &vega10_device_info },	/* Vega10 */
-	{ 0x6867, &vega10_device_info },	/* Vega10 */
-	{ 0x6868, &vega10_device_info },	/* Vega10 */
-	{ 0x686C, &vega10_vf_device_info },	/* Vega10  vf*/
-	{ 0x687F, &vega10_device_info },	/* Vega10 */
 };
 
 static int kfd_gtt_sa_init(struct kfd_dev *kfd, unsigned int buf_size,
@@ -357,7 +279,7 @@ struct kfd_dev *kgd2kfd_probe(struct kgd_dev *kgd,
 	struct pci_dev *pdev, const struct kfd2kgd_calls *f2g)
 {
 	struct kfd_dev *kfd;
-	int ret;
+
 	const struct kfd_device_info *device_info =
 					lookup_device_info(pdev->device);
 
@@ -366,18 +288,19 @@ struct kfd_dev *kgd2kfd_probe(struct kgd_dev *kgd,
 		return NULL;
 	}
 
-	/* Allow BIF to recode atomics to PCIe 3.0 AtomicOps.
-	 * 32 and 64-bit requests are possible and must be
-	 * supported.
-	 */
-	ret = pci_enable_atomic_ops_to_root(pdev,
-			PCI_EXP_DEVCAP2_ATOMIC_COMP32 |
-			PCI_EXP_DEVCAP2_ATOMIC_COMP64);
-	if (device_info->needs_pci_atomics && ret < 0) {
-		dev_info(kfd_device,
-			 "skipped device %x:%x, PCI rejects atomics\n",
-			 pdev->vendor, pdev->device);
-		return NULL;
+	if (device_info->needs_pci_atomics) {
+		/* Allow BIF to recode atomics to PCIe 3.0
+		 * AtomicOps. 32 and 64-bit requests are possible and
+		 * must be supported.
+		 */
+		if (pci_enable_atomic_ops_to_root(pdev,
+				PCI_EXP_DEVCAP2_ATOMIC_COMP32 |
+				PCI_EXP_DEVCAP2_ATOMIC_COMP64) < 0) {
+			dev_info(kfd_device,
+				"skipped device %x:%x, PCI rejects atomics",
+				 pdev->vendor, pdev->device);
+			return NULL;
+		}
 	}
 
 	kfd = kzalloc(sizeof(*kfd), GFP_KERNEL);
@@ -400,16 +323,10 @@ struct kfd_dev *kgd2kfd_probe(struct kgd_dev *kgd,
 static void kfd_cwsr_init(struct kfd_dev *kfd)
 {
 	if (cwsr_enable && kfd->device_info->supports_cwsr) {
-		if (kfd->device_info->asic_family < CHIP_VEGA10) {
-			BUILD_BUG_ON(sizeof(cwsr_trap_gfx8_hex) > PAGE_SIZE);
-			kfd->cwsr_isa = cwsr_trap_gfx8_hex;
-			kfd->cwsr_isa_size = sizeof(cwsr_trap_gfx8_hex);
-		} else {
-			BUILD_BUG_ON(sizeof(cwsr_trap_gfx9_hex) > PAGE_SIZE);
-			kfd->cwsr_isa = cwsr_trap_gfx9_hex;
-			kfd->cwsr_isa_size = sizeof(cwsr_trap_gfx9_hex);
-		}
+		BUILD_BUG_ON(sizeof(cwsr_trap_gfx8_hex) > PAGE_SIZE);
 
+		kfd->cwsr_isa = cwsr_trap_gfx8_hex;
+		kfd->cwsr_isa_size = sizeof(cwsr_trap_gfx8_hex);
 		kfd->cwsr_enabled = true;
 	}
 }
@@ -457,8 +374,7 @@ bool kgd2kfd_device_init(struct kfd_dev *kfd,
 
 	if (kfd->kfd2kgd->init_gtt_mem_allocation(
 			kfd->kgd, size, &kfd->gtt_mem,
-			&kfd->gtt_start_gpu_addr, &kfd->gtt_start_cpu_ptr,
-			false)) {
+			&kfd->gtt_start_gpu_addr, &kfd->gtt_start_cpu_ptr)){
 		dev_err(kfd_device, "Could not allocate %d bytes\n", size);
 		goto out;
 	}
@@ -549,54 +465,13 @@ void kgd2kfd_device_exit(struct kfd_dev *kfd)
 	kfree(kfd);
 }
 
-int kgd2kfd_pre_reset(struct kfd_dev *kfd)
-{
-	if (!kfd->init_complete)
-		return 0;
-	kgd2kfd_suspend(kfd);
-
-	/* hold dqm->lock to prevent further execution*/
-	dqm_lock(kfd->dqm);
-
-	kfd_signal_reset_event(kfd);
-	return 0;
-}
-
-/*
- * Fix me. KFD won't be able to resume existing process for now.
- * We will keep all existing process in a evicted state and
- * wait the process to be terminated.
- */
-
-int kgd2kfd_post_reset(struct kfd_dev *kfd)
-{
-	int ret, count;
-
-	if (!kfd->init_complete)
-		return 0;
-
-	dqm_unlock(kfd->dqm);
-
-	ret = kfd_resume(kfd);
-	if (ret)
-		return ret;
-	count = atomic_dec_return(&kfd_locked);
-	WARN_ONCE(count != 0, "KFD reset ref. error");
-	return 0;
-}
-
-bool kfd_is_locked(void)
-{
-	return  (atomic_read(&kfd_locked) > 0);
-}
-
 void kgd2kfd_suspend(struct kfd_dev *kfd)
 {
 	if (!kfd->init_complete)
 		return;
 
 	/* For first KFD device suspend all the KFD processes */
-	if (atomic_inc_return(&kfd_locked) == 1)
+	if (atomic_inc_return(&kfd_device_suspended) == 1)
 		kfd_suspend_all_processes();
 
 	kfd->dqm->ops.stop(kfd->dqm);
@@ -615,7 +490,7 @@ int kgd2kfd_resume(struct kfd_dev *kfd)
 	if (ret)
 		return ret;
 
-	count = atomic_dec_return(&kfd_locked);
+	count = atomic_dec_return(&kfd_device_suspended);
 	WARN_ONCE(count < 0, "KFD suspend / resume ref. error");
 	if (count == 0)
 		ret = kfd_resume_all_processes();
@@ -653,65 +528,17 @@ dqm_start_error:
 /* This is called directly from KGD at ISR. */
 void kgd2kfd_interrupt(struct kfd_dev *kfd, const void *ih_ring_entry)
 {
-	uint32_t patched_ihre[KFD_MAX_RING_ENTRY_SIZE];
-	bool is_patched = false;
-
 	if (!kfd->init_complete)
 		return;
-
-	if (kfd->device_info->ih_ring_entry_size > sizeof(patched_ihre)) {
-		dev_err_once(kfd_device, "Ring entry too small\n");
-		return;
-	}
 
 	spin_lock(&kfd->interrupt_lock);
 
 	if (kfd->interrupts_active
-	    && interrupt_is_wanted(kfd, ih_ring_entry,
-				   patched_ihre, &is_patched)
-	    && enqueue_ih_ring_entry(kfd,
-				     is_patched ? patched_ihre : ih_ring_entry))
+	    && interrupt_is_wanted(kfd, ih_ring_entry)
+	    && enqueue_ih_ring_entry(kfd, ih_ring_entry))
 		queue_work(kfd->ih_wq, &kfd->interrupt_work);
 
 	spin_unlock(&kfd->interrupt_lock);
-}
-
-int kgd2kfd_quiesce_mm(struct mm_struct *mm)
-{
-	struct kfd_process *p;
-	int r;
-
-	/* Because we are called from arbitrary context (workqueue) as opposed
-	 * to process context, kfd_process could attempt to exit while we are
-	 * running so the lookup function increments the process ref count.
-	 */
-	p = kfd_lookup_process_by_mm(mm);
-	if (!p)
-		return -ESRCH;
-
-	r = kfd_process_evict_queues(p);
-
-	kfd_unref_process(p);
-	return r;
-}
-
-int kgd2kfd_resume_mm(struct mm_struct *mm)
-{
-	struct kfd_process *p;
-	int r;
-
-	/* Because we are called from arbitrary context (workqueue) as opposed
-	 * to process context, kfd_process could attempt to exit while we are
-	 * running so the lookup function increments the process ref count.
-	 */
-	p = kfd_lookup_process_by_mm(mm);
-	if (!p)
-		return -ESRCH;
-
-	r = kfd_process_restore_queues(p);
-
-	kfd_unref_process(p);
-	return r;
 }
 
 /** kgd2kfd_schedule_evict_and_restore_process - Schedules work queue that will
@@ -825,8 +652,8 @@ int kfd_gtt_sa_allocate(struct kfd_dev *kfd, unsigned int size,
 	if (size > kfd->gtt_sa_num_of_chunks * kfd->gtt_sa_chunk_size)
 		return -ENOMEM;
 
-	*mem_obj = kzalloc(sizeof(struct kfd_mem_obj), GFP_KERNEL);
-	if (!(*mem_obj))
+	*mem_obj = kmalloc(sizeof(struct kfd_mem_obj), GFP_KERNEL);
+	if ((*mem_obj) == NULL)
 		return -ENOMEM;
 
 	pr_debug("Allocated mem_obj = %p for size = %d\n", *mem_obj, size);
@@ -943,26 +770,3 @@ int kfd_gtt_sa_free(struct kfd_dev *kfd, struct kfd_mem_obj *mem_obj)
 	kfree(mem_obj);
 	return 0;
 }
-
-#if defined(CONFIG_DEBUG_FS)
-
-/* This function will send a package to HIQ to hang the HWS
- * which will trigger a GPU reset and bring the HWS back to normal state
- */
-int kfd_debugfs_hang_hws(struct kfd_dev *dev)
-{
-	int r = 0;
-
-	if (dev->dqm->sched_policy != KFD_SCHED_POLICY_HWS) {
-		pr_err("HWS is not enabled");
-		return -EINVAL;
-	}
-
-	r = pm_debugfs_hang_hws(&dev->dqm->packets);
-	if (!r)
-		r = dqm_debugfs_execute_queues(dev->dqm);
-
-	return r;
-}
-
-#endif

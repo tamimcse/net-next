@@ -63,12 +63,6 @@ struct intel_gvt_gtt_pte_ops {
 	void (*clear_present)(struct intel_gvt_gtt_entry *e);
 	void (*set_present)(struct intel_gvt_gtt_entry *e);
 	bool (*test_pse)(struct intel_gvt_gtt_entry *e);
-	void (*clear_pse)(struct intel_gvt_gtt_entry *e);
-	bool (*test_ips)(struct intel_gvt_gtt_entry *e);
-	void (*clear_ips)(struct intel_gvt_gtt_entry *e);
-	bool (*test_64k_splited)(struct intel_gvt_gtt_entry *e);
-	void (*clear_64k_splited)(struct intel_gvt_gtt_entry *e);
-	void (*set_64k_splited)(struct intel_gvt_gtt_entry *e);
 	void (*set_pfn)(struct intel_gvt_gtt_entry *e, unsigned long pfn);
 	unsigned long (*get_pfn)(struct intel_gvt_gtt_entry *e);
 };
@@ -101,7 +95,6 @@ typedef enum {
 	GTT_TYPE_GGTT_PTE,
 
 	GTT_TYPE_PPGTT_PTE_4K_ENTRY,
-	GTT_TYPE_PPGTT_PTE_64K_ENTRY,
 	GTT_TYPE_PPGTT_PTE_2M_ENTRY,
 	GTT_TYPE_PPGTT_PTE_1G_ENTRY,
 
@@ -157,8 +150,6 @@ struct intel_vgpu_mm {
 		} ppgtt_mm;
 		struct {
 			void *virtual_ggtt;
-			unsigned long last_partial_off;
-			u64 last_partial_data;
 		} ggtt_mm;
 	};
 };
@@ -229,7 +220,6 @@ struct intel_vgpu_ppgtt_spt {
 
 	struct {
 		intel_gvt_gtt_type_t type;
-		bool pde_ips; /* for 64KB PTEs */
 		void *vaddr;
 		struct page *page;
 		unsigned long mfn;
@@ -237,7 +227,6 @@ struct intel_vgpu_ppgtt_spt {
 
 	struct {
 		intel_gvt_gtt_type_t type;
-		bool pde_ips; /* for 64KB PTEs */
 		unsigned long gfn;
 		unsigned long write_cnt;
 		struct intel_vgpu_oos_page *oos_page;

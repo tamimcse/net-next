@@ -799,7 +799,7 @@ static int merge_dpa(struct nd_region *nd_region,
 	return 0;
 }
 
-int __reserve_free_pmem(struct device *dev, void *data)
+static int __reserve_free_pmem(struct device *dev, void *data)
 {
 	struct nvdimm *nvdimm = data;
 	struct nd_region *nd_region;
@@ -836,7 +836,7 @@ int __reserve_free_pmem(struct device *dev, void *data)
 	return 0;
 }
 
-void release_free_pmem(struct nvdimm_bus *nvdimm_bus,
+static void release_free_pmem(struct nvdimm_bus *nvdimm_bus,
 		struct nd_mapping *nd_mapping)
 {
 	struct nvdimm_drvdata *ndd = to_ndd(nd_mapping);
@@ -1032,7 +1032,7 @@ static ssize_t __size_store(struct device *dev, unsigned long long val)
 
 		allocated += nvdimm_allocated_dpa(ndd, &label_id);
 	}
-	available = nd_region_allocatable_dpa(nd_region);
+	available = nd_region_available_dpa(nd_region);
 
 	if (val > available + allocated)
 		return -ENOSPC;
@@ -1143,26 +1143,6 @@ resource_size_t nvdimm_namespace_capacity(struct nd_namespace_common *ndns)
 	return size;
 }
 EXPORT_SYMBOL(nvdimm_namespace_capacity);
-
-bool nvdimm_namespace_locked(struct nd_namespace_common *ndns)
-{
-	int i;
-	bool locked = false;
-	struct device *dev = &ndns->dev;
-	struct nd_region *nd_region = to_nd_region(dev->parent);
-
-	for (i = 0; i < nd_region->ndr_mappings; i++) {
-		struct nd_mapping *nd_mapping = &nd_region->mapping[i];
-		struct nvdimm *nvdimm = nd_mapping->nvdimm;
-
-		if (test_bit(NDD_LOCKED, &nvdimm->flags)) {
-			dev_dbg(dev, "%s locked\n", nvdimm_name(nvdimm));
-			locked = true;
-		}
-	}
-	return locked;
-}
-EXPORT_SYMBOL(nvdimm_namespace_locked);
 
 static ssize_t size_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
@@ -1714,9 +1694,6 @@ struct nd_namespace_common *nvdimm_namespace_common_probe(struct device *dev)
 			return ERR_PTR(-ENXIO);
 		}
 	}
-
-	if (nvdimm_namespace_locked(ndns))
-		return ERR_PTR(-EACCES);
 
 	size = nvdimm_namespace_capacity(ndns);
 	if (size < ND_MIN_NAMESPACE_SIZE) {

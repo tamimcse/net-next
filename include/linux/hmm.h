@@ -16,7 +16,7 @@
 /*
  * Heterogeneous Memory Management (HMM)
  *
- * See Documentation/vm/hmm.rst for reasons and overview of what HMM is and it
+ * See Documentation/vm/hmm.txt for reasons and overview of what HMM is and it
  * is for. Here we focus on the HMM API description, with some explanation of
  * the underlying implementation.
  *
@@ -522,7 +522,9 @@ void hmm_devmem_remove(struct hmm_devmem *devmem);
 static inline void hmm_devmem_page_set_drvdata(struct page *page,
 					       unsigned long data)
 {
-	page->hmm_data = data;
+	unsigned long *drvdata = (unsigned long *)&page->pgmap;
+
+	drvdata[1] = data;
 }
 
 /*
@@ -533,7 +535,9 @@ static inline void hmm_devmem_page_set_drvdata(struct page *page,
  */
 static inline unsigned long hmm_devmem_page_get_drvdata(const struct page *page)
 {
-	return page->hmm_data;
+	const unsigned long *drvdata = (const unsigned long *)&page->pgmap;
+
+	return drvdata[1];
 }
 
 

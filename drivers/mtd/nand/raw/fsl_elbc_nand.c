@@ -61,7 +61,7 @@ struct fsl_elbc_mtd {
 /* Freescale eLBC FCM controller information */
 
 struct fsl_elbc_fcm_ctrl {
-	struct nand_controller controller;
+	struct nand_hw_control controller;
 	struct fsl_elbc_mtd *chips[MAX_BANKS];
 
 	u8 __iomem *addr;        /* Address of assigned FCM buffer        */
@@ -637,9 +637,9 @@ static int fsl_elbc_wait(struct mtd_info *mtd, struct nand_chip *chip)
 	return (elbc_fcm_ctrl->mdr & 0xff) | NAND_STATUS_WP;
 }
 
-static int fsl_elbc_attach_chip(struct nand_chip *chip)
+static int fsl_elbc_chip_init_tail(struct mtd_info *mtd)
 {
-	struct mtd_info *mtd = nand_to_mtd(chip);
+	struct nand_chip *chip = mtd_to_nand(mtd);
 	struct fsl_elbc_mtd *priv = nand_get_controller_data(chip);
 	struct fsl_lbc_ctrl *ctrl = priv->ctrl;
 	struct fsl_lbc_regs __iomem *lbc = ctrl->regs;
@@ -700,15 +700,11 @@ static int fsl_elbc_attach_chip(struct nand_chip *chip)
 		dev_err(priv->dev,
 		        "fsl_elbc_init: page size %d is not supported\n",
 		        mtd->writesize);
-		return -ENOTSUPP;
+		return -1;
 	}
 
 	return 0;
 }
-
-static const struct nand_controller_ops fsl_elbc_controller_ops = {
-	.attach_chip = fsl_elbc_attach_chip,
-};
 
 static int fsl_elbc_read_page(struct mtd_info *mtd, struct nand_chip *chip,
 			      uint8_t *buf, int oob_required, int page)
@@ -817,6 +813,8 @@ static int fsl_elbc_chip_remove(struct fsl_elbc_mtd *priv)
 	struct fsl_elbc_fcm_ctrl *elbc_fcm_ctrl = priv->ctrl->nand;
 	struct mtd_info *mtd = nand_to_mtd(&priv->chip);
 
+	nand_release(mtd);
+
 	kfree(mtd->name);
 
 	if (priv->vbase)
@@ -883,7 +881,7 @@ static int fsl_elbc_nand_probe(struct platform_device *pdev)
 		}
 		elbc_fcm_ctrl->counter++;
 
-		nand_controller_init(&elbc_fcm_ctrl->controller);
+		nand_hw_control_init(&elbc_fcm_ctrl->controller);
 		fsl_lbc_ctrl_dev->nand = elbc_fcm_ctrl;
 	} else {
 		elbc_fcm_ctrl = fsl_lbc_ctrl_dev->nand;
@@ -914,27 +912,29 @@ static int fsl_elbc_nand_probe(struct platform_device *pdev)
 	if (ret)
 		goto err;
 
-	priv->chip.controller->ops = &fsl_elbc_controller_ops;
-	ret = nand_scan(mtd, 1);
+	ret = nand_scan_ident(mtd, 1, NULL);
+	if (ret)
+		goto err;
+
+	ret = fsl_elbc_chip_init_tail(mtd);
+	if (ret)
+		goto err;
+
+	ret = nand_scan_tail(mtd);
 	if (ret)
 		goto err;
 
 	/* First look for RedBoot table or partitions on the command
 	 * line, these take precedence over device tree information */
-	ret = mtd_device_parse_register(mtd, part_probe_types, NULL, NULL, 0);
-	if (ret)
-		goto cleanup_nand;
+	mtd_device_parse_register(mtd, part_probe_types, NULL,
+				  NULL, 0);
 
 	pr_info("eLBC NAND device at 0x%llx, bank %d\n",
 		(unsigned long long)res.start, priv->bank);
-
 	return 0;
 
-cleanup_nand:
-	nand_cleanup(&priv->chip);
 err:
 	fsl_elbc_chip_remove(priv);
-
 	return ret;
 }
 
@@ -942,9 +942,7 @@ static int fsl_elbc_nand_remove(struct platform_device *pdev)
 {
 	struct fsl_elbc_fcm_ctrl *elbc_fcm_ctrl = fsl_lbc_ctrl_dev->nand;
 	struct fsl_elbc_mtd *priv = dev_get_drvdata(&pdev->dev);
-	struct mtd_info *mtd = nand_to_mtd(&priv->chip);
 
-	nand_release(mtd);
 	fsl_elbc_chip_remove(priv);
 
 	mutex_lock(&fsl_elbc_nand_mutex);

@@ -269,7 +269,6 @@ struct kvm_s390_sie_block {
 	__u8	reserved1c0[8];		/* 0x01c0 */
 #define ECD_HOSTREGMGMT	0x20000000
 #define ECD_MEF		0x08000000
-#define ECD_ETOKENF	0x02000000
 	__u32	ecd;			/* 0x01c8 */
 	__u8	reserved1cc[18];	/* 0x01cc */
 	__u64	pp;			/* 0x01de */
@@ -656,7 +655,6 @@ struct kvm_vcpu_arch {
 	seqcount_t cputm_seqcount;
 	__u64 cputm_start;
 	bool gs_enabled;
-	bool skey_enabled;
 };
 
 struct kvm_vm_stat {
@@ -795,6 +793,12 @@ struct kvm_s390_vsie {
 	struct page *pages[KVM_MAX_VCPUS];
 };
 
+struct kvm_s390_migration_state {
+	unsigned long bitmap_size;	/* in bits (number of guest pages) */
+	atomic64_t dirty_pages;		/* number of dirty pages */
+	unsigned long *pgste_bitmap;
+};
+
 struct kvm_arch{
 	void *sca;
 	int use_esca;
@@ -808,7 +812,6 @@ struct kvm_arch{
 	int use_irqchip;
 	int use_cmma;
 	int use_pfmfi;
-	int use_skf;
 	int user_cpu_state_ctrl;
 	int user_sigp;
 	int user_stsi;
@@ -824,8 +827,7 @@ struct kvm_arch{
 	struct kvm_s390_vsie vsie;
 	u8 epdx;
 	u64 epoch;
-	int migration_mode;
-	atomic64_t cmma_dirty_pages;
+	struct kvm_s390_migration_state *migration_state;
 	/* subset of available cpu features enabled by user space */
 	DECLARE_BITMAP(cpu_feat, KVM_S390_VM_CPU_FEAT_NR_BITS);
 	struct kvm_s390_gisa *gisa;

@@ -21,9 +21,3 @@ extra-y := head.o vmlinux.lds
 
 
 obj-y				+= vdso/
-
-obj-$(CONFIG_FUNCTION_TRACER)   += ftrace.o
-
-ifdef CONFIG_FUNCTION_TRACER
-CFLAGS_REMOVE_ftrace.o = $(CC_FLAGS_FTRACE)
-endif

@@ -670,7 +670,6 @@ static int simple_set_radio_freq(struct dvb_frontend *fe,
 	int rc, j;
 	struct tuner_params *t_params;
 	unsigned int freq = params->frequency;
-	bool mono = params->audmode == V4L2_TUNER_MODE_MONO;
 
 	tun = priv->tun;
 
@@ -737,8 +736,8 @@ static int simple_set_radio_freq(struct dvb_frontend *fe,
 			config |= TDA9887_PORT2_ACTIVE;
 		if (t_params->intercarrier_mode)
 			config |= TDA9887_INTERCARRIER;
-		if (t_params->port1_set_for_fm_mono && mono)
-			config &= ~TDA9887_PORT1_ACTIVE;
+/*		if (t_params->port1_set_for_fm_mono)
+			config &= ~TDA9887_PORT1_ACTIVE;*/
 		if (t_params->fm_gain_normal)
 			config |= TDA9887_GAIN_NORMAL;
 		if (t_params->radio_if == 2)

@@ -185,8 +185,6 @@ static void p9_mux_poll_stop(struct p9_conn *m)
 	spin_lock_irqsave(&p9_poll_lock, flags);
 	list_del_init(&m->poll_pending_link);
 	spin_unlock_irqrestore(&p9_poll_lock, flags);
-
-	flush_work(&p9_poll_work);
 }
 
 /**
@@ -199,14 +197,15 @@ static void p9_mux_poll_stop(struct p9_conn *m)
 static void p9_conn_cancel(struct p9_conn *m, int err)
 {
 	struct p9_req_t *req, *rtmp;
+	unsigned long flags;
 	LIST_HEAD(cancel_list);
 
 	p9_debug(P9_DEBUG_ERROR, "mux %p err %d\n", m, err);
 
-	spin_lock(&m->client->lock);
+	spin_lock_irqsave(&m->client->lock, flags);
 
 	if (m->err) {
-		spin_unlock(&m->client->lock);
+		spin_unlock_irqrestore(&m->client->lock, flags);
 		return;
 	}
 
@@ -218,6 +217,7 @@ static void p9_conn_cancel(struct p9_conn *m, int err)
 	list_for_each_entry_safe(req, rtmp, &m->unsent_req_list, req_list) {
 		list_move(&req->req_list, &cancel_list);
 	}
+	spin_unlock_irqrestore(&m->client->lock, flags);
 
 	list_for_each_entry_safe(req, rtmp, &cancel_list, req_list) {
 		p9_debug(P9_DEBUG_ERROR, "call back req %p\n", req);
@@ -226,13 +226,12 @@ static void p9_conn_cancel(struct p9_conn *m, int err)
 			req->t_err = err;
 		p9_client_cb(m->client, req, REQ_STATUS_ERROR);
 	}
-	spin_unlock(&m->client->lock);
 }
 
 static __poll_t
 p9_fd_poll(struct p9_client *client, struct poll_table_struct *pt, int *err)
 {
-	__poll_t ret;
+	__poll_t ret, n;
 	struct p9_trans_fd *ts = NULL;
 
 	if (client && client->status == Connected)
@@ -244,9 +243,19 @@ p9_fd_poll(struct p9_client *client, struct poll_table_struct *pt, int *err)
 		return EPOLLERR;
 	}
 
-	ret = vfs_poll(ts->rd, pt);
-	if (ts->rd != ts->wr)
-		ret = (ret & ~EPOLLOUT) | (vfs_poll(ts->wr, pt) & ~EPOLLIN);
+	if (!ts->rd->f_op->poll)
+		ret = DEFAULT_POLLMASK;
+	else
+		ret = ts->rd->f_op->poll(ts->rd, pt);
+
+	if (ts->rd != ts->wr) {
+		if (!ts->wr->f_op->poll)
+			n = DEFAULT_POLLMASK;
+		else
+			n = ts->wr->f_op->poll(ts->wr, pt);
+		ret = (ret & ~EPOLLOUT) | (n & ~EPOLLIN);
+	}
+
 	return ret;
 }
 
@@ -325,9 +334,7 @@ static void p9_read_work(struct work_struct *work)
 	if ((!m->req) && (m->rc.offset == m->rc.capacity)) {
 		p9_debug(P9_DEBUG_TRANS, "got new header\n");
 
-		/* Header size */
-		m->rc.size = 7;
-		err = p9_parse_header(&m->rc, &m->rc.size, NULL, NULL, 0);
+		err = p9_parse_header(&m->rc, NULL, NULL, NULL, 0);
 		if (err) {
 			p9_debug(P9_DEBUG_ERROR,
 				 "error parsing header: %d\n", err);
@@ -372,14 +379,12 @@ static void p9_read_work(struct work_struct *work)
 	 */
 	if ((m->req) && (m->rc.offset == m->rc.capacity)) {
 		p9_debug(P9_DEBUG_TRANS, "got new packet\n");
-		m->req->rc->size = m->rc.offset;
 		spin_lock(&m->client->lock);
 		if (m->req->status != REQ_STATUS_ERROR)
 			status = REQ_STATUS_RCVD;
 		list_del(&m->req->req_list);
-		/* update req->status while holding client->lock  */
-		p9_client_cb(m->client, m->req, status);
 		spin_unlock(&m->client->lock);
+		p9_client_cb(m->client, m->req, status);
 		m->rc.sdata = NULL;
 		m->rc.offset = 0;
 		m->rc.capacity = 0;
@@ -945,7 +950,7 @@ p9_fd_create_tcp(struct p9_client *client, const char *addr, char *args)
 	if (err < 0)
 		return err;
 
-	if (addr == NULL || valid_ipaddr4(addr) < 0)
+	if (valid_ipaddr4(addr) < 0)
 		return -EINVAL;
 
 	csocket = NULL;
@@ -994,9 +999,6 @@ p9_fd_create_unix(struct p9_client *client, const char *addr, char *args)
 	struct sockaddr_un sun_server;
 
 	csocket = NULL;
-
-	if (addr == NULL)
-		return -EINVAL;
 
 	if (strlen(addr) >= UNIX_PATH_MAX) {
 		pr_err("%s (%d): address too long: %s\n",
@@ -1090,8 +1092,8 @@ static struct p9_trans_module p9_fd_trans = {
 };
 
 /**
- * p9_poll_workfn - poll worker thread
- * @work: work queue
+ * p9_poll_proc - poll worker thread
+ * @a: thread state and arguments
  *
  * polls all v9fs transports for new events and queues the appropriate
  * work to the work queue

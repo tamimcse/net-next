@@ -346,22 +346,17 @@ inline void *copy_cpltx_pktxt(struct sk_buff *skb,
 				struct net_device *dev,
 				void *pos)
 {
-	struct cpl_tx_pkt_core *cpl;
-	struct sge_eth_txq *q;
 	struct adapter *adap;
 	struct port_info *pi;
-	u32 ctrl0, qidx;
+	struct sge_eth_txq *q;
+	struct cpl_tx_pkt_core *cpl;
 	u64 cntrl = 0;
-	int left;
+	u32 ctrl0, qidx;
 
 	pi = netdev_priv(dev);
 	adap = pi->adapter;
 	qidx = skb->queue_mapping;
 	q = &adap->sge.ethtxq[qidx + pi->first_qset];
-
-	left = (void *)q->q.stat - pos;
-	if (!left)
-		pos = q->q.desc;
 
 	cpl = (struct cpl_tx_pkt_core *)pos;
 
@@ -387,17 +382,18 @@ inline void *copy_key_cpltx_pktxt(struct sk_buff *skb,
 				void *pos,
 				struct ipsec_sa_entry *sa_entry)
 {
-	struct _key_ctx *key_ctx;
-	int left, eoq, key_len;
-	struct sge_eth_txq *q;
 	struct adapter *adap;
 	struct port_info *pi;
-	unsigned int qidx;
+	struct sge_eth_txq *q;
+	unsigned int len, qidx;
+	struct _key_ctx *key_ctx;
+	int left, eoq, key_len;
 
 	pi = netdev_priv(dev);
 	adap = pi->adapter;
 	qidx = skb->queue_mapping;
 	q = &adap->sge.ethtxq[qidx + pi->first_qset];
+	len = sa_entry->enckey_len + sizeof(struct cpl_tx_pkt_core);
 	key_len = sa_entry->kctx_len;
 
 	/* end of queue, reset pos to start of queue */
@@ -415,14 +411,19 @@ inline void *copy_key_cpltx_pktxt(struct sk_buff *skb,
 	pos += sizeof(struct _key_ctx);
 	left -= sizeof(struct _key_ctx);
 
-	if (likely(key_len <= left)) {
+	if (likely(len <= left)) {
 		memcpy(key_ctx->key, sa_entry->key, key_len);
 		pos += key_len;
 	} else {
-		memcpy(pos, sa_entry->key, left);
-		memcpy(q->q.desc, sa_entry->key + left,
-		       key_len - left);
-		pos = (u8 *)q->q.desc + (key_len - left);
+		if (key_len <= left) {
+			memcpy(pos, sa_entry->key, key_len);
+			pos += key_len;
+		} else {
+			memcpy(pos, sa_entry->key, left);
+			memcpy(q->q.desc, sa_entry->key + left,
+			       key_len - left);
+			pos = (u8 *)q->q.desc + (key_len - left);
+		}
 	}
 	/* Copy CPL TX PKT XT */
 	pos = copy_cpltx_pktxt(skb, dev, pos);

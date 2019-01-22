@@ -222,11 +222,25 @@ static int rxe_dealloc_pd(struct ib_pd *ibpd)
 	return 0;
 }
 
-static void rxe_init_av(struct rxe_dev *rxe, struct rdma_ah_attr *attr,
-			struct rxe_av *av)
+static int rxe_init_av(struct rxe_dev *rxe, struct rdma_ah_attr *attr,
+		       struct rxe_av *av)
 {
+	int err;
+	union ib_gid sgid;
+	struct ib_gid_attr sgid_attr;
+
+	err = ib_get_cached_gid(&rxe->ib_dev, rdma_ah_get_port_num(attr),
+				rdma_ah_read_grh(attr)->sgid_index, &sgid,
+				&sgid_attr);
+	if (err) {
+		pr_err("Failed to query sgid. err = %d\n", err);
+		return err;
+	}
+
 	rxe_av_from_attr(rdma_ah_get_port_num(attr), av, attr);
-	rxe_av_fill_ip_info(av, attr);
+	rxe_av_fill_ip_info(av, attr, &sgid_attr, &sgid);
+	dev_put(sgid_attr.ndev);
+	return 0;
 }
 
 static struct ib_ah *rxe_create_ah(struct ib_pd *ibpd,
@@ -241,17 +255,28 @@ static struct ib_ah *rxe_create_ah(struct ib_pd *ibpd,
 
 	err = rxe_av_chk_attr(rxe, attr);
 	if (err)
-		return ERR_PTR(err);
+		goto err1;
 
 	ah = rxe_alloc(&rxe->ah_pool);
-	if (!ah)
-		return ERR_PTR(-ENOMEM);
+	if (!ah) {
+		err = -ENOMEM;
+		goto err1;
+	}
 
 	rxe_add_ref(pd);
 	ah->pd = pd;
 
-	rxe_init_av(rxe, attr, &ah->av);
+	err = rxe_init_av(rxe, attr, &ah->av);
+	if (err)
+		goto err2;
+
 	return &ah->ibah;
+
+err2:
+	rxe_drop_ref(pd);
+	rxe_drop_ref(ah);
+err1:
+	return ERR_PTR(err);
 }
 
 static int rxe_modify_ah(struct ib_ah *ibah, struct rdma_ah_attr *attr)
@@ -264,7 +289,10 @@ static int rxe_modify_ah(struct ib_ah *ibah, struct rdma_ah_attr *attr)
 	if (err)
 		return err;
 
-	rxe_init_av(rxe, attr, &ah->av);
+	err = rxe_init_av(rxe, attr, &ah->av);
+	if (err)
+		return err;
+
 	return 0;
 }
 
@@ -287,7 +315,7 @@ static int rxe_destroy_ah(struct ib_ah *ibah)
 	return 0;
 }
 
-static int post_one_recv(struct rxe_rq *rq, const struct ib_recv_wr *ibwr)
+static int post_one_recv(struct rxe_rq *rq, struct ib_recv_wr *ibwr)
 {
 	int err;
 	int i;
@@ -438,8 +466,8 @@ static int rxe_destroy_srq(struct ib_srq *ibsrq)
 	return 0;
 }
 
-static int rxe_post_srq_recv(struct ib_srq *ibsrq, const struct ib_recv_wr *wr,
-			     const struct ib_recv_wr **bad_wr)
+static int rxe_post_srq_recv(struct ib_srq *ibsrq, struct ib_recv_wr *wr,
+			     struct ib_recv_wr **bad_wr)
 {
 	int err = 0;
 	unsigned long flags;
@@ -554,7 +582,7 @@ static int rxe_destroy_qp(struct ib_qp *ibqp)
 	return 0;
 }
 
-static int validate_send_wr(struct rxe_qp *qp, const struct ib_send_wr *ibwr,
+static int validate_send_wr(struct rxe_qp *qp, struct ib_send_wr *ibwr,
 			    unsigned int mask, unsigned int length)
 {
 	int num_sge = ibwr->num_sge;
@@ -582,7 +610,7 @@ err1:
 }
 
 static void init_send_wr(struct rxe_qp *qp, struct rxe_send_wr *wr,
-			 const struct ib_send_wr *ibwr)
+			 struct ib_send_wr *ibwr)
 {
 	wr->wr_id = ibwr->wr_id;
 	wr->num_sge = ibwr->num_sge;
@@ -637,7 +665,7 @@ static void init_send_wr(struct rxe_qp *qp, struct rxe_send_wr *wr,
 	}
 }
 
-static int init_send_wqe(struct rxe_qp *qp, const struct ib_send_wr *ibwr,
+static int init_send_wqe(struct rxe_qp *qp, struct ib_send_wr *ibwr,
 			 unsigned int mask, unsigned int length,
 			 struct rxe_send_wqe *wqe)
 {
@@ -685,7 +713,7 @@ static int init_send_wqe(struct rxe_qp *qp, const struct ib_send_wr *ibwr,
 	return 0;
 }
 
-static int post_one_send(struct rxe_qp *qp, const struct ib_send_wr *ibwr,
+static int post_one_send(struct rxe_qp *qp, struct ib_send_wr *ibwr,
 			 unsigned int mask, u32 length)
 {
 	int err;
@@ -726,13 +754,14 @@ err1:
 	return err;
 }
 
-static int rxe_post_send_kernel(struct rxe_qp *qp, const struct ib_send_wr *wr,
-				const struct ib_send_wr **bad_wr)
+static int rxe_post_send_kernel(struct rxe_qp *qp, struct ib_send_wr *wr,
+				struct ib_send_wr **bad_wr)
 {
 	int err = 0;
 	unsigned int mask;
 	unsigned int length = 0;
 	int i;
+	int must_sched;
 
 	while (wr) {
 		mask = wr_opcode_mask(wr->opcode, qp);
@@ -762,15 +791,22 @@ static int rxe_post_send_kernel(struct rxe_qp *qp, const struct ib_send_wr *wr,
 		wr = wr->next;
 	}
 
-	rxe_run_task(&qp->req.task, 1);
+	/*
+	 * Must sched in case of GSI QP because ib_send_mad() hold irq lock,
+	 * and the requester call ip_local_out_sk() that takes spin_lock_bh.
+	 */
+	must_sched = (qp_type(qp) == IB_QPT_GSI) ||
+			(queue_count(qp->sq.queue) > 1);
+
+	rxe_run_task(&qp->req.task, must_sched);
 	if (unlikely(qp->req.state == QP_STATE_ERROR))
 		rxe_run_task(&qp->comp.task, 1);
 
 	return err;
 }
 
-static int rxe_post_send(struct ib_qp *ibqp, const struct ib_send_wr *wr,
-			 const struct ib_send_wr **bad_wr)
+static int rxe_post_send(struct ib_qp *ibqp, struct ib_send_wr *wr,
+			 struct ib_send_wr **bad_wr)
 {
 	struct rxe_qp *qp = to_rqp(ibqp);
 
@@ -792,8 +828,8 @@ static int rxe_post_send(struct ib_qp *ibqp, const struct ib_send_wr *wr,
 		return rxe_post_send_kernel(qp, wr, bad_wr);
 }
 
-static int rxe_post_recv(struct ib_qp *ibqp, const struct ib_recv_wr *wr,
-			 const struct ib_recv_wr **bad_wr)
+static int rxe_post_recv(struct ib_qp *ibqp, struct ib_recv_wr *wr,
+			 struct ib_recv_wr **bad_wr)
 {
 	int err = 0;
 	struct rxe_qp *qp = to_rqp(ibqp);
@@ -975,7 +1011,7 @@ static struct ib_mr *rxe_get_dma_mr(struct ib_pd *ibpd, int access)
 
 	rxe_add_ref(pd);
 
-	err = rxe_mem_init_dma(pd, access, mr);
+	err = rxe_mem_init_dma(rxe, pd, access, mr);
 	if (err)
 		goto err2;
 
@@ -1010,7 +1046,7 @@ static struct ib_mr *rxe_reg_user_mr(struct ib_pd *ibpd,
 
 	rxe_add_ref(pd);
 
-	err = rxe_mem_init_user(pd, start, length, iova,
+	err = rxe_mem_init_user(rxe, pd, start, length, iova,
 				access, udata, mr);
 	if (err)
 		goto err3;
@@ -1058,7 +1094,7 @@ static struct ib_mr *rxe_alloc_mr(struct ib_pd *ibpd,
 
 	rxe_add_ref(pd);
 
-	err = rxe_mem_init_fast(pd, max_num_sg, mr);
+	err = rxe_mem_init_fast(rxe, pd, max_num_sg, mr);
 	if (err)
 		goto err2;
 

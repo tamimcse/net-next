@@ -1,9 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0
-//
-// Renesas R-Car SRC support
-//
-// Copyright (C) 2013 Renesas Solutions Corp.
-// Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>
+/*
+ * Renesas R-Car SRC support
+ *
+ * Copyright (C) 2013 Renesas Solutions Corp.
+ * Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
 
 /*
  * you can enable below define if you don't need
@@ -571,7 +575,7 @@ int rsnd_src_probe(struct rsnd_priv *priv)
 		goto rsnd_src_probe_done;
 	}
 
-	src	= devm_kcalloc(dev, nr, sizeof(*src), GFP_KERNEL);
+	src	= devm_kzalloc(dev, sizeof(*src) * nr, GFP_KERNEL);
 	if (!src) {
 		ret = -ENOMEM;
 		goto rsnd_src_probe_done;

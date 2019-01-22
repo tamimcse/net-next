@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  *  thermal.c - sysfs interface of thermal devices
  *
@@ -8,6 +7,10 @@
  *  Copyright (C) 2008 Intel Corp
  *  Copyright (C) 2008 Zhang Rui <rui.zhang@intel.com>
  *  Copyright (C) 2008 Sujith Thomas <sujith.thomas@intel.com>
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; version 2 of the License.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -378,7 +381,7 @@ sustainable_power_store(struct device *dev, struct device_attribute *devattr,
 									\
 		return count;						\
 	}								\
-	static DEVICE_ATTR_RW(name)
+	static DEVICE_ATTR(name, S_IWUSR | S_IRUGO, name##_show, name##_store)
 
 create_s32_tzp_attr(k_po);
 create_s32_tzp_attr(k_pu);
@@ -665,15 +668,17 @@ void thermal_zone_destroy_device_groups(struct thermal_zone_device *tz)
 
 /* sys I/F for cooling device */
 static ssize_t
-cdev_type_show(struct device *dev, struct device_attribute *attr, char *buf)
+thermal_cooling_device_type_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
 {
 	struct thermal_cooling_device *cdev = to_cooling_device(dev);
 
 	return sprintf(buf, "%s\n", cdev->type);
 }
 
-static ssize_t max_state_show(struct device *dev, struct device_attribute *attr,
-			      char *buf)
+static ssize_t
+thermal_cooling_device_max_state_show(struct device *dev,
+				      struct device_attribute *attr, char *buf)
 {
 	struct thermal_cooling_device *cdev = to_cooling_device(dev);
 	unsigned long state;
@@ -685,8 +690,9 @@ static ssize_t max_state_show(struct device *dev, struct device_attribute *attr,
 	return sprintf(buf, "%ld\n", state);
 }
 
-static ssize_t cur_state_show(struct device *dev, struct device_attribute *attr,
-			      char *buf)
+static ssize_t
+thermal_cooling_device_cur_state_show(struct device *dev,
+				      struct device_attribute *attr, char *buf)
 {
 	struct thermal_cooling_device *cdev = to_cooling_device(dev);
 	unsigned long state;
@@ -699,8 +705,9 @@ static ssize_t cur_state_show(struct device *dev, struct device_attribute *attr,
 }
 
 static ssize_t
-cur_state_store(struct device *dev, struct device_attribute *attr,
-		const char *buf, size_t count)
+thermal_cooling_device_cur_state_store(struct device *dev,
+				       struct device_attribute *attr,
+				       const char *buf, size_t count)
 {
 	struct thermal_cooling_device *cdev = to_cooling_device(dev);
 	unsigned long state;
@@ -719,10 +726,13 @@ cur_state_store(struct device *dev, struct device_attribute *attr,
 	return count;
 }
 
-static struct device_attribute
-dev_attr_cdev_type = __ATTR(type, 0444, cdev_type_show, NULL);
-static DEVICE_ATTR_RO(max_state);
-static DEVICE_ATTR_RW(cur_state);
+static struct device_attribute dev_attr_cdev_type =
+__ATTR(type, 0444, thermal_cooling_device_type_show, NULL);
+static DEVICE_ATTR(max_state, 0444,
+		   thermal_cooling_device_max_state_show, NULL);
+static DEVICE_ATTR(cur_state, 0644,
+		   thermal_cooling_device_cur_state_show,
+		   thermal_cooling_device_cur_state_store);
 
 static struct attribute *cooling_device_attrs[] = {
 	&dev_attr_cdev_type.attr,
@@ -781,8 +791,10 @@ unlock:
 	spin_unlock(&stats->lock);
 }
 
-static ssize_t total_trans_show(struct device *dev,
-				struct device_attribute *attr, char *buf)
+static ssize_t
+thermal_cooling_device_total_trans_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
 {
 	struct thermal_cooling_device *cdev = to_cooling_device(dev);
 	struct cooling_dev_stats *stats = cdev->stats;
@@ -796,8 +808,9 @@ static ssize_t total_trans_show(struct device *dev,
 }
 
 static ssize_t
-time_in_state_ms_show(struct device *dev, struct device_attribute *attr,
-		      char *buf)
+thermal_cooling_device_time_in_state_show(struct device *dev,
+					  struct device_attribute *attr,
+					  char *buf)
 {
 	struct thermal_cooling_device *cdev = to_cooling_device(dev);
 	struct cooling_dev_stats *stats = cdev->stats;
@@ -817,8 +830,9 @@ time_in_state_ms_show(struct device *dev, struct device_attribute *attr,
 }
 
 static ssize_t
-reset_store(struct device *dev, struct device_attribute *attr, const char *buf,
-	    size_t count)
+thermal_cooling_device_reset_store(struct device *dev,
+				   struct device_attribute *attr,
+				   const char *buf, size_t count)
 {
 	struct thermal_cooling_device *cdev = to_cooling_device(dev);
 	struct cooling_dev_stats *stats = cdev->stats;
@@ -839,8 +853,10 @@ reset_store(struct device *dev, struct device_attribute *attr, const char *buf,
 	return count;
 }
 
-static ssize_t trans_table_show(struct device *dev,
-				struct device_attribute *attr, char *buf)
+static ssize_t
+thermal_cooling_device_trans_table_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
 {
 	struct thermal_cooling_device *cdev = to_cooling_device(dev);
 	struct cooling_dev_stats *stats = cdev->stats;
@@ -883,10 +899,13 @@ static ssize_t trans_table_show(struct device *dev,
 	return len;
 }
 
-static DEVICE_ATTR_RO(total_trans);
-static DEVICE_ATTR_RO(time_in_state_ms);
-static DEVICE_ATTR_WO(reset);
-static DEVICE_ATTR_RO(trans_table);
+static DEVICE_ATTR(total_trans, 0444, thermal_cooling_device_total_trans_show,
+		   NULL);
+static DEVICE_ATTR(time_in_state_ms, 0444,
+		   thermal_cooling_device_time_in_state_show, NULL);
+static DEVICE_ATTR(reset, 0200, NULL, thermal_cooling_device_reset_store);
+static DEVICE_ATTR(trans_table, 0444,
+		   thermal_cooling_device_trans_table_show, NULL);
 
 static struct attribute *cooling_device_stats_attrs[] = {
 	&dev_attr_total_trans.attr,
@@ -961,7 +980,8 @@ void thermal_cooling_device_destroy_sysfs(struct thermal_cooling_device *cdev)
 
 /* these helper will be used only at the time of bindig */
 ssize_t
-trip_point_show(struct device *dev, struct device_attribute *attr, char *buf)
+thermal_cooling_device_trip_point_show(struct device *dev,
+				       struct device_attribute *attr, char *buf)
 {
 	struct thermal_instance *instance;
 
@@ -975,7 +995,8 @@ trip_point_show(struct device *dev, struct device_attribute *attr, char *buf)
 }
 
 ssize_t
-weight_show(struct device *dev, struct device_attribute *attr, char *buf)
+thermal_cooling_device_weight_show(struct device *dev,
+				   struct device_attribute *attr, char *buf)
 {
 	struct thermal_instance *instance;
 
@@ -984,8 +1005,10 @@ weight_show(struct device *dev, struct device_attribute *attr, char *buf)
 	return sprintf(buf, "%d\n", instance->weight);
 }
 
-ssize_t weight_store(struct device *dev, struct device_attribute *attr,
-		     const char *buf, size_t count)
+ssize_t
+thermal_cooling_device_weight_store(struct device *dev,
+				    struct device_attribute *attr,
+				    const char *buf, size_t count)
 {
 	struct thermal_instance *instance;
 	int ret, weight;

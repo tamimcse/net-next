@@ -19,6 +19,7 @@
  *
  */
 #include <linux/mm.h>
+#include <asm/tlbflush.h>
 #include <asm/mmu.h>
 
 #ifdef CONFIG_PPC_MMU_NOHASH

@@ -9,7 +9,6 @@
 #include <linux/netfilter/x_tables.h>
 #include <linux/netfilter/nf_tables.h>
 #include <linux/u64_stats_sync.h>
-#include <linux/rhashtable.h>
 #include <net/netfilter/nf_flow_table.h>
 #include <net/netlink.h>
 
@@ -150,7 +149,6 @@ static inline void nft_data_debug(const struct nft_data *data)
  *	@portid: netlink portID of the original message
  *	@seq: netlink sequence number
  *	@family: protocol family
- *	@level: depth of the chains
  *	@report: notify via unicast netlink message
  */
 struct nft_ctx {
@@ -161,7 +159,6 @@ struct nft_ctx {
 	u32				portid;
 	u32				seq;
 	u8				family;
-	u8				level;
 	bool				report;
 };
 
@@ -173,7 +170,6 @@ struct nft_data_desc {
 int nft_data_init(const struct nft_ctx *ctx,
 		  struct nft_data *data, unsigned int size,
 		  struct nft_data_desc *desc, const struct nlattr *nla);
-void nft_data_hold(const struct nft_data *data, enum nft_data_types type);
 void nft_data_release(const struct nft_data *data, enum nft_data_types type);
 int nft_data_dump(struct sk_buff *skb, int attr, const struct nft_data *data,
 		  enum nft_data_types type, unsigned int len);
@@ -274,7 +270,7 @@ enum nft_set_class {
  *	@space: memory class
  */
 struct nft_set_estimate {
-	u64			size;
+	unsigned int		size;
 	enum nft_set_class	lookup;
 	enum nft_set_class	space;
 };
@@ -336,7 +332,7 @@ struct nft_set_ops {
 					       const struct nft_set_elem *elem,
 					       unsigned int flags);
 
-	u64				(*privsize)(const struct nlattr * const nla[],
+	unsigned int			(*privsize)(const struct nlattr * const nla[],
 						    const struct nft_set_desc *desc);
 	bool				(*estimate)(const struct nft_set_desc *desc,
 						    u32 features,
@@ -345,7 +341,6 @@ struct nft_set_ops {
 						const struct nft_set_desc *desc,
 						const struct nlattr * const nla[]);
 	void				(*destroy)(const struct nft_set *set);
-	void				(*gc_init)(const struct nft_set *set);
 
 	unsigned int			elemsize;
 };
@@ -374,8 +369,6 @@ void nft_unregister_set(struct nft_set_type *type);
  *
  *	@list: table set list node
  *	@bindings: list of set bindings
- *	@table: table this set belongs to
- *	@net: netnamespace this set belongs to
  * 	@name: name of the set
  *	@handle: unique handle of the set
  * 	@ktype: key type (numeric type defined by userspace, not used in the kernel)
@@ -399,8 +392,6 @@ void nft_unregister_set(struct nft_set_type *type);
 struct nft_set {
 	struct list_head		list;
 	struct list_head		bindings;
-	struct nft_table		*table;
-	possible_net_t			net;
 	char				*name;
 	u64				handle;
 	u32				ktype;
@@ -716,7 +707,6 @@ struct nft_expr_type {
 };
 
 #define NFT_EXPR_STATEFUL		0x1
-#define NFT_EXPR_GC			0x2
 
 /**
  *	struct nft_expr_ops - nf_tables expression operations
@@ -742,21 +732,13 @@ struct nft_expr_ops {
 	int				(*init)(const struct nft_ctx *ctx,
 						const struct nft_expr *expr,
 						const struct nlattr * const tb[]);
-	void				(*activate)(const struct nft_ctx *ctx,
-						    const struct nft_expr *expr);
-	void				(*deactivate)(const struct nft_ctx *ctx,
-						      const struct nft_expr *expr);
 	void				(*destroy)(const struct nft_ctx *ctx,
 						   const struct nft_expr *expr);
-	void				(*destroy_clone)(const struct nft_ctx *ctx,
-							 const struct nft_expr *expr);
 	int				(*dump)(struct sk_buff *skb,
 						const struct nft_expr *expr);
 	int				(*validate)(const struct nft_ctx *ctx,
 						    const struct nft_expr *expr,
 						    const struct nft_data **data);
-	bool				(*gc)(struct net *net,
-					      const struct nft_expr *expr);
 	const struct nft_expr_type	*type;
 	void				*data;
 };
@@ -863,31 +845,24 @@ enum nft_chain_flags {
  *
  *	@rules: list of rules in the chain
  *	@list: used internally
- *	@rhlhead: used internally
  *	@table: table that this chain belongs to
  *	@handle: chain handle
  *	@use: number of jump references to this chain
+ *	@level: length of longest path to this chain
  *	@flags: bitmask of enum nft_chain_flags
  *	@name: name of the chain
  */
 struct nft_chain {
-	struct nft_rule			*__rcu *rules_gen_0;
-	struct nft_rule			*__rcu *rules_gen_1;
 	struct list_head		rules;
 	struct list_head		list;
-	struct rhlist_head		rhlhead;
 	struct nft_table		*table;
 	u64				handle;
 	u32				use;
+	u16				level;
 	u8				flags:6,
 					genmask:2;
 	char				*name;
-
-	/* Only used during control plane commit phase: */
-	struct nft_rule			**rules_next;
 };
-
-int nft_chain_validate(const struct nft_ctx *ctx, const struct nft_chain *chain);
 
 enum nft_chain_types {
 	NFT_CHAIN_T_DEFAULT = 0,
@@ -905,8 +880,8 @@ enum nft_chain_types {
  * 	@owner: module owner
  * 	@hook_mask: mask of valid hooks
  * 	@hooks: array of hook functions
- *	@ops_register: base chain register function
- *	@ops_unregister: base chain unregister function
+ *	@init: chain initialization function
+ *	@free: chain release function
  */
 struct nft_chain_type {
 	const char			*name;
@@ -915,8 +890,8 @@ struct nft_chain_type {
 	struct module			*owner;
 	unsigned int			hook_mask;
 	nf_hookfn			*hooks[NF_MAX_HOOKS];
-	int				(*ops_register)(struct net *net, const struct nf_hook_ops *ops);
-	void				(*ops_unregister)(struct net *net, const struct nf_hook_ops *ops);
+	int				(*init)(struct nft_ctx *ctx);
+	void				(*free)(struct nft_ctx *ctx);
 };
 
 int nft_chain_validate_dependency(const struct nft_chain *chain,
@@ -968,8 +943,7 @@ unsigned int nft_do_chain(struct nft_pktinfo *pkt, void *priv);
  *	struct nft_table - nf_tables table
  *
  *	@list: used internally
- *	@chains_ht: chains in the table
- *	@chains: same, for stable walks
+ *	@chains: chains in the table
  *	@sets: sets in the table
  *	@objects: stateful objects in the table
  *	@flowtables: flow tables in the table
@@ -983,7 +957,6 @@ unsigned int nft_do_chain(struct nft_pktinfo *pkt, void *priv);
  */
 struct nft_table {
 	struct list_head		list;
-	struct rhltable			chains_ht;
 	struct list_head		chains;
 	struct list_head		sets;
 	struct list_head		objects;
@@ -1085,8 +1058,7 @@ struct nft_object_ops {
 	int				(*init)(const struct nft_ctx *ctx,
 						const struct nlattr *const tb[],
 						struct nft_object *obj);
-	void				(*destroy)(const struct nft_ctx *ctx,
-						   struct nft_object *obj);
+	void				(*destroy)(struct nft_object *obj);
 	int				(*dump)(struct sk_buff *skb,
 						struct nft_object *obj,
 						bool reset);
@@ -1124,6 +1096,7 @@ struct nft_flowtable {
 	u32				genmask:2,
 					use:30;
 	u64				handle;
+	char				*dev_name[NFT_FLOWTABLE_DEVICE_MAX];
 	/* runtime data below here */
 	struct nf_hook_ops		*ops ____cacheline_aligned;
 	struct nf_flowtable		data;
@@ -1374,6 +1347,6 @@ struct nft_trans_flowtable {
 	(((struct nft_trans_flowtable *)trans->data)->flowtable)
 
 int __init nft_chain_filter_init(void);
-void nft_chain_filter_fini(void);
+void __exit nft_chain_filter_fini(void);
 
 #endif /* _NET_NF_TABLES_H */

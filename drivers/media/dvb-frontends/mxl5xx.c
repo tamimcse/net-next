@@ -375,7 +375,7 @@ static void release(struct dvb_frontend *fe)
 	kfree(state);
 }
 
-static enum dvbfe_algo get_algo(struct dvb_frontend *fe)
+static int get_algo(struct dvb_frontend *fe)
 {
 	return DVBFE_ALGO_HW;
 }
@@ -784,8 +784,10 @@ static struct dvb_frontend_ops mxl_ops = {
 	.delsys = { SYS_DVBS, SYS_DVBS2, SYS_DSS },
 	.info = {
 		.name			= "MaxLinear MxL5xx DVB-S/S2 tuner-demodulator",
-		.frequency_min_hz	=  300 * MHz,
-		.frequency_max_hz	= 2350 * MHz,
+		.frequency_min		= 300000,
+		.frequency_max		= 2350000,
+		.frequency_stepsize	= 0,
+		.frequency_tolerance	= 0,
 		.symbol_rate_min	= 1000000,
 		.symbol_rate_max	= 45000000,
 		.caps			= FE_CAN_INVERSION_AUTO |

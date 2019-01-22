@@ -27,7 +27,6 @@
 #include <linux/device.h>
 #include <linux/io.h>
 #include <linux/sched/signal.h>
-#include <linux/dma-fence-array.h>
 
 #include "uapi/drm/vc4_drm.h"
 #include "vc4_drv.h"
@@ -656,8 +655,7 @@ retry:
  */
 static int
 vc4_queue_submit(struct drm_device *dev, struct vc4_exec_info *exec,
-		 struct ww_acquire_ctx *acquire_ctx,
-		 struct drm_syncobj *out_sync)
+		 struct ww_acquire_ctx *acquire_ctx)
 {
 	struct vc4_dev *vc4 = to_vc4_dev(dev);
 	struct vc4_exec_info *renderjob;
@@ -679,9 +677,6 @@ vc4_queue_submit(struct drm_device *dev, struct vc4_exec_info *exec,
 		       vc4->dma_fence_context, exec->seqno);
 	fence->seqno = exec->seqno;
 	exec->fence = &fence->base;
-
-	if (out_sync)
-		drm_syncobj_replace_fence(out_sync, exec->fence);
 
 	vc4_update_bo_seqnos(exec, seqno);
 
@@ -1118,10 +1113,8 @@ vc4_submit_cl_ioctl(struct drm_device *dev, void *data,
 	struct vc4_dev *vc4 = to_vc4_dev(dev);
 	struct vc4_file *vc4file = file_priv->driver_priv;
 	struct drm_vc4_submit_cl *args = data;
-	struct drm_syncobj *out_sync = NULL;
 	struct vc4_exec_info *exec;
 	struct ww_acquire_ctx acquire_ctx;
-	struct dma_fence *in_fence;
 	int ret = 0;
 
 	if ((args->flags & ~(VC4_SUBMIT_CL_USE_CLEAR_COLOR |
@@ -1133,7 +1126,7 @@ vc4_submit_cl_ioctl(struct drm_device *dev, void *data,
 	}
 
 	if (args->pad2 != 0) {
-		DRM_DEBUG("Invalid pad: 0x%08x\n", args->pad2);
+		DRM_DEBUG("->pad2 must be set to zero\n");
 		return -EINVAL;
 	}
 
@@ -1171,29 +1164,6 @@ vc4_submit_cl_ioctl(struct drm_device *dev, void *data,
 		}
 	}
 
-	if (args->in_sync) {
-		ret = drm_syncobj_find_fence(file_priv, args->in_sync,
-					     &in_fence);
-		if (ret)
-			goto fail;
-
-		/* When the fence (or fence array) is exclusively from our
-		 * context we can skip the wait since jobs are executed in
-		 * order of their submission through this ioctl and this can
-		 * only have fences from a prior job.
-		 */
-		if (!dma_fence_match_context(in_fence,
-					     vc4->dma_fence_context)) {
-			ret = dma_fence_wait(in_fence, true);
-			if (ret) {
-				dma_fence_put(in_fence);
-				goto fail;
-			}
-		}
-
-		dma_fence_put(in_fence);
-	}
-
 	if (exec->args->bin_cl_size != 0) {
 		ret = vc4_get_bcl(dev, exec);
 		if (ret)
@@ -1211,33 +1181,12 @@ vc4_submit_cl_ioctl(struct drm_device *dev, void *data,
 	if (ret)
 		goto fail;
 
-	if (args->out_sync) {
-		out_sync = drm_syncobj_find(file_priv, args->out_sync);
-		if (!out_sync) {
-			ret = -EINVAL;
-			goto fail;
-		}
-
-		/* We replace the fence in out_sync in vc4_queue_submit since
-		 * the render job could execute immediately after that call.
-		 * If it finishes before our ioctl processing resumes the
-		 * render job fence could already have been freed.
-		 */
-	}
-
 	/* Clear this out of the struct we'll be putting in the queue,
 	 * since it's part of our stack.
 	 */
 	exec->args = NULL;
 
-	ret = vc4_queue_submit(dev, exec, &acquire_ctx, out_sync);
-
-	/* The syncobj isn't part of the exec data and we need to free our
-	 * reference even if job submission failed.
-	 */
-	if (out_sync)
-		drm_syncobj_put(out_sync);
-
+	ret = vc4_queue_submit(dev, exec, &acquire_ctx);
 	if (ret)
 		goto fail;
 

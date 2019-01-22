@@ -26,7 +26,6 @@
 #include <linux/memblock.h>
 #include <linux/slab.h>
 #include <linux/reboot.h>
-#include <linux/syscalls.h>
 
 #include <asm/prom.h>
 #include <asm/rtas.h>
@@ -1051,7 +1050,7 @@ struct pseries_errorlog *get_pseries_errorlog(struct rtas_error_log *log,
 }
 
 /* We assume to be passed big endian arguments */
-SYSCALL_DEFINE1(rtas, struct rtas_args __user *, uargs)
+asmlinkage int ppc_rtas(struct rtas_args __user *uargs)
 {
 	struct rtas_args args;
 	unsigned long flags;

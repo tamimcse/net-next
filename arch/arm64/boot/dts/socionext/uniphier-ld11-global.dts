@@ -54,13 +54,12 @@
 	sound {
 		compatible = "audio-graph-card";
 		label = "UniPhier LD11";
-		widgets = "Headphone", "Headphones";
+		widgets = "Headphone", "Headphone Jack";
 		dais = <&i2s_port2
 			&i2s_port3
 			&i2s_port4
 			&spdif_port0
 			&comp_spdif_port0>;
-		hp-det-gpio = <&gpio UNIPHIER_GPIO_IRQ(0) GPIO_ACTIVE_LOW>;
 	};
 
 	spdif-out {

@@ -56,7 +56,7 @@
 #define MAX_SALT                4
 #define CIP_WR_MIN_LEN (sizeof(struct chcr_wr) + \
 		    sizeof(struct cpl_rx_phys_dsgl) + \
-		    sizeof(struct ulptx_sgl) + 16) //IV
+		    sizeof(struct ulptx_sgl))
 
 #define HASH_WR_MIN_LEN (sizeof(struct chcr_wr) + \
 			DUMMY_BYTES + \

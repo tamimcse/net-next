@@ -157,12 +157,7 @@
 
 		partition@d0000 {
 			label = "spare";
-			reg = <0xd0000 0x320000>;
-		};
-
-		partition@3f0000 {
-			label = "mfg";
-			reg = <0x3f0000 0x10000>;
+			reg = <0xd0000 0x130000>;
 		};
 	};
 };

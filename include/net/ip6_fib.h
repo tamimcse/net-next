@@ -170,7 +170,6 @@ struct fib6_info {
 					unused:3;
 
 	struct fib6_nh			fib6_nh;
-	struct rcu_head			rcu;
 };
 
 struct rt6_info {
@@ -274,22 +273,17 @@ static inline void ip6_rt_put(struct rt6_info *rt)
 }
 
 struct fib6_info *fib6_info_alloc(gfp_t gfp_flags);
-void fib6_info_destroy_rcu(struct rcu_head *head);
+void fib6_info_destroy(struct fib6_info *f6i);
 
 static inline void fib6_info_hold(struct fib6_info *f6i)
 {
 	atomic_inc(&f6i->fib6_ref);
 }
 
-static inline bool fib6_info_hold_safe(struct fib6_info *f6i)
-{
-	return atomic_inc_not_zero(&f6i->fib6_ref);
-}
-
 static inline void fib6_info_release(struct fib6_info *f6i)
 {
 	if (f6i && atomic_dec_and_test(&f6i->fib6_ref))
-		call_rcu(&f6i->rcu, fib6_info_destroy_rcu);
+		fib6_info_destroy(f6i);
 }
 
 enum fib6_walk_state {
@@ -382,24 +376,9 @@ struct dst_entry *fib6_rule_lookup(struct net *net, struct flowi6 *fl6,
 				   const struct sk_buff *skb,
 				   int flags, pol_lookup_t lookup);
 
-/* called with rcu lock held; can return error pointer
- * caller needs to select path
- */
-struct fib6_info *fib6_lookup(struct net *net, int oif, struct flowi6 *fl6,
-			      int flags);
-
-/* called with rcu lock held; caller needs to select path */
-struct fib6_info *fib6_table_lookup(struct net *net, struct fib6_table *table,
-				    int oif, struct flowi6 *fl6, int strict);
-
-struct fib6_info *fib6_multipath_select(const struct net *net,
-					struct fib6_info *match,
-					struct flowi6 *fl6, int oif,
-					const struct sk_buff *skb, int strict);
-
-struct fib6_node *fib6_node_lookup(struct fib6_node *root,
-				   const struct in6_addr *daddr,
-				   const struct in6_addr *saddr);
+struct fib6_node *fib6_lookup(struct fib6_node *root,
+			      const struct in6_addr *daddr,
+			      const struct in6_addr *saddr);
 
 struct fib6_node *fib6_locate(struct fib6_node *root,
 			      const struct in6_addr *daddr, int dst_len,
@@ -418,12 +397,6 @@ static inline struct net_device *fib6_info_nh_dev(const struct fib6_info *f6i)
 	return f6i->fib6_nh.nh_dev;
 }
 
-static inline
-struct lwtunnel_state *fib6_info_nh_lwt(const struct fib6_info *f6i)
-{
-	return f6i->fib6_nh.nh_lwtstate;
-}
-
 void inet6_rt_notify(int event, struct fib6_info *rt, struct nl_info *info,
 		     unsigned int flags);
 
@@ -433,15 +406,7 @@ void fib6_gc_cleanup(void);
 
 int fib6_init(void);
 
-struct ipv6_route_iter {
-	struct seq_net_private p;
-	struct fib6_walker w;
-	loff_t skip;
-	struct fib6_table *tbl;
-	int sernum;
-};
-
-extern const struct seq_operations ipv6_route_seq_ops;
+int ipv6_route_open(struct inode *inode, struct file *file);
 
 int call_fib6_notifier(struct notifier_block *nb, struct net *net,
 		       enum fib_event_type event_type,

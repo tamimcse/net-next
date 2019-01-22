@@ -19,6 +19,7 @@
 #include <linux/gfp.h>
 #include <linux/delay.h>
 #include <linux/init.h>
+#include <linux/pci.h>		/* for hppa_dma_ops and pcxl_dma_ops */
 #include <linux/initrd.h>
 #include <linux/swap.h>
 #include <linux/unistd.h>
@@ -615,13 +616,17 @@ void __init mem_init(void)
 	free_all_bootmem();
 
 #ifdef CONFIG_PA11
-	if (boot_cpu_data.cpu_type == pcxl2 || boot_cpu_data.cpu_type == pcxl) {
+	if (hppa_dma_ops == &pcxl_dma_ops) {
 		pcxl_dma_start = (unsigned long)SET_MAP_OFFSET(MAP_START);
 		parisc_vmalloc_start = SET_MAP_OFFSET(pcxl_dma_start
 						+ PCXL_DMA_MAP_SIZE);
-	} else
-#endif
+	} else {
+		pcxl_dma_start = 0;
 		parisc_vmalloc_start = SET_MAP_OFFSET(MAP_START);
+	}
+#else
+	parisc_vmalloc_start = SET_MAP_OFFSET(MAP_START);
+#endif
 
 	mem_init_print_info(NULL);
 

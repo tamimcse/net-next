@@ -88,8 +88,8 @@
 			next-level-cache = <&CLUSTER0_L2>;
 			clocks = <&stub_clock 0>;
 			operating-points-v2 = <&cpu_opp_table>;
-			cpu-idle-states = <&CPU_SLEEP &CLUSTER_SLEEP>;
 			#cooling-cells = <2>; /* min followed by max */
+			cpu-idle-states = <&CPU_SLEEP &CLUSTER_SLEEP>;
 			dynamic-power-coefficient = <311>;
 		};
 
@@ -101,8 +101,6 @@
 			next-level-cache = <&CLUSTER0_L2>;
 			operating-points-v2 = <&cpu_opp_table>;
 			cpu-idle-states = <&CPU_SLEEP &CLUSTER_SLEEP>;
-			#cooling-cells = <2>; /* min followed by max */
-			dynamic-power-coefficient = <311>;
 		};
 
 		cpu2: cpu@2 {
@@ -113,8 +111,6 @@
 			next-level-cache = <&CLUSTER0_L2>;
 			operating-points-v2 = <&cpu_opp_table>;
 			cpu-idle-states = <&CPU_SLEEP &CLUSTER_SLEEP>;
-			#cooling-cells = <2>; /* min followed by max */
-			dynamic-power-coefficient = <311>;
 		};
 
 		cpu3: cpu@3 {
@@ -125,8 +121,6 @@
 			next-level-cache = <&CLUSTER0_L2>;
 			operating-points-v2 = <&cpu_opp_table>;
 			cpu-idle-states = <&CPU_SLEEP &CLUSTER_SLEEP>;
-			#cooling-cells = <2>; /* min followed by max */
-			dynamic-power-coefficient = <311>;
 		};
 
 		cpu4: cpu@100 {
@@ -137,8 +131,6 @@
 			next-level-cache = <&CLUSTER1_L2>;
 			operating-points-v2 = <&cpu_opp_table>;
 			cpu-idle-states = <&CPU_SLEEP &CLUSTER_SLEEP>;
-			#cooling-cells = <2>; /* min followed by max */
-			dynamic-power-coefficient = <311>;
 		};
 
 		cpu5: cpu@101 {
@@ -149,8 +141,6 @@
 			next-level-cache = <&CLUSTER1_L2>;
 			operating-points-v2 = <&cpu_opp_table>;
 			cpu-idle-states = <&CPU_SLEEP &CLUSTER_SLEEP>;
-			#cooling-cells = <2>; /* min followed by max */
-			dynamic-power-coefficient = <311>;
 		};
 
 		cpu6: cpu@102 {
@@ -161,8 +151,6 @@
 			next-level-cache = <&CLUSTER1_L2>;
 			operating-points-v2 = <&cpu_opp_table>;
 			cpu-idle-states = <&CPU_SLEEP &CLUSTER_SLEEP>;
-			#cooling-cells = <2>; /* min followed by max */
-			dynamic-power-coefficient = <311>;
 		};
 
 		cpu7: cpu@103 {
@@ -173,8 +161,6 @@
 			next-level-cache = <&CLUSTER1_L2>;
 			operating-points-v2 = <&cpu_opp_table>;
 			cpu-idle-states = <&CPU_SLEEP &CLUSTER_SLEEP>;
-			#cooling-cells = <2>; /* min followed by max */
-			dynamic-power-coefficient = <311>;
 		};
 
 		CLUSTER0_L2: l2-cache0 {

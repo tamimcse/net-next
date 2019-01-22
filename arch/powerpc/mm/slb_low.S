@@ -22,7 +22,6 @@
 #include <asm/mmu.h>
 #include <asm/pgtable.h>
 #include <asm/firmware.h>
-#include <asm/feature-fixups.h>
 
 /*
  * This macro generates asm code to compute the VSID scramble

@@ -33,7 +33,7 @@
 };
 
 &cpu0 {
-	cpu-supply = <&sw1a_reg>;
+	arm-supply = <&sw1a_reg>;
 };
 
 &fec1 {

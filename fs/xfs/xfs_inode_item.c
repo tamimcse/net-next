@@ -1,7 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2000-2002,2005 Silicon Graphics, Inc.
  * All Rights Reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it would be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write the Free Software Foundation,
+ * Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 #include "xfs.h"
 #include "xfs_fs.h"
@@ -194,6 +206,8 @@ xfs_inode_item_format_data_fork(
 			 * to be there by xfs_idata_realloc().
 			 */
 			data_bytes = roundup(ip->i_df.if_bytes, 4);
+			ASSERT(ip->i_df.if_real_bytes == 0 ||
+			       ip->i_df.if_real_bytes >= data_bytes);
 			ASSERT(ip->i_df.if_u1.if_data != NULL);
 			ASSERT(ip->i_d.di_size > 0);
 			xlog_copy_iovec(lv, vecp, XLOG_REG_TYPE_ILOCAL,
@@ -278,6 +292,8 @@ xfs_inode_item_format_attr_fork(
 			 * to be there by xfs_idata_realloc().
 			 */
 			data_bytes = roundup(ip->i_afp->if_bytes, 4);
+			ASSERT(ip->i_afp->if_real_bytes == 0 ||
+			       ip->i_afp->if_real_bytes >= data_bytes);
 			ASSERT(ip->i_afp->if_u1.if_data != NULL);
 			xlog_copy_iovec(lv, vecp, XLOG_REG_TYPE_IATTR_LOCAL,
 					ip->i_afp->if_u1.if_data,
@@ -502,7 +518,7 @@ xfs_inode_item_push(
 	 * The buffer containing this item failed to be written back
 	 * previously. Resubmit the buffer for IO.
 	 */
-	if (test_bit(XFS_LI_FAILED, &lip->li_flags)) {
+	if (lip->li_flags & XFS_LI_FAILED) {
 		if (!xfs_buf_trylock(bp))
 			return XFS_ITEM_LOCKED;
 
@@ -713,14 +729,14 @@ xfs_iflush_done(
 		 */
 		iip = INODE_ITEM(blip);
 		if ((iip->ili_logged && blip->li_lsn == iip->ili_flush_lsn) ||
-		    test_bit(XFS_LI_FAILED, &blip->li_flags))
+		    (blip->li_flags & XFS_LI_FAILED))
 			need_ail++;
 	}
 
 	/* make sure we capture the state of the initial inode. */
 	iip = INODE_ITEM(lip);
 	if ((iip->ili_logged && lip->li_lsn == iip->ili_flush_lsn) ||
-	    test_bit(XFS_LI_FAILED, &lip->li_flags))
+	    lip->li_flags & XFS_LI_FAILED)
 		need_ail++;
 
 	/*
@@ -787,7 +803,7 @@ xfs_iflush_abort(
 	xfs_inode_log_item_t	*iip = ip->i_itemp;
 
 	if (iip) {
-		if (test_bit(XFS_LI_IN_AIL, &iip->ili_item.li_flags)) {
+		if (iip->ili_item.li_flags & XFS_LI_IN_AIL) {
 			xfs_trans_ail_remove(&iip->ili_item,
 					     stale ? SHUTDOWN_LOG_IO_ERROR :
 						     SHUTDOWN_CORRUPT_INCORE);

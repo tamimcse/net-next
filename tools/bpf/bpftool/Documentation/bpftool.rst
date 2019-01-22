@@ -16,21 +16,19 @@ SYNOPSIS
 
 	**bpftool** **version**
 
-	*OBJECT* := { **map** | **program** | **cgroup** | **perf** }
+	*OBJECT* := { **map** | **program** | **cgroup** }
 
 	*OPTIONS* := { { **-V** | **--version** } | { **-h** | **--help** }
 	| { **-j** | **--json** } [{ **-p** | **--pretty** }] }
 
 	*MAP-COMMANDS* :=
 	{ **show** | **list** | **dump** | **update** | **lookup** | **getnext** | **delete**
-	| **pin** | **event_pipe** | **help** }
+	| **pin** | **help** }
 
 	*PROG-COMMANDS* := { **show** | **list** | **dump jited** | **dump xlated** | **pin**
 	| **load** | **help** }
 
 	*CGROUP-COMMANDS* := { **show** | **list** | **attach** | **detach** | **help** }
-
-	*PERF-COMMANDS* := { **show** | **list** | **help** }
 
 DESCRIPTION
 ===========
@@ -58,4 +56,3 @@ OPTIONS
 SEE ALSO
 ========
 	**bpftool-map**\ (8), **bpftool-prog**\ (8), **bpftool-cgroup**\ (8)
-        **bpftool-perf**\ (8)

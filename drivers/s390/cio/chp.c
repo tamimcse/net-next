@@ -471,17 +471,14 @@ int chp_new(struct chp_id chpid)
 {
 	struct channel_subsystem *css = css_by_id(chpid.cssid);
 	struct channel_path *chp;
-	int ret = 0;
+	int ret;
 
-	mutex_lock(&css->mutex);
 	if (chp_is_registered(chpid))
-		goto out;
-
+		return 0;
 	chp = kzalloc(sizeof(struct channel_path), GFP_KERNEL);
-	if (!chp) {
-		ret = -ENOMEM;
-		goto out;
-	}
+	if (!chp)
+		return -ENOMEM;
+
 	/* fill in status, etc. */
 	chp->chpid = chpid;
 	chp->state = 1;
@@ -508,20 +505,21 @@ int chp_new(struct chp_id chpid)
 		put_device(&chp->dev);
 		goto out;
 	}
-
+	mutex_lock(&css->mutex);
 	if (css->cm_enabled) {
 		ret = chp_add_cmg_attr(chp);
 		if (ret) {
 			device_unregister(&chp->dev);
+			mutex_unlock(&css->mutex);
 			goto out;
 		}
 	}
 	css->chps[chpid.id] = chp;
+	mutex_unlock(&css->mutex);
 	goto out;
 out_free:
 	kfree(chp);
 out:
-	mutex_unlock(&css->mutex);
 	return ret;
 }
 
@@ -587,7 +585,8 @@ static void chp_process_crw(struct crw *crw0, struct crw *crw1,
 	switch (crw0->erc) {
 	case CRW_ERC_IPARM: /* Path has come. */
 	case CRW_ERC_INIT:
-		chp_new(chpid);
+		if (!chp_is_registered(chpid))
+			chp_new(chpid);
 		chsc_chp_online(chpid);
 		break;
 	case CRW_ERC_PERRI: /* Path has gone. */

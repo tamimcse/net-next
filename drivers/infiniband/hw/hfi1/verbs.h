@@ -1,5 +1,5 @@
 /*
- * Copyright(c) 2015 - 2018 Intel Corporation.
+ * Copyright(c) 2015 - 2017 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -110,12 +110,6 @@ enum {
 #define LRH_9B_BYTES (FIELD_SIZEOF(struct ib_header, lrh))
 #define LRH_9B_DWORDS (LRH_9B_BYTES / sizeof(u32))
 
-/* 24Bits for qpn, upper 8Bits reserved */
-struct opa_16b_mgmt {
-	__be32 dest_qpn;
-	__be32 src_qpn;
-};
-
 struct hfi1_16b_header {
 	u32 lrh[4];
 	union {
@@ -124,7 +118,6 @@ struct hfi1_16b_header {
 			struct ib_other_headers oth;
 		} l;
 		struct ib_other_headers oth;
-		struct opa_16b_mgmt mgmt;
 	} u;
 } __packed;
 
@@ -234,7 +227,9 @@ struct hfi1_ibdev {
 	/* per HFI symlinks to above */
 	struct dentry *hfi1_ibdev_link;
 #ifdef CONFIG_FAULT_INJECTION
-	struct fault *fault;
+	struct fault_opcode *fault_opcode;
+	struct fault_packet *fault_packet;
+	bool fault_suppress_err;
 #endif
 #endif
 };
@@ -334,6 +329,8 @@ void hfi1_rc_send_complete(struct rvt_qp *qp, struct hfi1_opa_header *opah);
 void hfi1_ud_rcv(struct hfi1_packet *packet);
 
 int hfi1_lookup_pkey_idx(struct hfi1_ibport *ibp, u16 pkey);
+
+int hfi1_rvt_get_rwqe(struct rvt_qp *qp, int wr_id_only);
 
 void hfi1_migrate_qp(struct rvt_qp *qp);
 

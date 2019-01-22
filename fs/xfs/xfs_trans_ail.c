@@ -1,8 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2000-2002,2005 Silicon Graphics, Inc.
  * Copyright (c) 2008 Dave Chinner
  * All Rights Reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it would be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write the Free Software Foundation,
+ * Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 #include "xfs.h"
 #include "xfs_fs.h"
@@ -20,51 +32,30 @@
 #ifdef DEBUG
 /*
  * Check that the list is sorted as it should be.
- *
- * Called with the ail lock held, but we don't want to assert fail with it
- * held otherwise we'll lock everything up and won't be able to debug the
- * cause. Hence we sample and check the state under the AIL lock and return if
- * everything is fine, otherwise we drop the lock and run the ASSERT checks.
- * Asserts may not be fatal, so pick the lock back up and continue onwards.
  */
 STATIC void
 xfs_ail_check(
-	struct xfs_ail		*ailp,
-	struct xfs_log_item	*lip)
+	struct xfs_ail	*ailp,
+	xfs_log_item_t	*lip)
 {
-	struct xfs_log_item	*prev_lip;
-	struct xfs_log_item	*next_lip;
-	xfs_lsn_t		prev_lsn = NULLCOMMITLSN;
-	xfs_lsn_t		next_lsn = NULLCOMMITLSN;
-	xfs_lsn_t		lsn;
-	bool			in_ail;
-
+	xfs_log_item_t	*prev_lip;
 
 	if (list_empty(&ailp->ail_head))
 		return;
 
 	/*
-	 * Sample then check the next and previous entries are valid.
+	 * Check the next and previous entries are valid.
 	 */
-	in_ail = test_bit(XFS_LI_IN_AIL, &lip->li_flags);
-	prev_lip = list_entry(lip->li_ail.prev, struct xfs_log_item, li_ail);
+	ASSERT((lip->li_flags & XFS_LI_IN_AIL) != 0);
+	prev_lip = list_entry(lip->li_ail.prev, xfs_log_item_t, li_ail);
 	if (&prev_lip->li_ail != &ailp->ail_head)
-		prev_lsn = prev_lip->li_lsn;
-	next_lip = list_entry(lip->li_ail.next, struct xfs_log_item, li_ail);
-	if (&next_lip->li_ail != &ailp->ail_head)
-		next_lsn = next_lip->li_lsn;
-	lsn = lip->li_lsn;
+		ASSERT(XFS_LSN_CMP(prev_lip->li_lsn, lip->li_lsn) <= 0);
 
-	if (in_ail &&
-	    (prev_lsn == NULLCOMMITLSN || XFS_LSN_CMP(prev_lsn, lsn) <= 0) &&
-	    (next_lsn == NULLCOMMITLSN || XFS_LSN_CMP(next_lsn, lsn) >= 0))
-		return;
+	prev_lip = list_entry(lip->li_ail.next, xfs_log_item_t, li_ail);
+	if (&prev_lip->li_ail != &ailp->ail_head)
+		ASSERT(XFS_LSN_CMP(prev_lip->li_lsn, lip->li_lsn) >= 0);
 
-	spin_unlock(&ailp->ail_lock);
-	ASSERT(in_ail);
-	ASSERT(prev_lsn == NULLCOMMITLSN || XFS_LSN_CMP(prev_lsn, lsn) <= 0);
-	ASSERT(next_lsn == NULLCOMMITLSN || XFS_LSN_CMP(next_lsn, lsn) >= 0);
-	spin_lock(&ailp->ail_lock);
+
 }
 #else /* !DEBUG */
 #define	xfs_ail_check(a,l)
@@ -693,7 +684,7 @@ xfs_trans_ail_update_bulk(
 
 	for (i = 0; i < nr_items; i++) {
 		struct xfs_log_item *lip = log_items[i];
-		if (test_and_set_bit(XFS_LI_IN_AIL, &lip->li_flags)) {
+		if (lip->li_flags & XFS_LI_IN_AIL) {
 			/* check if we really need to move the item */
 			if (XFS_LSN_CMP(lsn, lip->li_lsn) <= 0)
 				continue;
@@ -703,6 +694,7 @@ xfs_trans_ail_update_bulk(
 			if (mlip == lip)
 				mlip_changed = 1;
 		} else {
+			lip->li_flags |= XFS_LI_IN_AIL;
 			trace_xfs_ail_insert(lip, 0, lsn);
 		}
 		lip->li_lsn = lsn;
@@ -733,7 +725,7 @@ xfs_ail_delete_one(
 	trace_xfs_ail_delete(lip, mlip->li_lsn, lip->li_lsn);
 	xfs_ail_delete(ailp, lip);
 	xfs_clear_li_failed(lip);
-	clear_bit(XFS_LI_IN_AIL, &lip->li_flags);
+	lip->li_flags &= ~XFS_LI_IN_AIL;
 	lip->li_lsn = 0;
 
 	return mlip == lip;
@@ -769,7 +761,7 @@ xfs_trans_ail_delete(
 	struct xfs_mount	*mp = ailp->ail_mount;
 	bool			mlip_changed;
 
-	if (!test_bit(XFS_LI_IN_AIL, &lip->li_flags)) {
+	if (!(lip->li_flags & XFS_LI_IN_AIL)) {
 		spin_unlock(&ailp->ail_lock);
 		if (!XFS_FORCED_SHUTDOWN(mp)) {
 			xfs_alert_tag(mp, XFS_PTAG_AILDELETE,

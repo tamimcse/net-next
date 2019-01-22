@@ -335,7 +335,8 @@ static int intel_bts_get_next_insn(struct intel_bts_queue *btsq, u64 ip)
 	if (!thread)
 		return -1;
 
-	if (!thread__find_map(thread, cpumode, ip, &al) || !al.map->dso)
+	thread__find_addr_map(thread, cpumode, MAP__FUNCTION, ip, &al);
+	if (!al.map || !al.map->dso)
 		goto out_put;
 
 	len = dso__data_read_addr(al.map->dso, al.map, machine, ip, buf,

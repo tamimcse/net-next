@@ -34,6 +34,9 @@
 #define STM32F4_ADC_ADCPRE_SHIFT	16
 #define STM32F4_ADC_ADCPRE_MASK		GENMASK(17, 16)
 
+/* STM32 F4 maximum analog clock rate (from datasheet) */
+#define STM32F4_ADC_MAX_CLK_RATE	36000000
+
 /* STM32H7 - common registers for all ADC instances */
 #define STM32H7_ADC_CSR			(STM32_ADCX_COMN_OFFSET + 0x00)
 #define STM32H7_ADC_CCR			(STM32_ADCX_COMN_OFFSET + 0x08)
@@ -47,6 +50,9 @@
 #define STM32H7_PRESC_MASK		GENMASK(21, 18)
 #define STM32H7_CKMODE_SHIFT		16
 #define STM32H7_CKMODE_MASK		GENMASK(17, 16)
+
+/* STM32 H7 maximum analog clock rate (from datasheet) */
+#define STM32H7_ADC_MAX_CLK_RATE	36000000
 
 /**
  * stm32_adc_common_regs - stm32 common registers, compatible dependent data
@@ -68,17 +74,15 @@ struct stm32_adc_priv;
  * stm32_adc_priv_cfg - stm32 core compatible configuration data
  * @regs:	common registers for all instances
  * @clk_sel:	clock selection routine
- * @max_clk_rate_hz: maximum analog clock rate (Hz, from datasheet)
  */
 struct stm32_adc_priv_cfg {
 	const struct stm32_adc_common_regs *regs;
 	int (*clk_sel)(struct platform_device *, struct stm32_adc_priv *);
-	u32 max_clk_rate_hz;
 };
 
 /**
  * struct stm32_adc_priv - stm32 ADC core private data
- * @irq:		irq(s) for ADC block
+ * @irq:		irq for ADC block
  * @domain:		irq domain reference
  * @aclk:		clock reference for the analog circuitry
  * @bclk:		bus clock common for all ADCs, depends on part used
@@ -87,7 +91,7 @@ struct stm32_adc_priv_cfg {
  * @common:		common data for all ADC instances
  */
 struct stm32_adc_priv {
-	int				irq[STM32_ADC_MAX_ADCS];
+	int				irq;
 	struct irq_domain		*domain;
 	struct clk			*aclk;
 	struct clk			*bclk;
@@ -129,7 +133,7 @@ static int stm32f4_adc_clk_sel(struct platform_device *pdev,
 	}
 
 	for (i = 0; i < ARRAY_SIZE(stm32f4_pclk_div); i++) {
-		if ((rate / stm32f4_pclk_div[i]) <= priv->cfg->max_clk_rate_hz)
+		if ((rate / stm32f4_pclk_div[i]) <= STM32F4_ADC_MAX_CLK_RATE)
 			break;
 	}
 	if (i >= ARRAY_SIZE(stm32f4_pclk_div)) {
@@ -218,7 +222,7 @@ static int stm32h7_adc_clk_sel(struct platform_device *pdev,
 			if (ckmode)
 				continue;
 
-			if ((rate / div) <= priv->cfg->max_clk_rate_hz)
+			if ((rate / div) <= STM32H7_ADC_MAX_CLK_RATE)
 				goto out;
 		}
 	}
@@ -238,7 +242,7 @@ static int stm32h7_adc_clk_sel(struct platform_device *pdev,
 		if (!ckmode)
 			continue;
 
-		if ((rate / div) <= priv->cfg->max_clk_rate_hz)
+		if ((rate / div) <= STM32H7_ADC_MAX_CLK_RATE)
 			goto out;
 	}
 
@@ -324,24 +328,11 @@ static int stm32_adc_irq_probe(struct platform_device *pdev,
 			       struct stm32_adc_priv *priv)
 {
 	struct device_node *np = pdev->dev.of_node;
-	unsigned int i;
 
-	for (i = 0; i < STM32_ADC_MAX_ADCS; i++) {
-		priv->irq[i] = platform_get_irq(pdev, i);
-		if (priv->irq[i] < 0) {
-			/*
-			 * At least one interrupt must be provided, make others
-			 * optional:
-			 * - stm32f4/h7 shares a common interrupt.
-			 * - stm32mp1, has one line per ADC (either for ADC1,
-			 *   ADC2 or both).
-			 */
-			if (i && priv->irq[i] == -ENXIO)
-				continue;
-			dev_err(&pdev->dev, "failed to get irq\n");
-
-			return priv->irq[i];
-		}
+	priv->irq = platform_get_irq(pdev, 0);
+	if (priv->irq < 0) {
+		dev_err(&pdev->dev, "failed to get irq\n");
+		return priv->irq;
 	}
 
 	priv->domain = irq_domain_add_simple(np, STM32_ADC_MAX_ADCS, 0,
@@ -352,12 +343,8 @@ static int stm32_adc_irq_probe(struct platform_device *pdev,
 		return -ENOMEM;
 	}
 
-	for (i = 0; i < STM32_ADC_MAX_ADCS; i++) {
-		if (priv->irq[i] < 0)
-			continue;
-		irq_set_chained_handler(priv->irq[i], stm32_adc_irq_handler);
-		irq_set_handler_data(priv->irq[i], priv);
-	}
+	irq_set_chained_handler(priv->irq, stm32_adc_irq_handler);
+	irq_set_handler_data(priv->irq, priv);
 
 	return 0;
 }
@@ -366,17 +353,11 @@ static void stm32_adc_irq_remove(struct platform_device *pdev,
 				 struct stm32_adc_priv *priv)
 {
 	int hwirq;
-	unsigned int i;
 
 	for (hwirq = 0; hwirq < STM32_ADC_MAX_ADCS; hwirq++)
 		irq_dispose_mapping(irq_find_mapping(priv->domain, hwirq));
 	irq_domain_remove(priv->domain);
-
-	for (i = 0; i < STM32_ADC_MAX_ADCS; i++) {
-		if (priv->irq[i] < 0)
-			continue;
-		irq_set_chained_handler(priv->irq[i], NULL);
-	}
+	irq_set_chained_handler(priv->irq, NULL);
 }
 
 static int stm32_adc_probe(struct platform_device *pdev)
@@ -516,19 +497,11 @@ static int stm32_adc_remove(struct platform_device *pdev)
 static const struct stm32_adc_priv_cfg stm32f4_adc_priv_cfg = {
 	.regs = &stm32f4_adc_common_regs,
 	.clk_sel = stm32f4_adc_clk_sel,
-	.max_clk_rate_hz = 36000000,
 };
 
 static const struct stm32_adc_priv_cfg stm32h7_adc_priv_cfg = {
 	.regs = &stm32h7_adc_common_regs,
 	.clk_sel = stm32h7_adc_clk_sel,
-	.max_clk_rate_hz = 36000000,
-};
-
-static const struct stm32_adc_priv_cfg stm32mp1_adc_priv_cfg = {
-	.regs = &stm32h7_adc_common_regs,
-	.clk_sel = stm32h7_adc_clk_sel,
-	.max_clk_rate_hz = 40000000,
 };
 
 static const struct of_device_id stm32_adc_of_match[] = {
@@ -538,9 +511,6 @@ static const struct of_device_id stm32_adc_of_match[] = {
 	}, {
 		.compatible = "st,stm32h7-adc-core",
 		.data = (void *)&stm32h7_adc_priv_cfg
-	}, {
-		.compatible = "st,stm32mp1-adc-core",
-		.data = (void *)&stm32mp1_adc_priv_cfg
 	}, {
 	},
 };

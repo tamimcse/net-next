@@ -233,7 +233,15 @@ static int rcar_du_atomic_check(struct drm_device *dev,
 	struct rcar_du_device *rcdu = dev->dev_private;
 	int ret;
 
-	ret = drm_atomic_helper_check(dev, state);
+	ret = drm_atomic_helper_check_modeset(dev, state);
+	if (ret)
+		return ret;
+
+	ret = drm_atomic_normalize_zpos(dev, state);
+	if (ret)
+		return ret;
+
+	ret = drm_atomic_helper_check_planes(dev, state);
 	if (ret)
 		return ret;
 
@@ -407,6 +415,11 @@ static int rcar_du_encoders_init(struct rcar_du_device *rcdu)
 
 static int rcar_du_properties_init(struct rcar_du_device *rcdu)
 {
+	rcdu->props.alpha =
+		drm_property_create_range(rcdu->ddev, 0, "alpha", 0, 255);
+	if (rcdu->props.alpha == NULL)
+		return -ENOMEM;
+
 	/*
 	 * The color key is expressed as an RGB888 triplet stored in a 32-bit
 	 * integer in XRGB8888 format. Bit 24 is used as a flag to disable (0)
@@ -428,7 +441,7 @@ static int rcar_du_vsps_init(struct rcar_du_device *rcdu)
 	struct {
 		struct device_node *np;
 		unsigned int crtcs_mask;
-	} vsps[RCAR_DU_MAX_VSPS] = { { NULL, }, };
+	} vsps[RCAR_DU_MAX_VSPS] = { { 0, }, };
 	unsigned int vsps_count = 0;
 	unsigned int cells;
 	unsigned int i;
@@ -507,8 +520,6 @@ int rcar_du_modeset_init(struct rcar_du_device *rcdu)
 	struct drm_fbdev_cma *fbdev;
 	unsigned int num_encoders;
 	unsigned int num_groups;
-	unsigned int swindex;
-	unsigned int hwindex;
 	unsigned int i;
 	int ret;
 
@@ -518,11 +529,10 @@ int rcar_du_modeset_init(struct rcar_du_device *rcdu)
 	dev->mode_config.min_height = 0;
 	dev->mode_config.max_width = 4095;
 	dev->mode_config.max_height = 2047;
-	dev->mode_config.normalize_zpos = true;
 	dev->mode_config.funcs = &rcar_du_mode_config_funcs;
 	dev->mode_config.helper_private = &rcar_du_mode_config_helper;
 
-	rcdu->num_crtcs = hweight8(rcdu->info->channels_mask);
+	rcdu->num_crtcs = rcdu->info->num_crtcs;
 
 	ret = rcar_du_properties_init(rcdu);
 	if (ret < 0)
@@ -532,7 +542,7 @@ int rcar_du_modeset_init(struct rcar_du_device *rcdu)
 	 * Initialize vertical blanking interrupts handling. Start with vblank
 	 * disabled for all CRTCs.
 	 */
-	ret = drm_vblank_init(dev, (1 << rcdu->num_crtcs) - 1);
+	ret = drm_vblank_init(dev, (1 << rcdu->info->num_crtcs) - 1);
 	if (ret < 0)
 		return ret;
 
@@ -547,10 +557,7 @@ int rcar_du_modeset_init(struct rcar_du_device *rcdu)
 		rgrp->dev = rcdu;
 		rgrp->mmio_offset = mmio_offsets[i];
 		rgrp->index = i;
-		/* Extract the channel mask for this group only. */
-		rgrp->channels_mask = (rcdu->info->channels_mask >> (2 * i))
-				   & GENMASK(1, 0);
-		rgrp->num_crtcs = hweight8(rgrp->channels_mask);
+		rgrp->num_crtcs = min(rcdu->num_crtcs - 2 * i, 2U);
 
 		/*
 		 * If we have more than one CRTCs in this group pre-associate
@@ -577,16 +584,10 @@ int rcar_du_modeset_init(struct rcar_du_device *rcdu)
 	}
 
 	/* Create the CRTCs. */
-	for (swindex = 0, hwindex = 0; swindex < rcdu->num_crtcs; ++hwindex) {
-		struct rcar_du_group *rgrp;
+	for (i = 0; i < rcdu->num_crtcs; ++i) {
+		struct rcar_du_group *rgrp = &rcdu->groups[i / 2];
 
-		/* Skip unpopulated DU channels. */
-		if (!(rcdu->info->channels_mask & BIT(hwindex)))
-			continue;
-
-		rgrp = &rcdu->groups[hwindex / 2];
-
-		ret = rcar_du_crtc_create(rgrp, swindex++, hwindex);
+		ret = rcar_du_crtc_create(rgrp, i);
 		if (ret < 0)
 			return ret;
 	}

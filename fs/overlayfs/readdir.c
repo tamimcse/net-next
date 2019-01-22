@@ -668,21 +668,6 @@ static int ovl_fill_real(struct dir_context *ctx, const char *name,
 	return orig_ctx->actor(orig_ctx, name, namelen, offset, ino, d_type);
 }
 
-static bool ovl_is_impure_dir(struct file *file)
-{
-	struct ovl_dir_file *od = file->private_data;
-	struct inode *dir = d_inode(file->f_path.dentry);
-
-	/*
-	 * Only upper dir can be impure, but if we are in the middle of
-	 * iterating a lower real dir, dir could be copied up and marked
-	 * impure. We only want the impure cache if we started iterating
-	 * a real upper dir to begin with.
-	 */
-	return od->is_upper && ovl_test_flag(OVL_IMPURE, dir);
-
-}
-
 static int ovl_iterate_real(struct file *file, struct dir_context *ctx)
 {
 	int err;
@@ -711,7 +696,7 @@ static int ovl_iterate_real(struct file *file, struct dir_context *ctx)
 		rdt.parent_ino = stat.ino;
 	}
 
-	if (ovl_is_impure_dir(file)) {
+	if (ovl_test_flag(OVL_IMPURE, d_inode(dir))) {
 		rdt.cache = ovl_cache_get_impure(&file->f_path);
 		if (IS_ERR(rdt.cache))
 			return PTR_ERR(rdt.cache);
@@ -742,7 +727,7 @@ static int ovl_iterate(struct file *file, struct dir_context *ctx)
 		 */
 		if (ovl_xino_bits(dentry->d_sb) ||
 		    (ovl_same_sb(dentry->d_sb) &&
-		     (ovl_is_impure_dir(file) ||
+		     (ovl_test_flag(OVL_IMPURE, d_inode(dentry)) ||
 		      OVL_TYPE_MERGE(ovl_path_type(dentry->d_parent))))) {
 			return ovl_iterate_real(file, ctx);
 		}

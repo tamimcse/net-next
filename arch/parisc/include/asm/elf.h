@@ -235,7 +235,6 @@ typedef unsigned long elf_greg_t;
 #define SET_PERSONALITY(ex) \
 ({	\
 	set_personality((current->personality & ~PER_MASK) | PER_LINUX); \
-	clear_thread_flag(TIF_32BIT); \
 	current->thread.map_base = DEFAULT_MAP_BASE; \
 	current->thread.task_size = DEFAULT_TASK_SIZE; \
  })
@@ -244,11 +243,9 @@ typedef unsigned long elf_greg_t;
 
 #define COMPAT_SET_PERSONALITY(ex) \
 ({	\
-	if ((ex).e_ident[EI_CLASS] == ELFCLASS32) { \
-		set_thread_flag(TIF_32BIT); \
-		current->thread.map_base = DEFAULT_MAP_BASE32; \
-		current->thread.task_size = DEFAULT_TASK_SIZE32; \
-	} else clear_thread_flag(TIF_32BIT); \
+	set_thread_flag(TIF_32BIT); \
+	current->thread.map_base = DEFAULT_MAP_BASE32; \
+	current->thread.task_size = DEFAULT_TASK_SIZE32; \
  })
 
 /*

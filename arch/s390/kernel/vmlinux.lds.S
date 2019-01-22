@@ -19,7 +19,7 @@
 
 OUTPUT_FORMAT("elf64-s390", "elf64-s390", "elf64-s390")
 OUTPUT_ARCH(s390:64-bit)
-ENTRY(startup_continue)
+ENTRY(startup)
 jiffies = jiffies_64;
 
 PHDRS {
@@ -30,12 +30,16 @@ PHDRS {
 
 SECTIONS
 {
-	. = 0x100000;
-	_stext = .;		/* Start of text section */
+	. = 0x00000000;
 	.text : {
 		/* Text and read-only data */
-		_text = .;
 		HEAD_TEXT
+		/*
+		 * E.g. perf doesn't like symbols starting at address zero,
+		 * therefore skip the initial PSW and channel program located
+		 * at address zero and let _text start at 0x200.
+		 */
+	_text = 0x200;
 		TEXT_TEXT
 		SCHED_TEXT
 		CPUIDLE_TEXT
@@ -43,7 +47,6 @@ SECTIONS
 		KPROBES_TEXT
 		IRQENTRY_TEXT
 		SOFTIRQENTRY_TEXT
-		*(.text.*_indirect_*)
 		*(.fixup)
 		*(.gnu.warning)
 	} :text = 0x0700
@@ -79,10 +82,10 @@ SECTIONS
 
 	. = ALIGN(PAGE_SIZE);
 	.init.text : AT(ADDR(.init.text) - LOAD_OFFSET) {
-		_sinittext = .;
+		VMLINUX_SYMBOL(_sinittext) = . ;
 		INIT_TEXT
 		. = ALIGN(PAGE_SIZE);
-		_einittext = .;
+		VMLINUX_SYMBOL(_einittext) = . ;
 	}
 
 	/*

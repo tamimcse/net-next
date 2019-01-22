@@ -130,7 +130,6 @@ static void vc4_close(struct drm_device *dev, struct drm_file *file)
 	struct vc4_file *vc4file = file->driver_priv;
 
 	vc4_perfmon_close_file(vc4file);
-	kfree(vc4file);
 }
 
 static const struct vm_operations_struct vc4_vm_ops = {
@@ -176,8 +175,7 @@ static struct drm_driver vc4_drm_driver = {
 			    DRIVER_GEM |
 			    DRIVER_HAVE_IRQ |
 			    DRIVER_RENDER |
-			    DRIVER_PRIME |
-			    DRIVER_SYNCOBJ),
+			    DRIVER_PRIME),
 	.lastclose = drm_fb_helper_lastclose,
 	.open = vc4_open,
 	.postclose = vc4_close,
@@ -288,7 +286,7 @@ static int vc4_drm_bind(struct device *dev)
 
 	ret = vc4_bo_cache_init(drm);
 	if (ret)
-		goto dev_put;
+		goto dev_unref;
 
 	drm_mode_config_init(drm);
 
@@ -313,15 +311,15 @@ unbind_all:
 gem_destroy:
 	vc4_gem_destroy(drm);
 	vc4_bo_cache_destroy(drm);
-dev_put:
-	drm_dev_put(drm);
+dev_unref:
+	drm_dev_unref(drm);
 	return ret;
 }
 
 static void vc4_drm_unbind(struct device *dev)
 {
-	struct drm_device *drm = dev_get_drvdata(dev);
-	struct vc4_dev *vc4 = to_vc4_dev(drm);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct drm_device *drm = platform_get_drvdata(pdev);
 
 	drm_dev_unregister(drm);
 
@@ -329,9 +327,7 @@ static void vc4_drm_unbind(struct device *dev)
 
 	drm_mode_config_cleanup(drm);
 
-	drm_atomic_private_obj_fini(&vc4->ctm_manager);
-
-	drm_dev_put(drm);
+	drm_dev_unref(drm);
 }
 
 static const struct component_master_ops vc4_drm_ops = {
@@ -344,7 +340,6 @@ static struct platform_driver *const component_drivers[] = {
 	&vc4_vec_driver,
 	&vc4_dpi_driver,
 	&vc4_dsi_driver,
-	&vc4_txp_driver,
 	&vc4_hvs_driver,
 	&vc4_crtc_driver,
 	&vc4_v3d_driver,

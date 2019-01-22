@@ -10,7 +10,6 @@
 #include <linux/workqueue.h>
 #include <linux/list.h>
 #include <linux/sysctl.h>
-#include <linux/uidgid.h>
 
 #include <net/flow.h>
 #include <net/netns/core.h>
@@ -129,7 +128,6 @@ struct net {
 #endif
 #if IS_ENABLED(CONFIG_NF_DEFRAG_IPV6)
 	struct netns_nf_frag	nf_frag;
-	struct ctl_table_header *nf_frag_frags_hdr;
 #endif
 	struct sock		*nfnl;
 	struct sock		*nfnl_stash;
@@ -171,8 +169,6 @@ extern struct net init_net;
 struct net *copy_net_ns(unsigned long flags, struct user_namespace *user_ns,
 			struct net *old_net);
 
-void net_ns_get_ownership(const struct net *net, kuid_t *uid, kgid_t *gid);
-
 void net_ns_barrier(void);
 #else /* CONFIG_NET_NS */
 #include <linux/sched.h>
@@ -183,13 +179,6 @@ static inline struct net *copy_net_ns(unsigned long flags,
 	if (flags & CLONE_NEWNET)
 		return ERR_PTR(-EINVAL);
 	return old_net;
-}
-
-static inline void net_ns_get_ownership(const struct net *net,
-					kuid_t *uid, kgid_t *gid)
-{
-	*uid = GLOBAL_ROOT_UID;
-	*gid = GLOBAL_ROOT_GID;
 }
 
 static inline void net_ns_barrier(void) {}

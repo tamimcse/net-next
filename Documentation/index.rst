@@ -3,8 +3,6 @@
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
-.. _linux_doc:
-
 The Linux Kernel documentation
 ==============================
 
@@ -47,7 +45,7 @@ the kernel interface as seen by application developers.
 .. toctree::
    :maxdepth: 2
 
-   userspace-api/index
+   userspace-api/index	      
 
 
 Introduction to kernel development
@@ -91,8 +89,6 @@ needed).
    sound/index
    crypto/index
    filesystems/index
-   vm/index
-   bpf/index
 
 Architecture-specific documentation
 -----------------------------------
@@ -105,24 +101,29 @@ implementation.
 
    sh/index
 
-Filesystem Documentation
-------------------------
-
-The documentation in this section are provided by specific filesystem
-subprojects.
+Korean translations
+-------------------
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
 
-   filesystems/ext4/index
+   translations/ko_KR/index
 
-Translations
-------------
+Chinese translations
+--------------------
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
 
-   translations/index
+   translations/zh_CN/index
+
+Japanese translations
+---------------------
+
+.. toctree::
+   :maxdepth: 1
+
+   translations/ja_JP/index
 
 Indices and tables
 ==================

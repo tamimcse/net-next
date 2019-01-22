@@ -1,7 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2000-2005 Silicon Graphics, Inc.
  * All Rights Reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it would be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write the Free Software Foundation,
+ * Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 #include "xfs.h"
 #include "xfs_fs.h"
@@ -300,7 +312,7 @@ restart:
 	if (error <= 0)
 		return error;
 
-	error = xfs_break_layouts(inode, iolock, BREAK_WRITE);
+	error = xfs_break_layouts(inode, iolock);
 	if (error)
 		return error;
 
@@ -401,12 +413,6 @@ xfs_dio_write_end_io(
 
 	if (size <= 0)
 		return size;
-
-	/*
-	 * Capture amount written on completion as we can't reliably account
-	 * for it on submission.
-	 */
-	XFS_STATS_ADD(ip->i_mount, xs_write_bytes, size);
 
 	if (flags & IOMAP_DIO_COW) {
 		error = xfs_reflink_end_cow(ip, offset, size);
@@ -593,16 +599,7 @@ xfs_file_dax_write(
 	}
 out:
 	xfs_iunlock(ip, iolock);
-	if (error)
-		return error;
-
-	if (ret > 0) {
-		XFS_STATS_ADD(ip->i_mount, xs_write_bytes, ret);
-
-		/* Handle various SYNC-type writes */
-		ret = generic_write_sync(iocb, ret);
-	}
-	return ret;
+	return error ? error : ret;
 }
 
 STATIC ssize_t
@@ -672,12 +669,6 @@ write_retry:
 out:
 	if (iolock)
 		xfs_iunlock(ip, iolock);
-
-	if (ret > 0) {
-		XFS_STATS_ADD(ip->i_mount, xs_write_bytes, ret);
-		/* Handle various SYNC-type writes */
-		ret = generic_write_sync(iocb, ret);
-	}
 	return ret;
 }
 
@@ -702,9 +693,8 @@ xfs_file_write_iter(
 		return -EIO;
 
 	if (IS_DAX(inode))
-		return xfs_file_dax_write(iocb, from);
-
-	if (iocb->ki_flags & IOCB_DIRECT) {
+		ret = xfs_file_dax_write(iocb, from);
+	else if (iocb->ki_flags & IOCB_DIRECT) {
 		/*
 		 * Allow a directio write to fall back to a buffered
 		 * write *only* in the case that we're doing a reflink
@@ -712,72 +702,20 @@ xfs_file_write_iter(
 		 * allow an operation to fall back to buffered mode.
 		 */
 		ret = xfs_file_dio_aio_write(iocb, from);
-		if (ret != -EREMCHG)
-			return ret;
+		if (ret == -EREMCHG)
+			goto buffered;
+	} else {
+buffered:
+		ret = xfs_file_buffered_aio_write(iocb, from);
 	}
 
-	return xfs_file_buffered_aio_write(iocb, from);
-}
+	if (ret > 0) {
+		XFS_STATS_ADD(ip->i_mount, xs_write_bytes, ret);
 
-static void
-xfs_wait_dax_page(
-	struct inode		*inode)
-{
-	struct xfs_inode        *ip = XFS_I(inode);
-
-	xfs_iunlock(ip, XFS_MMAPLOCK_EXCL);
-	schedule();
-	xfs_ilock(ip, XFS_MMAPLOCK_EXCL);
-}
-
-static int
-xfs_break_dax_layouts(
-	struct inode		*inode,
-	bool			*retry)
-{
-	struct page		*page;
-
-	ASSERT(xfs_isilocked(XFS_I(inode), XFS_MMAPLOCK_EXCL));
-
-	page = dax_layout_busy_page(inode->i_mapping);
-	if (!page)
-		return 0;
-
-	*retry = true;
-	return ___wait_var_event(&page->_refcount,
-			atomic_read(&page->_refcount) == 1, TASK_INTERRUPTIBLE,
-			0, 0, xfs_wait_dax_page(inode));
-}
-
-int
-xfs_break_layouts(
-	struct inode		*inode,
-	uint			*iolock,
-	enum layout_break_reason reason)
-{
-	bool			retry;
-	int			error;
-
-	ASSERT(xfs_isilocked(XFS_I(inode), XFS_IOLOCK_SHARED|XFS_IOLOCK_EXCL));
-
-	do {
-		retry = false;
-		switch (reason) {
-		case BREAK_UNMAP:
-			error = xfs_break_dax_layouts(inode, &retry);
-			if (error || retry)
-				break;
-			/* fall through */
-		case BREAK_WRITE:
-			error = xfs_break_leased_layouts(inode, iolock, &retry);
-			break;
-		default:
-			WARN_ON_ONCE(1);
-			error = -EINVAL;
-		}
-	} while (error == 0 && retry);
-
-	return error;
+		/* Handle various SYNC-type writes */
+		ret = generic_write_sync(iocb, ret);
+	}
+	return ret;
 }
 
 #define	XFS_FALLOC_FL_SUPPORTED						\
@@ -796,7 +734,7 @@ xfs_file_fallocate(
 	struct xfs_inode	*ip = XFS_I(inode);
 	long			error;
 	enum xfs_prealloc_flags	flags = 0;
-	uint			iolock = XFS_IOLOCK_EXCL | XFS_MMAPLOCK_EXCL;
+	uint			iolock = XFS_IOLOCK_EXCL;
 	loff_t			new_size = 0;
 	bool			do_file_insert = false;
 
@@ -806,9 +744,12 @@ xfs_file_fallocate(
 		return -EOPNOTSUPP;
 
 	xfs_ilock(ip, iolock);
-	error = xfs_break_layouts(inode, &iolock, BREAK_UNMAP);
+	error = xfs_break_layouts(inode, &iolock);
 	if (error)
 		goto out_unlock;
+
+	xfs_ilock(ip, XFS_MMAPLOCK_EXCL);
+	iolock |= XFS_MMAPLOCK_EXCL;
 
 	if (mode & FALLOC_FL_PUNCH_HOLE) {
 		error = xfs_free_file_space(ip, offset, len);
@@ -931,16 +872,21 @@ xfs_file_clone_range(
 				     len, false);
 }
 
-STATIC int
+STATIC ssize_t
 xfs_file_dedupe_range(
-	struct file	*file_in,
-	loff_t		pos_in,
-	struct file	*file_out,
-	loff_t		pos_out,
-	u64		len)
+	struct file	*src_file,
+	u64		loff,
+	u64		len,
+	struct file	*dst_file,
+	u64		dst_loff)
 {
-	return xfs_reflink_remap_range(file_in, pos_in, file_out, pos_out,
+	int		error;
+
+	error = xfs_reflink_remap_range(src_file, loff, dst_file, dst_loff,
 				     len, true);
+	if (error)
+		return error;
+	return len;
 }
 
 STATIC int
@@ -1051,7 +997,7 @@ xfs_file_llseek(
  *       page_lock (MM)
  *         i_lock (XFS - extent map serialisation)
  */
-static vm_fault_t
+static int
 __xfs_filemap_fault(
 	struct vm_fault		*vmf,
 	enum page_entry_size	pe_size,
@@ -1059,7 +1005,7 @@ __xfs_filemap_fault(
 {
 	struct inode		*inode = file_inode(vmf->vma->vm_file);
 	struct xfs_inode	*ip = XFS_I(inode);
-	vm_fault_t		ret;
+	int			ret;
 
 	trace_xfs_filemap_fault(ip, pe_size, write_fault);
 
@@ -1088,7 +1034,7 @@ __xfs_filemap_fault(
 	return ret;
 }
 
-static vm_fault_t
+static int
 xfs_filemap_fault(
 	struct vm_fault		*vmf)
 {
@@ -1098,7 +1044,7 @@ xfs_filemap_fault(
 			(vmf->flags & FAULT_FLAG_WRITE));
 }
 
-static vm_fault_t
+static int
 xfs_filemap_huge_fault(
 	struct vm_fault		*vmf,
 	enum page_entry_size	pe_size)
@@ -1111,7 +1057,7 @@ xfs_filemap_huge_fault(
 			(vmf->flags & FAULT_FLAG_WRITE));
 }
 
-static vm_fault_t
+static int
 xfs_filemap_page_mkwrite(
 	struct vm_fault		*vmf)
 {
@@ -1123,7 +1069,7 @@ xfs_filemap_page_mkwrite(
  * on write faults. In reality, it needs to serialise against truncate and
  * prepare memory for writing so handle is as standard write fault.
  */
-static vm_fault_t
+static int
 xfs_filemap_pfn_mkwrite(
 	struct vm_fault		*vmf)
 {
@@ -1154,7 +1100,7 @@ xfs_file_mmap(
 	file_accessed(filp);
 	vma->vm_ops = &xfs_file_vm_ops;
 	if (IS_DAX(file_inode(filp)))
-		vma->vm_flags |= VM_HUGEPAGE;
+		vma->vm_flags |= VM_MIXEDMAP | VM_HUGEPAGE;
 	return 0;
 }
 

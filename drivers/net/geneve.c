@@ -236,8 +236,7 @@ static void geneve_rx(struct geneve_dev *geneve, struct geneve_sock *gs,
 		}
 		/* Update tunnel dst according to Geneve options. */
 		ip_tunnel_info_opts_set(&tun_dst->u.tun_info,
-					gnvh->options, gnvh->opt_len * 4,
-					TUNNEL_GENEVE_OPT);
+					gnvh->options, gnvh->opt_len * 4);
 	} else {
 		/* Drop packets w/ critical options,
 		 * since we don't support any...
@@ -419,12 +418,11 @@ static int geneve_hlen(struct genevehdr *gh)
 	return sizeof(*gh) + gh->opt_len * 4;
 }
 
-static struct sk_buff *geneve_gro_receive(struct sock *sk,
-					  struct list_head *head,
-					  struct sk_buff *skb)
+static struct sk_buff **geneve_gro_receive(struct sock *sk,
+					   struct sk_buff **head,
+					   struct sk_buff *skb)
 {
-	struct sk_buff *pp = NULL;
-	struct sk_buff *p;
+	struct sk_buff *p, **pp = NULL;
 	struct genevehdr *gh, *gh2;
 	unsigned int hlen, gh_len, off_gnv;
 	const struct packet_offload *ptype;
@@ -451,7 +449,7 @@ static struct sk_buff *geneve_gro_receive(struct sock *sk,
 			goto out;
 	}
 
-	list_for_each_entry(p, head, list) {
+	for (p = *head; p; p = p->next) {
 		if (!NAPI_GRO_CB(p)->same_flow)
 			continue;
 
@@ -478,7 +476,7 @@ static struct sk_buff *geneve_gro_receive(struct sock *sk,
 out_unlock:
 	rcu_read_unlock();
 out:
-	skb_gro_flush_final(skb, pp, flush);
+	NAPI_GRO_CB(skb)->flush |= flush;
 
 	return pp;
 }
@@ -676,8 +674,7 @@ static void geneve_build_header(struct genevehdr *geneveh,
 	geneveh->proto_type = htons(ETH_P_TEB);
 	geneveh->rsvd2 = 0;
 
-	if (info->key.tun_flags & TUNNEL_GENEVE_OPT)
-		ip_tunnel_info_opts_get(geneveh->options, info);
+	ip_tunnel_info_opts_get(geneveh->options, info);
 }
 
 static int geneve_build_skb(struct dst_entry *dst, struct sk_buff *skb,

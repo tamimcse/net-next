@@ -597,14 +597,10 @@ static enum ice_status ice_init_check_adminq(struct ice_hw *hw)
 	return 0;
 
 init_ctrlq_free_rq:
-	if (cq->rq.head) {
-		ice_shutdown_rq(hw, cq);
-		mutex_destroy(&cq->rq_lock);
-	}
-	if (cq->sq.head) {
-		ice_shutdown_sq(hw, cq);
-		mutex_destroy(&cq->sq_lock);
-	}
+	ice_shutdown_rq(hw, cq);
+	ice_shutdown_sq(hw, cq);
+	mutex_destroy(&cq->sq_lock);
+	mutex_destroy(&cq->rq_lock);
 	return status;
 }
 
@@ -710,14 +706,10 @@ static void ice_shutdown_ctrlq(struct ice_hw *hw, enum ice_ctl_q q_type)
 		return;
 	}
 
-	if (cq->sq.head) {
-		ice_shutdown_sq(hw, cq);
-		mutex_destroy(&cq->sq_lock);
-	}
-	if (cq->rq.head) {
-		ice_shutdown_rq(hw, cq);
-		mutex_destroy(&cq->rq_lock);
-	}
+	ice_shutdown_sq(hw, cq);
+	ice_shutdown_rq(hw, cq);
+	mutex_destroy(&cq->sq_lock);
+	mutex_destroy(&cq->rq_lock);
 }
 
 /**
@@ -1022,10 +1014,10 @@ ice_clean_rq_elem(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 	desc = ICE_CTL_Q_DESC(cq->rq, ntc);
 	desc_idx = ntc;
 
-	cq->rq_last_status = (enum ice_aq_err)le16_to_cpu(desc->retval);
 	flags = le16_to_cpu(desc->flags);
 	if (flags & ICE_AQ_FLAG_ERR) {
 		ret_code = ICE_ERR_AQ_ERROR;
+		cq->rq_last_status = (enum ice_aq_err)le16_to_cpu(desc->retval);
 		ice_debug(hw, ICE_DBG_AQ_MSG,
 			  "Control Receive Queue Event received with error 0x%x\n",
 			  cq->rq_last_status);
@@ -1065,11 +1057,8 @@ ice_clean_rq_elem(struct ice_hw *hw, struct ice_ctl_q_info *cq,
 
 clean_rq_elem_out:
 	/* Set pending if needed, unlock and return */
-	if (pending) {
-		/* re-read HW head to calculate actual pending messages */
-		ntu = (u16)(rd32(hw, cq->rq.head) & cq->rq.head_mask);
+	if (pending)
 		*pending = (u16)((ntc > ntu ? cq->rq.count : 0) + (ntu - ntc));
-	}
 clean_rq_elem_err:
 	mutex_unlock(&cq->rq_lock);
 

@@ -370,40 +370,26 @@ EXPORT_SYMBOL_GPL(pci_get_hp_params);
 
 /**
  * pciehp_is_native - Check whether a hotplug port is handled by the OS
- * @bridge: Hotplug port to check
+ * @pdev: Hotplug port to check
  *
- * Returns true if the given @bridge is handled by the native PCIe hotplug
- * driver.
+ * Walk up from @pdev to the host bridge, obtain its cached _OSC Control Field
+ * and return the value of the "PCI Express Native Hot Plug control" bit.
+ * On failure to obtain the _OSC Control Field return %false.
  */
-bool pciehp_is_native(struct pci_dev *bridge)
+bool pciehp_is_native(struct pci_dev *pdev)
 {
-	const struct pci_host_bridge *host;
-	u32 slot_cap;
+	struct acpi_pci_root *root;
+	acpi_handle handle;
 
-	if (!IS_ENABLED(CONFIG_HOTPLUG_PCI_PCIE))
+	handle = acpi_find_root_bridge_handle(pdev);
+	if (!handle)
 		return false;
 
-	pcie_capability_read_dword(bridge, PCI_EXP_SLTCAP, &slot_cap);
-	if (!(slot_cap & PCI_EXP_SLTCAP_HPC))
+	root = acpi_pci_find_root(handle);
+	if (!root)
 		return false;
 
-	if (pcie_ports_native)
-		return true;
-
-	host = pci_find_host_bridge(bridge->bus);
-	return host->native_pcie_hotplug;
-}
-
-/**
- * shpchp_is_native - Check whether a hotplug port is handled by the OS
- * @bridge: Hotplug port to check
- *
- * Returns true if the given @bridge is handled by the native SHPC hotplug
- * driver.
- */
-bool shpchp_is_native(struct pci_dev *bridge)
-{
-	return bridge->shpc_managed;
+	return root->osc_control_set & OSC_PCI_EXPRESS_NATIVE_HP_CONTROL;
 }
 
 /**
@@ -611,16 +597,6 @@ static int acpi_pci_wakeup(struct pci_dev *dev, bool enable)
 static bool acpi_pci_need_resume(struct pci_dev *dev)
 {
 	struct acpi_device *adev = ACPI_COMPANION(&dev->dev);
-
-	/*
-	 * In some cases (eg. Samsung 305V4A) leaving a bridge in suspend over
-	 * system-wide suspend/resume confuses the platform firmware, so avoid
-	 * doing that.  According to Section 16.1.6 of ACPI 6.2, endpoint
-	 * devices are expected to be in D3 before invoking the S3 entry path
-	 * from the firmware, so they should not be affected by this issue.
-	 */
-	if (pci_is_bridge(dev) && acpi_target_system_state() != ACPI_STATE_S0)
-		return true;
 
 	if (!adev || !acpi_device_power_manageable(adev))
 		return false;

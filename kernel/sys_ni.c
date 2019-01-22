@@ -43,9 +43,7 @@ COND_SYSCALL(io_submit);
 COND_SYSCALL_COMPAT(io_submit);
 COND_SYSCALL(io_cancel);
 COND_SYSCALL(io_getevents);
-COND_SYSCALL(io_pgetevents);
 COND_SYSCALL_COMPAT(io_getevents);
-COND_SYSCALL_COMPAT(io_pgetevents);
 
 /* fs/xattr.c */
 
@@ -367,7 +365,7 @@ COND_SYSCALL(s390_pci_mmio_write);
 COND_SYSCALL_COMPAT(s390_ipc);
 
 /* powerpc */
-COND_SYSCALL(rtas);
+cond_syscall(ppc_rtas);
 COND_SYSCALL(spu_run);
 COND_SYSCALL(spu_create);
 COND_SYSCALL(subpage_prot);
@@ -432,6 +430,3 @@ COND_SYSCALL(setresgid16);
 COND_SYSCALL(setresuid16);
 COND_SYSCALL(setreuid16);
 COND_SYSCALL(setuid16);
-
-/* restartable sequence */
-COND_SYSCALL(rseq);

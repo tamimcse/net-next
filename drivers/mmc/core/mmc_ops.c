@@ -417,7 +417,7 @@ static int mmc_switch_status_error(struct mmc_host *host, u32 status)
 		if (status & R1_SPI_ILLEGAL_COMMAND)
 			return -EBADMSG;
 	} else {
-		if (R1_STATUS(status))
+		if (status & 0xFDFFA000)
 			pr_warn("%s: unexpected status %#x after switch\n",
 				mmc_hostname(host), status);
 		if (status & R1_SWITCH_ERROR)

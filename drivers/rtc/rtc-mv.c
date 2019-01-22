@@ -176,7 +176,8 @@ static int mv_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alm)
 
 static int mv_rtc_alarm_irq_enable(struct device *dev, unsigned int enabled)
 {
-	struct rtc_plat_data *pdata = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct rtc_plat_data *pdata = platform_get_drvdata(pdev);
 	void __iomem *ioaddr = pdata->ioaddr;
 
 	if (pdata->irq < 0)

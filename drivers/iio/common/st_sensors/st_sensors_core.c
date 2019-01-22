@@ -380,7 +380,8 @@ void st_sensors_of_name_probe(struct device *dev,
 		return;
 
 	/* The name from the OF match takes precedence if present */
-	strlcpy(name, of_id->data, len);
+	strncpy(name, of_id->data, len);
+	name[len - 1] = '\0';
 }
 EXPORT_SYMBOL(st_sensors_of_name_probe);
 #else

@@ -181,6 +181,20 @@ static void deinterlace_job_abort(void *priv)
 	v4l2_m2m_job_finish(pcdev->m2m_dev, ctx->m2m_ctx);
 }
 
+static void deinterlace_lock(void *priv)
+{
+	struct deinterlace_ctx *ctx = priv;
+	struct deinterlace_dev *pcdev = ctx->dev;
+	mutex_lock(&pcdev->dev_mutex);
+}
+
+static void deinterlace_unlock(void *priv)
+{
+	struct deinterlace_ctx *ctx = priv;
+	struct deinterlace_dev *pcdev = ctx->dev;
+	mutex_unlock(&pcdev->dev_mutex);
+}
+
 static void dma_callback(void *data)
 {
 	struct deinterlace_ctx *curr_ctx = data;
@@ -842,8 +856,6 @@ static const struct vb2_ops deinterlace_qops = {
 	.queue_setup	 = deinterlace_queue_setup,
 	.buf_prepare	 = deinterlace_buf_prepare,
 	.buf_queue	 = deinterlace_buf_queue,
-	.wait_prepare	 = vb2_ops_wait_prepare,
-	.wait_finish	 = vb2_ops_wait_finish,
 };
 
 static int queue_init(void *priv, struct vb2_queue *src_vq,
@@ -860,7 +872,6 @@ static int queue_init(void *priv, struct vb2_queue *src_vq,
 	src_vq->mem_ops = &vb2_dma_contig_memops;
 	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
 	src_vq->dev = ctx->dev->v4l2_dev.dev;
-	src_vq->lock = &ctx->dev->dev_mutex;
 	q_data[V4L2_M2M_SRC].fmt = &formats[0];
 	q_data[V4L2_M2M_SRC].width = 640;
 	q_data[V4L2_M2M_SRC].height = 480;
@@ -879,7 +890,6 @@ static int queue_init(void *priv, struct vb2_queue *src_vq,
 	dst_vq->mem_ops = &vb2_dma_contig_memops;
 	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
 	dst_vq->dev = ctx->dev->v4l2_dev.dev;
-	dst_vq->lock = &ctx->dev->dev_mutex;
 	q_data[V4L2_M2M_DST].fmt = &formats[0];
 	q_data[V4L2_M2M_DST].width = 640;
 	q_data[V4L2_M2M_DST].height = 480;
@@ -946,9 +956,9 @@ static __poll_t deinterlace_poll(struct file *file,
 	struct deinterlace_ctx *ctx = file->private_data;
 	__poll_t ret;
 
-	mutex_lock(&ctx->dev->dev_mutex);
+	deinterlace_lock(ctx);
 	ret = v4l2_m2m_poll(file, ctx->m2m_ctx, wait);
-	mutex_unlock(&ctx->dev->dev_mutex);
+	deinterlace_unlock(ctx);
 
 	return ret;
 }
@@ -982,6 +992,8 @@ static const struct v4l2_m2m_ops m2m_ops = {
 	.device_run	= deinterlace_device_run,
 	.job_ready	= deinterlace_job_ready,
 	.job_abort	= deinterlace_job_abort,
+	.lock		= deinterlace_lock,
+	.unlock		= deinterlace_unlock,
 };
 
 static int deinterlace_probe(struct platform_device *pdev)
@@ -1028,6 +1040,7 @@ static int deinterlace_probe(struct platform_device *pdev)
 	}
 
 	video_set_drvdata(vfd, pcdev);
+	snprintf(vfd->name, sizeof(vfd->name), "%s", deinterlace_videodev.name);
 	v4l2_info(&pcdev->v4l2_dev, MEM2MEM_TEST_MODULE_NAME
 			" Device registered as /dev/video%d\n", vfd->num);
 

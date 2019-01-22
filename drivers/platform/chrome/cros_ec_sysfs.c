@@ -34,6 +34,8 @@
 #include <linux/types.h>
 #include <linux/uaccess.h>
 
+#define to_cros_ec_dev(dev)  container_of(dev, struct cros_ec_dev, class_dev)
+
 /* Accessor functions */
 
 static ssize_t reboot_show(struct device *dev,

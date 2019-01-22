@@ -322,7 +322,8 @@ static int __inet6_bind(struct sock *sk, struct sockaddr *uaddr, int addr_len,
 		/* Reproduce AF_INET checks to make the bindings consistent */
 		v4addr = addr->sin6_addr.s6_addr32[3];
 		chk_addr_ret = inet_addr_type(net, v4addr);
-		if (!inet_can_nonlocal_bind(net, inet) &&
+		if (!net->ipv4.sysctl_ip_nonlocal_bind &&
+		    !(inet->freebind || inet->transparent) &&
 		    v4addr != htonl(INADDR_ANY) &&
 		    chk_addr_ret != RTN_LOCAL &&
 		    chk_addr_ret != RTN_MULTICAST &&
@@ -361,7 +362,8 @@ static int __inet6_bind(struct sock *sk, struct sockaddr *uaddr, int addr_len,
 			 */
 			v4addr = LOOPBACK4_IPV6;
 			if (!(addr_type & IPV6_ADDR_MULTICAST))	{
-				if (!ipv6_can_nonlocal_bind(net, inet) &&
+				if (!net->ipv6.sysctl.ip_nonlocal_bind &&
+				    !(inet->freebind || inet->transparent) &&
 				    !ipv6_chk_addr(net, &addr->sin6_addr,
 						   dev, 0)) {
 					err = -EADDRNOTAVAIL;
@@ -762,7 +764,6 @@ EXPORT_SYMBOL_GPL(ipv6_opt_accepted);
 static struct packet_type ipv6_packet_type __read_mostly = {
 	.type = cpu_to_be16(ETH_P_IPV6),
 	.func = ipv6_rcv,
-	.list_func = ipv6_list_rcv,
 };
 
 static int __init ipv6_packet_init(void)
@@ -832,7 +833,6 @@ static int __net_init inet6_net_init(struct net *net)
 
 	net->ipv6.sysctl.bindv6only = 0;
 	net->ipv6.sysctl.icmpv6_time = 1*HZ;
-	net->ipv6.sysctl.icmpv6_echo_ignore_all = 0;
 	net->ipv6.sysctl.flowlabel_consistency = 1;
 	net->ipv6.sysctl.auto_flowlabels = IP6_DEFAULT_AUTO_FLOW_LABELS;
 	net->ipv6.sysctl.idgen_retries = 3;
@@ -889,12 +889,7 @@ static struct pernet_operations inet6_net_ops = {
 static const struct ipv6_stub ipv6_stub_impl = {
 	.ipv6_sock_mc_join = ipv6_sock_mc_join,
 	.ipv6_sock_mc_drop = ipv6_sock_mc_drop,
-	.ipv6_dst_lookup   = ip6_dst_lookup,
-	.fib6_get_table	   = fib6_get_table,
-	.fib6_table_lookup = fib6_table_lookup,
-	.fib6_lookup       = fib6_lookup,
-	.fib6_multipath_select = fib6_multipath_select,
-	.ip6_mtu_from_fib6 = ip6_mtu_from_fib6,
+	.ipv6_dst_lookup = ip6_dst_lookup,
 	.udpv6_encap_enable = udpv6_encap_enable,
 	.ndisc_send_na = ndisc_send_na,
 	.nd_tbl	= &nd_tbl,
@@ -938,14 +933,14 @@ static int __init inet6_init(void)
 
 	err = proto_register(&pingv6_prot, 1);
 	if (err)
-		goto out_unregister_raw_proto;
+		goto out_unregister_ping_proto;
 
 	/* We MUST register RAW sockets before we create the ICMP6,
 	 * IGMP6, or NDISC control sockets.
 	 */
 	err = rawv6_init();
 	if (err)
-		goto out_unregister_ping_proto;
+		goto out_unregister_raw_proto;
 
 	/* Register the family here so that the init calls below will
 	 * be able to create sockets. (?? is this dangerous ??)
@@ -1113,11 +1108,11 @@ netfilter_fail:
 igmp_fail:
 	ndisc_cleanup();
 ndisc_fail:
-	icmpv6_cleanup();
-icmp_fail:
 	ip6_mr_cleanup();
-ipmr_fail:
+icmp_fail:
 	unregister_pernet_subsys(&inet6_net_ops);
+ipmr_fail:
+	icmpv6_cleanup();
 register_pernet_fail:
 	sock_unregister(PF_INET6);
 	rtnl_unregister_all(PF_INET6);

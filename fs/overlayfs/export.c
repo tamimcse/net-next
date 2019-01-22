@@ -300,25 +300,16 @@ static struct dentry *ovl_obtain_alias(struct super_block *sb,
 	struct dentry *dentry;
 	struct inode *inode;
 	struct ovl_entry *oe;
-	struct ovl_inode_params oip = {
-		.lowerpath = lowerpath,
-		.index = index,
-		.numlower = !!lower
-	};
 
 	/* We get overlay directory dentries with ovl_lookup_real() */
 	if (d_is_dir(upper ?: lower))
 		return ERR_PTR(-EIO);
 
-	oip.upperdentry = dget(upper);
-	inode = ovl_get_inode(sb, &oip);
+	inode = ovl_get_inode(sb, dget(upper), lowerpath, index, !!lower);
 	if (IS_ERR(inode)) {
 		dput(upper);
 		return ERR_CAST(inode);
 	}
-
-	if (upper)
-		ovl_set_flag(OVL_UPPERDATA, inode);
 
 	dentry = d_find_any_alias(inode);
 	if (!dentry) {

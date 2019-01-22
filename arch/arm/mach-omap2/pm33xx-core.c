@@ -26,7 +26,6 @@
 static struct powerdomain *cefuse_pwrdm, *gfx_pwrdm, *per_pwrdm, *mpu_pwrdm;
 static struct clockdomain *gfx_l4ls_clkdm;
 static void __iomem *scu_base;
-static struct omap_hwmod *rtc_oh;
 
 static int __init am43xx_map_scu(void)
 {
@@ -107,13 +106,12 @@ static void amx3_post_suspend_common(void)
 		pr_err("PM: GFX domain did not transition: %x\n", status);
 }
 
-static int am33xx_suspend(unsigned int state, int (*fn)(unsigned long),
-			  unsigned long args)
+static int am33xx_suspend(unsigned int state, int (*fn)(unsigned long))
 {
 	int ret = 0;
 
 	amx3_pre_suspend_common();
-	ret = cpu_suspend(args, fn);
+	ret = cpu_suspend(0, fn);
 	amx3_post_suspend_common();
 
 	/*
@@ -130,14 +128,13 @@ static int am33xx_suspend(unsigned int state, int (*fn)(unsigned long),
 	return ret;
 }
 
-static int am43xx_suspend(unsigned int state, int (*fn)(unsigned long),
-			  unsigned long args)
+static int am43xx_suspend(unsigned int state, int (*fn)(unsigned long))
 {
 	int ret = 0;
 
 	amx3_pre_suspend_common();
 	scu_power_mode(scu_base, SCU_PM_POWEROFF);
-	ret = cpu_suspend(args, fn);
+	ret = cpu_suspend(0, fn);
 	scu_power_mode(scu_base, SCU_PM_NORMAL);
 	amx3_post_suspend_common();
 
@@ -154,25 +151,16 @@ static struct am33xx_pm_sram_addr *amx3_get_sram_addrs(void)
 		return NULL;
 }
 
-void __iomem *am43xx_get_rtc_base_addr(void)
-{
-	rtc_oh = omap_hwmod_lookup("rtc");
-
-	return omap_hwmod_get_mpu_rt_va(rtc_oh);
-}
-
 static struct am33xx_pm_platform_data am33xx_ops = {
 	.init = am33xx_suspend_init,
 	.soc_suspend = am33xx_suspend,
 	.get_sram_addrs = amx3_get_sram_addrs,
-	.get_rtc_base_addr = am43xx_get_rtc_base_addr,
 };
 
 static struct am33xx_pm_platform_data am43xx_ops = {
 	.init = am43xx_suspend_init,
 	.soc_suspend = am43xx_suspend,
 	.get_sram_addrs = amx3_get_sram_addrs,
-	.get_rtc_base_addr = am43xx_get_rtc_base_addr,
 };
 
 static struct am33xx_pm_platform_data *am33xx_pm_get_pdata(void)
@@ -185,7 +173,7 @@ static struct am33xx_pm_platform_data *am33xx_pm_get_pdata(void)
 		return NULL;
 }
 
-int __init amx3_common_pm_init(void)
+void __init amx3_common_pm_init(void)
 {
 	struct am33xx_pm_platform_data *pdata;
 	struct platform_device_info devinfo;
@@ -198,6 +186,4 @@ int __init amx3_common_pm_init(void)
 	devinfo.size_data = sizeof(*pdata);
 	devinfo.id = -1;
 	platform_device_register_full(&devinfo);
-
-	return 0;
 }

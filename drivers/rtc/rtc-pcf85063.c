@@ -43,38 +43,37 @@ static struct i2c_driver pcf85063_driver;
 
 static int pcf85063_stop_clock(struct i2c_client *client, u8 *ctrl1)
 {
-	int rc;
-	u8 reg;
+	s32 ret;
 
-	rc = i2c_smbus_read_byte_data(client, PCF85063_REG_CTRL1);
-	if (rc < 0) {
+	ret = i2c_smbus_read_byte_data(client, PCF85063_REG_CTRL1);
+	if (ret < 0) {
 		dev_err(&client->dev, "Failing to stop the clock\n");
 		return -EIO;
 	}
 
 	/* stop the clock */
-	reg = rc | PCF85063_REG_CTRL1_STOP;
+	ret |= PCF85063_REG_CTRL1_STOP;
 
-	rc = i2c_smbus_write_byte_data(client, PCF85063_REG_CTRL1, reg);
-	if (rc < 0) {
+	ret = i2c_smbus_write_byte_data(client, PCF85063_REG_CTRL1, ret);
+	if (ret < 0) {
 		dev_err(&client->dev, "Failing to stop the clock\n");
 		return -EIO;
 	}
 
-	*ctrl1 = reg;
+	*ctrl1 = ret;
 
 	return 0;
 }
 
 static int pcf85063_start_clock(struct i2c_client *client, u8 ctrl1)
 {
-	int rc;
+	s32 ret;
 
 	/* start the clock */
 	ctrl1 &= ~PCF85063_REG_CTRL1_STOP;
 
-	rc = i2c_smbus_write_byte_data(client, PCF85063_REG_CTRL1, ctrl1);
-	if (rc < 0) {
+	ret = i2c_smbus_write_byte_data(client, PCF85063_REG_CTRL1, ctrl1);
+	if (ret < 0) {
 		dev_err(&client->dev, "Failing to start the clock\n");
 		return -EIO;
 	}

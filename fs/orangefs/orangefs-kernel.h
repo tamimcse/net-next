@@ -182,6 +182,7 @@ static inline void set_op_state_purged(struct orangefs_kernel_op_s *op)
 struct orangefs_inode_s {
 	struct orangefs_object_kref refn;
 	char link_target[ORANGEFS_NAME_MAX];
+	__s64 blksize;
 	/*
 	 * Reading/Writing Extended attributes need to acquire the appropriate
 	 * reader/writer semaphore on the orangefs_inode_s structure.
@@ -342,7 +343,7 @@ int orangefs_getattr(const struct path *path, struct kstat *stat,
 
 int orangefs_permission(struct inode *inode, int mask);
 
-int orangefs_update_time(struct inode *, struct timespec64 *, int);
+int orangefs_update_time(struct inode *, struct timespec *, int);
 
 /*
  * defined in xattr.c

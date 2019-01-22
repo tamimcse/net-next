@@ -2443,7 +2443,6 @@ static int ptrace_set_debugreg(struct task_struct *task, unsigned long addr,
 	/* Create a new breakpoint request if one doesn't exist already */
 	hw_breakpoint_init(&attr);
 	attr.bp_addr = hw_brk.address;
-	attr.bp_len = 8;
 	arch_bp_generic_fields(hw_brk.type,
 			       &attr.bp_type);
 
@@ -3082,19 +3081,27 @@ long arch_ptrace(struct task_struct *child, long request,
 #endif /* CONFIG_HAVE_HW_BREAKPOINT */
 #endif /* CONFIG_PPC_ADV_DEBUG_REGS */
 
-		if (copy_to_user(datavp, &dbginfo,
-				 sizeof(struct ppc_debug_info)))
+		if (!access_ok(VERIFY_WRITE, datavp,
+			       sizeof(struct ppc_debug_info)))
 			return -EFAULT;
-		return 0;
+		ret = __copy_to_user(datavp, &dbginfo,
+				     sizeof(struct ppc_debug_info)) ?
+		      -EFAULT : 0;
+		break;
 	}
 
 	case PPC_PTRACE_SETHWDEBUG: {
 		struct ppc_hw_breakpoint bp_info;
 
-		if (copy_from_user(&bp_info, datavp,
-				   sizeof(struct ppc_hw_breakpoint)))
+		if (!access_ok(VERIFY_READ, datavp,
+			       sizeof(struct ppc_hw_breakpoint)))
 			return -EFAULT;
-		return ppc_set_hwdebug(child, &bp_info);
+		ret = __copy_from_user(&bp_info, datavp,
+				       sizeof(struct ppc_hw_breakpoint)) ?
+		      -EFAULT : 0;
+		if (!ret)
+			ret = ppc_set_hwdebug(child, &bp_info);
+		break;
 	}
 
 	case PPC_PTRACE_DELHWDEBUG: {

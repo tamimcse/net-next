@@ -147,7 +147,8 @@ void afs_cache_permit(struct afs_vnode *vnode, struct key *key,
 					break;
 				}
 
-				if (cb_break != afs_cb_break_sum(vnode, vnode->cb_interest)) {
+				if (cb_break != (vnode->cb_break +
+						 vnode->cb_interest->server->cb_s_break)) {
 					changed = true;
 					break;
 				}
@@ -177,7 +178,7 @@ void afs_cache_permit(struct afs_vnode *vnode, struct key *key,
 		}
 	}
 
-	if (cb_break != afs_cb_break_sum(vnode, vnode->cb_interest))
+	if (cb_break != (vnode->cb_break + vnode->cb_interest->server->cb_s_break))
 		goto someone_else_changed_it;
 
 	/* We need a ref on any permits list we want to copy as we'll have to
@@ -256,7 +257,7 @@ found:
 
 	spin_lock(&vnode->lock);
 	zap = rcu_access_pointer(vnode->permit_cache);
-	if (cb_break == afs_cb_break_sum(vnode, vnode->cb_interest) &&
+	if (cb_break == (vnode->cb_break + vnode->cb_interest->server->cb_s_break) &&
 	    zap == permits)
 		rcu_assign_pointer(vnode->permit_cache, replacement);
 	else
@@ -372,14 +373,18 @@ int afs_permission(struct inode *inode, int mask)
 	       mask, access, S_ISDIR(inode->i_mode) ? "dir" : "file");
 
 	if (S_ISDIR(inode->i_mode)) {
-		if (mask & (MAY_EXEC | MAY_READ | MAY_CHDIR)) {
+		if (mask & MAY_EXEC) {
 			if (!(access & AFS_ACE_LOOKUP))
 				goto permission_denied;
-		}
-		if (mask & MAY_WRITE) {
+		} else if (mask & MAY_READ) {
+			if (!(access & AFS_ACE_LOOKUP))
+				goto permission_denied;
+		} else if (mask & MAY_WRITE) {
 			if (!(access & (AFS_ACE_DELETE | /* rmdir, unlink, rename from */
 					AFS_ACE_INSERT))) /* create, mkdir, symlink, rename to */
 				goto permission_denied;
+		} else {
+			BUG();
 		}
 	} else {
 		if (!(access & AFS_ACE_LOOKUP))

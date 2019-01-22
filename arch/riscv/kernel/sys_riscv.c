@@ -48,6 +48,7 @@ SYSCALL_DEFINE6(mmap2, unsigned long, addr, unsigned long, len,
 }
 #endif /* !CONFIG_64BIT */
 
+#ifdef CONFIG_SMP
 /*
  * Allows the instruction cache to be flushed from userspace.  Despite RISC-V
  * having a direct 'fence.i' instruction available to userspace (which we
@@ -65,11 +66,15 @@ SYSCALL_DEFINE6(mmap2, unsigned long, addr, unsigned long, len,
 SYSCALL_DEFINE3(riscv_flush_icache, uintptr_t, start, uintptr_t, end,
 	uintptr_t, flags)
 {
+	struct mm_struct *mm = current->mm;
+	bool local = (flags & SYS_RISCV_FLUSH_ICACHE_LOCAL) != 0;
+
 	/* Check the reserved flags. */
 	if (unlikely(flags & ~SYS_RISCV_FLUSH_ICACHE_ALL))
 		return -EINVAL;
 
-	flush_icache_mm(current->mm, flags & SYS_RISCV_FLUSH_ICACHE_LOCAL);
+	flush_icache_mm(mm, local);
 
 	return 0;
 }
+#endif

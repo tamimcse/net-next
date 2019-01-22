@@ -575,7 +575,8 @@ static int srpt_refresh_port(struct srpt_port *sport)
 	sport->sm_lid = port_attr.sm_lid;
 	sport->lid = port_attr.lid;
 
-	ret = rdma_query_gid(sport->sdev->device, sport->port, 0, &sport->gid);
+	ret = ib_query_gid(sport->sdev->device, sport->port, 0, &sport->gid,
+			   NULL);
 	if (ret)
 		goto err_query_port;
 
@@ -719,7 +720,7 @@ static struct srpt_ioctx **srpt_alloc_ioctx_ring(struct srpt_device *sdev,
 	WARN_ON(ioctx_size != sizeof(struct srpt_recv_ioctx)
 		&& ioctx_size != sizeof(struct srpt_send_ioctx));
 
-	ring = kvmalloc_array(ring_size, sizeof(ring[0]), GFP_KERNEL);
+	ring = kmalloc(ring_size * sizeof(ring[0]), GFP_KERNEL);
 	if (!ring)
 		goto out;
 	for (i = 0; i < ring_size; ++i) {
@@ -733,7 +734,7 @@ static struct srpt_ioctx **srpt_alloc_ioctx_ring(struct srpt_device *sdev,
 err:
 	while (--i >= 0)
 		srpt_free_ioctx(sdev, ring[i], dma_size, dir);
-	kvfree(ring);
+	kfree(ring);
 	ring = NULL;
 out:
 	return ring;
@@ -758,7 +759,7 @@ static void srpt_free_ioctx_ring(struct srpt_ioctx **ioctx_ring,
 
 	for (i = 0; i < ring_size; ++i)
 		srpt_free_ioctx(sdev, ioctx_ring[i], dma_size, dir);
-	kvfree(ioctx_ring);
+	kfree(ioctx_ring);
 }
 
 /**
@@ -816,7 +817,7 @@ static int srpt_post_recv(struct srpt_device *sdev, struct srpt_rdma_ch *ch,
 			  struct srpt_recv_ioctx *ioctx)
 {
 	struct ib_sge list;
-	struct ib_recv_wr wr;
+	struct ib_recv_wr wr, *bad_wr;
 
 	BUG_ON(!sdev);
 	list.addr = ioctx->ioctx.dma;
@@ -830,9 +831,9 @@ static int srpt_post_recv(struct srpt_device *sdev, struct srpt_rdma_ch *ch,
 	wr.num_sge = 1;
 
 	if (sdev->use_srq)
-		return ib_post_srq_recv(sdev->srq, &wr, NULL);
+		return ib_post_srq_recv(sdev->srq, &wr, &bad_wr);
 	else
-		return ib_post_recv(ch->qp, &wr, NULL);
+		return ib_post_recv(ch->qp, &wr, &bad_wr);
 }
 
 /**
@@ -846,6 +847,7 @@ static int srpt_post_recv(struct srpt_device *sdev, struct srpt_rdma_ch *ch,
  */
 static int srpt_zerolength_write(struct srpt_rdma_ch *ch)
 {
+	struct ib_send_wr *bad_wr;
 	struct ib_rdma_wr wr = {
 		.wr = {
 			.next		= NULL,
@@ -858,7 +860,7 @@ static int srpt_zerolength_write(struct srpt_rdma_ch *ch)
 	pr_debug("%s-%d: queued zerolength write\n", ch->sess_name,
 		 ch->qp->qp_num);
 
-	return ib_post_send(ch->qp, &wr.wr, NULL);
+	return ib_post_send(ch->qp, &wr.wr, &bad_wr);
 }
 
 static void srpt_zerolength_write_done(struct ib_cq *cq, struct ib_wc *wc)
@@ -1752,15 +1754,13 @@ retry:
 	 */
 	qp_init->cap.max_send_wr = min(sq_size / 2, attrs->max_qp_wr);
 	qp_init->cap.max_rdma_ctxs = sq_size / 2;
-	qp_init->cap.max_send_sge = min(attrs->max_send_sge,
-					SRPT_MAX_SG_PER_WQE);
+	qp_init->cap.max_send_sge = min(attrs->max_sge, SRPT_MAX_SG_PER_WQE);
 	qp_init->port_num = ch->sport->port;
 	if (sdev->use_srq) {
 		qp_init->srq = sdev->srq;
 	} else {
 		qp_init->cap.max_recv_wr = ch->rq_size;
-		qp_init->cap.max_recv_sge = min(attrs->max_recv_sge,
-						SRPT_MAX_SG_PER_WQE);
+		qp_init->cap.max_recv_sge = qp_init->cap.max_send_sge;
 	}
 
 	if (ch->using_rdma_cm) {
@@ -1833,7 +1833,8 @@ static bool srpt_close_ch(struct srpt_rdma_ch *ch)
 	int ret;
 
 	if (!srpt_set_ch_state(ch, CH_DRAINING)) {
-		pr_debug("%s: already closed\n", ch->sess_name);
+		pr_debug("%s-%d: already closed\n", ch->sess_name,
+			 ch->qp->qp_num);
 		return false;
 	}
 
@@ -1939,8 +1940,8 @@ static void __srpt_close_all_ch(struct srpt_port *sport)
 	list_for_each_entry(nexus, &sport->nexus_list, entry) {
 		list_for_each_entry(ch, &nexus->ch_list, list) {
 			if (srpt_disconnect_ch(ch) >= 0)
-				pr_info("Closing channel %s because target %s_%d has been disabled\n",
-					ch->sess_name,
+				pr_info("Closing channel %s-%d because target %s_%d has been disabled\n",
+					ch->sess_name, ch->qp->qp_num,
 					sport->sdev->device->name, sport->port);
 			srpt_close_ch(ch);
 		}
@@ -2028,7 +2029,8 @@ static void srpt_release_channel_work(struct work_struct *w)
 	target_sess_cmd_list_set_waiting(se_sess);
 	target_wait_for_sess_cmds(se_sess);
 
-	target_remove_session(se_sess);
+	transport_deregister_session_configfs(se_sess);
+	transport_deregister_session(se_sess);
 	ch->sess = NULL;
 
 	if (ch->using_rdma_cm)
@@ -2085,7 +2087,7 @@ static int srpt_cm_req_recv(struct srpt_device *const sdev,
 		struct rdma_conn_param rdma_cm;
 		struct ib_cm_rep_param ib_cm;
 	} *rep_param = NULL;
-	struct srpt_rdma_ch *ch = NULL;
+	struct srpt_rdma_ch *ch;
 	char i_port_id[36];
 	u32 it_iu_len;
 	int i, ret;
@@ -2219,28 +2221,26 @@ static int srpt_cm_req_recv(struct srpt_device *const sdev,
 	pr_debug("registering session %s\n", ch->sess_name);
 
 	if (sport->port_guid_tpg.se_tpg_wwn)
-		ch->sess = target_setup_session(&sport->port_guid_tpg, 0, 0,
+		ch->sess = target_alloc_session(&sport->port_guid_tpg, 0, 0,
 						TARGET_PROT_NORMAL,
 						ch->sess_name, ch, NULL);
 	if (sport->port_gid_tpg.se_tpg_wwn && IS_ERR_OR_NULL(ch->sess))
-		ch->sess = target_setup_session(&sport->port_gid_tpg, 0, 0,
+		ch->sess = target_alloc_session(&sport->port_gid_tpg, 0, 0,
 					TARGET_PROT_NORMAL, i_port_id, ch,
 					NULL);
 	/* Retry without leading "0x" */
 	if (sport->port_gid_tpg.se_tpg_wwn && IS_ERR_OR_NULL(ch->sess))
-		ch->sess = target_setup_session(&sport->port_gid_tpg, 0, 0,
+		ch->sess = target_alloc_session(&sport->port_gid_tpg, 0, 0,
 						TARGET_PROT_NORMAL,
 						i_port_id + 2, ch, NULL);
 	if (IS_ERR_OR_NULL(ch->sess)) {
-		WARN_ON_ONCE(ch->sess == NULL);
 		ret = PTR_ERR(ch->sess);
-		ch->sess = NULL;
 		pr_info("Rejected login for initiator %s: ret = %d.\n",
 			ch->sess_name, ret);
 		rej->reason = cpu_to_be32(ret == -ENOMEM ?
 				SRP_LOGIN_REJ_INSUFFICIENT_RESOURCES :
 				SRP_LOGIN_REJ_CHANNEL_LIMIT_REACHED);
-		goto destroy_ib;
+		goto reject;
 	}
 
 	mutex_lock(&sport->mutex);
@@ -2279,7 +2279,7 @@ static int srpt_cm_req_recv(struct srpt_device *const sdev,
 		rej->reason = cpu_to_be32(SRP_LOGIN_REJ_INSUFFICIENT_RESOURCES);
 		pr_err("rejected SRP_LOGIN_REQ because enabling RTR failed (error code = %d)\n",
 		       ret);
-		goto reject;
+		goto destroy_ib;
 	}
 
 	pr_debug("Establish connection sess=%p name=%s ch=%p\n", ch->sess,
@@ -2358,11 +2358,8 @@ free_ring:
 	srpt_free_ioctx_ring((struct srpt_ioctx **)ch->ioctx_ring,
 			     ch->sport->sdev, ch->rq_size,
 			     ch->max_rsp_size, DMA_TO_DEVICE);
-
 free_ch:
-	if (rdma_cm_id)
-		rdma_cm_id->context = NULL;
-	else
+	if (ib_cm_id)
 		ib_cm_id->context = NULL;
 	kfree(ch);
 	ch = NULL;
@@ -2382,15 +2379,6 @@ reject:
 		ib_send_cm_rej(ib_cm_id, IB_CM_REJ_CONSUMER_DEFINED, NULL, 0,
 			       rej, sizeof(*rej));
 
-	if (ch && ch->sess) {
-		srpt_close_ch(ch);
-		/*
-		 * Tell the caller not to free cm_id since
-		 * srpt_release_channel_work() will do that.
-		 */
-		ret = 0;
-	}
-
 out:
 	kfree(rep_param);
 	kfree(rsp);
@@ -2400,7 +2388,7 @@ out:
 }
 
 static int srpt_ib_cm_req_recv(struct ib_cm_id *cm_id,
-			       const struct ib_cm_req_event_param *param,
+			       struct ib_cm_req_event_param *param,
 			       void *private_data)
 {
 	char sguid[40];
@@ -2512,8 +2500,7 @@ static void srpt_cm_rtu_recv(struct srpt_rdma_ch *ch)
  * a non-zero value in any other case will trigger a race with the
  * ib_destroy_cm_id() call in srpt_release_channel().
  */
-static int srpt_cm_handler(struct ib_cm_id *cm_id,
-			   const struct ib_cm_event *event)
+static int srpt_cm_handler(struct ib_cm_id *cm_id, struct ib_cm_event *event)
 {
 	struct srpt_rdma_ch *ch = cm_id->context;
 	int ret;
@@ -2623,7 +2610,7 @@ static int srpt_write_pending(struct se_cmd *se_cmd)
 	struct srpt_send_ioctx *ioctx =
 		container_of(se_cmd, struct srpt_send_ioctx, cmd);
 	struct srpt_rdma_ch *ch = ioctx->ch;
-	struct ib_send_wr *first_wr = NULL;
+	struct ib_send_wr *first_wr = NULL, *bad_wr;
 	struct ib_cqe *cqe = &ioctx->rdma_cqe;
 	enum srpt_command_state new_state;
 	int ret, i;
@@ -2647,7 +2634,7 @@ static int srpt_write_pending(struct se_cmd *se_cmd)
 		cqe = NULL;
 	}
 
-	ret = ib_post_send(ch->qp, first_wr, NULL);
+	ret = ib_post_send(ch->qp, first_wr, &bad_wr);
 	if (ret) {
 		pr_err("%s: ib_post_send() returned %d for %d (avail: %d)\n",
 			 __func__, ret, ioctx->n_rdma,
@@ -2685,7 +2672,7 @@ static void srpt_queue_response(struct se_cmd *cmd)
 		container_of(cmd, struct srpt_send_ioctx, cmd);
 	struct srpt_rdma_ch *ch = ioctx->ch;
 	struct srpt_device *sdev = ch->sport->sdev;
-	struct ib_send_wr send_wr, *first_wr = &send_wr;
+	struct ib_send_wr send_wr, *first_wr = &send_wr, *bad_wr;
 	struct ib_sge sge;
 	enum srpt_command_state state;
 	int resp_len, ret, i;
@@ -2758,7 +2745,7 @@ static void srpt_queue_response(struct se_cmd *cmd)
 	send_wr.opcode = IB_WR_SEND;
 	send_wr.send_flags = IB_SEND_SIGNALED;
 
-	ret = ib_post_send(ch->qp, first_wr, NULL);
+	ret = ib_post_send(ch->qp, first_wr, &bad_wr);
 	if (ret < 0) {
 		pr_err("%s: sending cmd response failed for tag %llu (%d)\n",
 			__func__, ioctx->cmd.tag, ret);
@@ -2982,8 +2969,7 @@ static void srpt_add_one(struct ib_device *device)
 
 	pr_debug("device = %p\n", device);
 
-	sdev = kzalloc(struct_size(sdev, port, device->phys_port_cnt),
-		       GFP_KERNEL);
+	sdev = kzalloc(sizeof(*sdev), GFP_KERNEL);
 	if (!sdev)
 		goto err;
 
@@ -3036,6 +3022,8 @@ static void srpt_add_one(struct ib_device *device)
 	INIT_IB_EVENT_HANDLER(&sdev->event_handler, sdev->device,
 			      srpt_event_handler);
 	ib_register_event_handler(&sdev->event_handler);
+
+	WARN_ON(sdev->device->phys_port_cnt > ARRAY_SIZE(sdev->port));
 
 	for (i = 1; i <= sdev->device->phys_port_cnt; i++) {
 		sport = &sdev->port[i - 1];
@@ -3609,9 +3597,11 @@ static struct configfs_attribute *srpt_tpg_attrs[] = {
 /**
  * srpt_make_tpg - configfs callback invoked for mkdir /sys/kernel/config/target/$driver/$port/$tpg
  * @wwn: Corresponds to $driver/$port.
+ * @group: Not used.
  * @name: $tpg.
  */
 static struct se_portal_group *srpt_make_tpg(struct se_wwn *wwn,
+					     struct config_group *group,
 					     const char *name)
 {
 	struct srpt_port *sport = wwn->priv;

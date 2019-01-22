@@ -1,7 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0
 /******************************************************************************
  *
  * Copyright(c) 2007 - 2012 Realtek Corporation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of version 2 of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+ * more details.
  *
  ******************************************************************************/
 #define _RTW_MLME_EXT_C_
@@ -342,6 +350,7 @@ static void issue_beacon(struct adapter *padapter, int timeout_ms)
 	pframe = (u8 *)(pmgntframe->buf_addr) + TXDESC_OFFSET;
 	pwlanhdr = (struct ieee80211_hdr *)pframe;
 
+
 	fctrl = &pwlanhdr->frame_control;
 	*(fctrl) = 0;
 
@@ -362,14 +371,14 @@ static void issue_beacon(struct adapter *padapter, int timeout_ms)
 		uint wps_ielen;
 		u8 sr = 0;
 
-		memcpy(pframe, cur_network->ies, cur_network->ie_length);
+		memcpy(pframe, cur_network->IEs, cur_network->IELength);
 		len_diff = update_hidden_ssid(
 			pframe+_BEACON_IE_OFFSET_
-			, cur_network->ie_length-_BEACON_IE_OFFSET_
+			, cur_network->IELength-_BEACON_IE_OFFSET_
 			, pmlmeinfo->hidden_ssid_mode
 			);
-		pframe += (cur_network->ie_length+len_diff);
-		pattrib->pktlen += (cur_network->ie_length+len_diff);
+		pframe += (cur_network->IELength+len_diff);
+		pattrib->pktlen += (cur_network->IELength+len_diff);
 		wps_ie = rtw_get_wps_ie(pmgntframe->buf_addr+TXDESC_OFFSET+sizeof(struct ieee80211_hdr_3addr)+_BEACON_IE_OFFSET_,
 			pattrib->pktlen-sizeof(struct ieee80211_hdr_3addr)-_BEACON_IE_OFFSET_, NULL, &wps_ielen);
 		if (wps_ie && wps_ielen > 0)
@@ -390,14 +399,14 @@ static void issue_beacon(struct adapter *padapter, int timeout_ms)
 
 	/*  beacon interval: 2 bytes */
 
-	memcpy(pframe, (unsigned char *)(rtw_get_beacon_interval_from_ie(cur_network->ies)), 2);
+	memcpy(pframe, (unsigned char *)(rtw_get_beacon_interval_from_ie(cur_network->IEs)), 2);
 
 	pframe += 2;
 	pattrib->pktlen += 2;
 
 	/*  capability info: 2 bytes */
 
-	memcpy(pframe, (unsigned char *)(rtw_get_capability_from_ie(cur_network->ies)), 2);
+	memcpy(pframe, (unsigned char *)(rtw_get_capability_from_ie(cur_network->IEs)), 2);
 
 	pframe += 2;
 	pattrib->pktlen += 2;
@@ -500,25 +509,25 @@ static void issue_probersp(struct adapter *padapter, unsigned char *da)
 	pattrib->pktlen = pattrib->hdrlen;
 	pframe += pattrib->hdrlen;
 
-	if (cur_network->ie_length > MAX_IE_SZ)
+	if (cur_network->IELength > MAX_IE_SZ)
 		return;
 
 #if defined(CONFIG_88EU_AP_MODE)
 	if ((pmlmeinfo->state&0x03) == WIFI_FW_AP_STATE) {
-		pwps_ie = rtw_get_wps_ie(cur_network->ies+_FIXED_IE_LENGTH_, cur_network->ie_length-_FIXED_IE_LENGTH_, NULL, &wps_ielen);
+		pwps_ie = rtw_get_wps_ie(cur_network->IEs+_FIXED_IE_LENGTH_, cur_network->IELength-_FIXED_IE_LENGTH_, NULL, &wps_ielen);
 
 		/* inerset & update wps_probe_resp_ie */
 		if ((pmlmepriv->wps_probe_resp_ie != NULL) && pwps_ie && (wps_ielen > 0)) {
 			uint wps_offset, remainder_ielen;
 			u8 *premainder_ie;
 
-			wps_offset = (uint)(pwps_ie - cur_network->ies);
+			wps_offset = (uint)(pwps_ie - cur_network->IEs);
 
 			premainder_ie = pwps_ie + wps_ielen;
 
-			remainder_ielen = cur_network->ie_length - wps_offset - wps_ielen;
+			remainder_ielen = cur_network->IELength - wps_offset - wps_ielen;
 
-			memcpy(pframe, cur_network->ies, wps_offset);
+			memcpy(pframe, cur_network->IEs, wps_offset);
 			pframe += wps_offset;
 			pattrib->pktlen += wps_offset;
 
@@ -535,9 +544,9 @@ static void issue_probersp(struct adapter *padapter, unsigned char *da)
 				pattrib->pktlen += remainder_ielen;
 			}
 		} else {
-			memcpy(pframe, cur_network->ies, cur_network->ie_length);
-			pframe += cur_network->ie_length;
-			pattrib->pktlen += cur_network->ie_length;
+			memcpy(pframe, cur_network->IEs, cur_network->IELength);
+			pframe += cur_network->IELength;
+			pattrib->pktlen += cur_network->IELength;
 		}
 	} else
 #endif
@@ -548,14 +557,14 @@ static void issue_probersp(struct adapter *padapter, unsigned char *da)
 
 		/*  beacon interval: 2 bytes */
 
-		memcpy(pframe, (unsigned char *)(rtw_get_beacon_interval_from_ie(cur_network->ies)), 2);
+		memcpy(pframe, (unsigned char *)(rtw_get_beacon_interval_from_ie(cur_network->IEs)), 2);
 
 		pframe += 2;
 		pattrib->pktlen += 2;
 
 		/*  capability info: 2 bytes */
 
-		memcpy(pframe, (unsigned char *)(rtw_get_capability_from_ie(cur_network->ies)), 2);
+		memcpy(pframe, (unsigned char *)(rtw_get_capability_from_ie(cur_network->IEs)), 2);
 
 		pframe += 2;
 		pattrib->pktlen += 2;
@@ -583,6 +592,7 @@ static void issue_probersp(struct adapter *padapter, unsigned char *da)
 			/* ERP IE */
 			pframe = rtw_set_ie(pframe, _ERPINFO_IE_, 1, &erpinfo, &pattrib->pktlen);
 		}
+
 
 		/*  EXTERNDED SUPPORTED RATE */
 		if (rate_len > 8)
@@ -622,6 +632,7 @@ static int issue_probereq(struct adapter *padapter,
 	/* update attribute */
 	pattrib = &pmgntframe->attrib;
 	update_mgntframe_attrib(padapter, pattrib);
+
 
 	memset(pmgntframe->buf_addr, 0, WLANHDR_OFFSET + TXDESC_OFFSET);
 
@@ -774,6 +785,7 @@ static void issue_auth(struct adapter *padapter, struct sta_info *psta,
 	pframe += sizeof(struct ieee80211_hdr_3addr);
 	pattrib->pktlen = sizeof(struct ieee80211_hdr_3addr);
 
+
 	if (psta) {/*  for AP mode */
 #ifdef CONFIG_88EU_AP_MODE
 
@@ -782,6 +794,7 @@ static void issue_auth(struct adapter *padapter, struct sta_info *psta,
 				myid(&(padapter->eeprompriv)));
 		ether_addr_copy(pwlanhdr->addr3,
 				myid(&(padapter->eeprompriv)));
+
 
 		/*  setting auth algo number */
 		val16 = (u16)psta->authalg;
@@ -848,6 +861,7 @@ static void issue_auth(struct adapter *padapter, struct sta_info *psta,
 		pframe = rtw_set_fixed_ie(pframe, _AUTH_SEQ_NUM_, &le_tmp16,
 					  &pattrib->pktlen);
 
+
 		/*  setting status code... */
 		le_tmp16 = cpu_to_le16(status);
 		pframe = rtw_set_fixed_ie(pframe, _STATUS_CODE_, &le_tmp16,
@@ -876,6 +890,7 @@ static void issue_auth(struct adapter *padapter, struct sta_info *psta,
 	dump_mgntframe(padapter, pmgntframe);
 }
 
+
 #ifdef CONFIG_88EU_AP_MODE
 static void issue_asocrsp(struct adapter *padapter, unsigned short status,
 			  struct sta_info *pstat, int pkt_type)
@@ -891,7 +906,7 @@ static void issue_asocrsp(struct adapter *padapter, unsigned short status,
 	struct mlme_ext_priv *pmlmeext = &padapter->mlmeextpriv;
 	struct mlme_ext_info	*pmlmeinfo = &(pmlmeext->mlmext_info);
 	struct wlan_bssid_ex *pnetwork = &(pmlmeinfo->network);
-	u8 *ie = pnetwork->ies;
+	u8 *ie = pnetwork->IEs;
 	__le16 lestatus, leval;
 
 	DBG_88E("%s\n", __func__);
@@ -903,6 +918,7 @@ static void issue_asocrsp(struct adapter *padapter, unsigned short status,
 	/* update attribute */
 	pattrib = &pmgntframe->attrib;
 	update_mgntframe_attrib(padapter, pattrib);
+
 
 	memset(pmgntframe->buf_addr, 0, WLANHDR_OFFSET + TXDESC_OFFSET);
 
@@ -916,6 +932,7 @@ static void issue_asocrsp(struct adapter *padapter, unsigned short status,
 	ether_addr_copy((void *)GetAddr2Ptr(pwlanhdr),
 			myid(&(padapter->eeprompriv)));
 	ether_addr_copy((void *)GetAddr3Ptr(pwlanhdr), pnetwork->MacAddress);
+
 
 	SetSeqNum(pwlanhdr, pmlmeext->mgnt_seq);
 	pmlmeext->mgnt_seq++;
@@ -951,7 +968,7 @@ static void issue_asocrsp(struct adapter *padapter, unsigned short status,
 		uint ie_len = 0;
 
 		/* FILL HT CAP INFO IE */
-		pbuf = rtw_get_ie(ie + _BEACON_IE_OFFSET_, _HT_CAPABILITY_IE_, &ie_len, (pnetwork->ie_length - _BEACON_IE_OFFSET_));
+		pbuf = rtw_get_ie(ie + _BEACON_IE_OFFSET_, _HT_CAPABILITY_IE_, &ie_len, (pnetwork->IELength - _BEACON_IE_OFFSET_));
 		if (pbuf && ie_len > 0) {
 			memcpy(pframe, pbuf, ie_len+2);
 			pframe += (ie_len+2);
@@ -959,7 +976,7 @@ static void issue_asocrsp(struct adapter *padapter, unsigned short status,
 		}
 
 		/* FILL HT ADD INFO IE */
-		pbuf = rtw_get_ie(ie + _BEACON_IE_OFFSET_, _HT_ADD_INFO_IE_, &ie_len, (pnetwork->ie_length - _BEACON_IE_OFFSET_));
+		pbuf = rtw_get_ie(ie + _BEACON_IE_OFFSET_, _HT_ADD_INFO_IE_, &ie_len, (pnetwork->IELength - _BEACON_IE_OFFSET_));
 		if (pbuf && ie_len > 0) {
 			memcpy(pframe, pbuf, ie_len+2);
 			pframe += (ie_len+2);
@@ -973,7 +990,7 @@ static void issue_asocrsp(struct adapter *padapter, unsigned short status,
 		unsigned char WMM_PARA_IE[] = {0x00, 0x50, 0xf2, 0x02, 0x01, 0x01};
 
 		for (pbuf = ie + _BEACON_IE_OFFSET_;; pbuf += (ie_len + 2)) {
-			pbuf = rtw_get_ie(pbuf, _VENDOR_SPECIFIC_IE_, &ie_len, (pnetwork->ie_length - _BEACON_IE_OFFSET_ - (ie_len + 2)));
+			pbuf = rtw_get_ie(pbuf, _VENDOR_SPECIFIC_IE_, &ie_len, (pnetwork->IELength - _BEACON_IE_OFFSET_ - (ie_len + 2)));
 			if (pbuf && !memcmp(pbuf+2, WMM_PARA_IE, 6)) {
 				memcpy(pframe, pbuf, ie_len+2);
 				pframe += (ie_len+2);
@@ -1048,7 +1065,7 @@ static void issue_assocreq(struct adapter *padapter)
 
 	/* caps */
 
-	memcpy(pframe, rtw_get_capability_from_ie(pmlmeinfo->network.ies), 2);
+	memcpy(pframe, rtw_get_capability_from_ie(pmlmeinfo->network.IEs), 2);
 
 	pframe += 2;
 	pattrib->pktlen += 2;
@@ -1106,6 +1123,7 @@ static void issue_assocreq(struct adapter *padapter)
 		goto exit; /* don't connect to AP if no joint supported rate */
 	}
 
+
 	if (bssrate_len > 8) {
 		pframe = rtw_set_ie(pframe, _SUPPORTEDRATES_IE_, 8, bssrate, &(pattrib->pktlen));
 		pframe = rtw_set_ie(pframe, _EXT_SUPPORTEDRATES_IE_, (bssrate_len - 8), (bssrate + 8), &(pattrib->pktlen));
@@ -1114,13 +1132,13 @@ static void issue_assocreq(struct adapter *padapter)
 	}
 
 	/* RSN */
-	p = rtw_get_ie((pmlmeinfo->network.ies + sizeof(struct ndis_802_11_fixed_ie)), _RSN_IE_2_, &ie_len, (pmlmeinfo->network.ie_length - sizeof(struct ndis_802_11_fixed_ie)));
+	p = rtw_get_ie((pmlmeinfo->network.IEs + sizeof(struct ndis_802_11_fixed_ie)), _RSN_IE_2_, &ie_len, (pmlmeinfo->network.IELength - sizeof(struct ndis_802_11_fixed_ie)));
 	if (p)
 		pframe = rtw_set_ie(pframe, _RSN_IE_2_, ie_len, (p + 2), &(pattrib->pktlen));
 
 	/* HT caps */
 	if (padapter->mlmepriv.htpriv.ht_option) {
-		p = rtw_get_ie((pmlmeinfo->network.ies + sizeof(struct ndis_802_11_fixed_ie)), _HT_CAPABILITY_IE_, &ie_len, (pmlmeinfo->network.ie_length - sizeof(struct ndis_802_11_fixed_ie)));
+		p = rtw_get_ie((pmlmeinfo->network.IEs + sizeof(struct ndis_802_11_fixed_ie)), _HT_CAPABILITY_IE_, &ie_len, (pmlmeinfo->network.IELength - sizeof(struct ndis_802_11_fixed_ie)));
 		if ((p != NULL) && (!(is_ap_in_tkip(padapter)))) {
 			memcpy(&pmlmeinfo->HT_caps, p + 2, sizeof(struct ieee80211_ht_cap));
 
@@ -1141,8 +1159,8 @@ static void issue_assocreq(struct adapter *padapter)
 	}
 
 	/* vendor specific IE, such as WPA, WMM, WPS */
-	for (i = sizeof(struct ndis_802_11_fixed_ie); i < pmlmeinfo->network.ie_length; i += (pIE->Length + 2)) {
-		pIE = (struct ndis_802_11_var_ie *)(pmlmeinfo->network.ies + i);
+	for (i = sizeof(struct ndis_802_11_fixed_ie); i < pmlmeinfo->network.IELength; i += (pIE->Length + 2)) {
+		pIE = (struct ndis_802_11_var_ie *)(pmlmeinfo->network.IEs + i);
 
 		switch (pIE->ElementID) {
 		case _VENDOR_SPECIFIC_IE_:
@@ -1250,6 +1268,7 @@ static int _issue_nulldata(struct adapter *padapter, unsigned char *da,
 exit:
 	return ret;
 }
+
 
 /* when wait_ms > 0 , this function should be called at process context */
 /* da == NULL for station mode */
@@ -1477,6 +1496,7 @@ static int _issue_deauth(struct adapter *padapter, unsigned char *da,
 				  &pattrib->pktlen);
 
 	pattrib->last_txcmdsz = pattrib->pktlen;
+
 
 	if (wait_ack) {
 		ret = dump_mgntframe_and_wait_ack(padapter, pmgntframe);
@@ -1715,7 +1735,9 @@ static void issue_action_BSSCoexistPacket(struct adapter *padapter)
 	if (pmlmeinfo->bwmode_updated)
 		return;
 
+
 	DBG_88E("%s\n", __func__);
+
 
 	category = RTW_WLAN_CATEGORY_PUBLIC;
 	action = ACT_PUBLIC_BSSCOEXIST;
@@ -1750,6 +1772,7 @@ static void issue_action_BSSCoexistPacket(struct adapter *padapter)
 	pframe = rtw_set_fixed_ie(pframe, 1, &(category), &(pattrib->pktlen));
 	pframe = rtw_set_fixed_ie(pframe, 1, &(action), &(pattrib->pktlen));
 
+
 	/*  */
 	if (pmlmepriv->num_FortyMHzIntolerant > 0) {
 		u8 iedata = 0;
@@ -1758,6 +1781,7 @@ static void issue_action_BSSCoexistPacket(struct adapter *padapter)
 
 		pframe = rtw_set_ie(pframe, EID_BSSCoexistence,  1, &iedata, &(pattrib->pktlen));
 	}
+
 
 	/*  */
 	memset(ICS, 0, sizeof(ICS));
@@ -1780,7 +1804,7 @@ static void issue_action_BSSCoexistPacket(struct adapter *padapter)
 
 			pbss_network = (struct wlan_bssid_ex *)&pnetwork->network;
 
-			p = rtw_get_ie(pbss_network->ies + _FIXED_IE_LENGTH_, _HT_CAPABILITY_IE_, &len, pbss_network->ie_length - _FIXED_IE_LENGTH_);
+			p = rtw_get_ie(pbss_network->IEs + _FIXED_IE_LENGTH_, _HT_CAPABILITY_IE_, &len, pbss_network->IELength - _FIXED_IE_LENGTH_);
 			if ((p == NULL) || (len == 0)) { /* non-HT */
 				if ((pbss_network->Configuration.DSConfig <= 0) || (pbss_network->Configuration.DSConfig > 14))
 					continue;
@@ -1815,6 +1839,7 @@ static void issue_action_BSSCoexistPacket(struct adapter *padapter)
 			}
 		}
 	}
+
 
 	pattrib->last_txcmdsz = pattrib->pktlen;
 
@@ -1918,6 +1943,7 @@ static void site_survey(struct adapter *padapter)
 		ScanType = (ch->flags & RTW_IEEE80211_CHAN_PASSIVE_SCAN) ? SCAN_PASSIVE : SCAN_ACTIVE;
 	}
 
+
 	if (survey_channel != 0) {
 		/* PAUSE 4-AC Queue when site_survey */
 		/* rtw_hal_get_hwreg(padapter, HW_VAR_TXPAUSE, (u8 *)(&val8)); */
@@ -1961,6 +1987,7 @@ static void site_survey(struct adapter *padapter)
 
 		set_survey_timer(pmlmeext, pmlmeext->chan_scan_time);
 	} else {
+
 		/*  20100721:Interrupt scan operation here. */
 		/*  For SW antenna diversity before link, it needs to switch to another antenna and scan again. */
 		/*  It compares the scan result and select better one to do connection. */
@@ -2053,8 +2080,8 @@ static u8 collect_bss_info(struct adapter *padapter,
 	bssid->Length = sizeof(struct wlan_bssid_ex) - MAX_IE_SZ + len;
 
 	/* below is to copy the information element */
-	bssid->ie_length = len;
-	memcpy(bssid->ies, (pframe + sizeof(struct ieee80211_hdr_3addr)), bssid->ie_length);
+	bssid->IELength = len;
+	memcpy(bssid->IEs, (pframe + sizeof(struct ieee80211_hdr_3addr)), bssid->IELength);
 
 	/* get the signal strength in dBM.raw data */
 	bssid->Rssi = precv_frame->attrib.phy_info.recvpower;
@@ -2063,7 +2090,7 @@ static u8 collect_bss_info(struct adapter *padapter,
 	rtw_hal_get_def_var(padapter, HAL_DEF_CURRENT_ANTENNA,  &bssid->PhyInfo.Optimum_antenna);
 
 	/*  checking SSID */
-	p = rtw_get_ie(bssid->ies + ie_offset, _SSID_IE_, &len, bssid->ie_length - ie_offset);
+	p = rtw_get_ie(bssid->IEs + ie_offset, _SSID_IE_, &len, bssid->IELength - ie_offset);
 	if (!p) {
 		DBG_88E("marc: cannot find SSID for survey event\n");
 		return _FAIL;
@@ -2084,7 +2111,7 @@ static u8 collect_bss_info(struct adapter *padapter,
 
 	/* checking rate info... */
 	i = 0;
-	p = rtw_get_ie(bssid->ies + ie_offset, _SUPPORTEDRATES_IE_, &len, bssid->ie_length - ie_offset);
+	p = rtw_get_ie(bssid->IEs + ie_offset, _SUPPORTEDRATES_IE_, &len, bssid->IELength - ie_offset);
 	if (p != NULL) {
 		if (len > NDIS_802_11_LENGTH_RATES_EX) {
 			DBG_88E("%s()-%d: IE too long (%d) for survey event\n", __func__, __LINE__, len);
@@ -2094,7 +2121,7 @@ static u8 collect_bss_info(struct adapter *padapter,
 		i = len;
 	}
 
-	p = rtw_get_ie(bssid->ies + ie_offset, _EXT_SUPPORTEDRATES_IE_, &len, bssid->ie_length - ie_offset);
+	p = rtw_get_ie(bssid->IEs + ie_offset, _EXT_SUPPORTEDRATES_IE_, &len, bssid->IELength - ie_offset);
 	if (p) {
 		if (len > (NDIS_802_11_LENGTH_RATES_EX-i)) {
 			DBG_88E("%s()-%d: IE too long (%d) for survey event\n", __func__, __LINE__, len);
@@ -2106,11 +2133,11 @@ static u8 collect_bss_info(struct adapter *padapter,
 	/* todo: */
 	bssid->NetworkTypeInUse = Ndis802_11OFDM24;
 
-	if (bssid->ie_length < 12)
+	if (bssid->IELength < 12)
 		return _FAIL;
 
 	/*  Checking for DSConfig */
-	p = rtw_get_ie(bssid->ies + ie_offset, _DSSET_IE_, &len, bssid->ie_length - ie_offset);
+	p = rtw_get_ie(bssid->IEs + ie_offset, _DSSET_IE_, &len, bssid->IELength - ie_offset);
 
 	bssid->Configuration.DSConfig = 0;
 	bssid->Configuration.Length = 0;
@@ -2119,7 +2146,7 @@ static u8 collect_bss_info(struct adapter *padapter,
 		bssid->Configuration.DSConfig = *(p + 2);
 	} else {/*  In 5G, some ap do not have DSSET IE */
 		/*  checking HT info for channel */
-		p = rtw_get_ie(bssid->ies + ie_offset, _HT_ADD_INFO_IE_, &len, bssid->ie_length - ie_offset);
+		p = rtw_get_ie(bssid->IEs + ie_offset, _HT_ADD_INFO_IE_, &len, bssid->IELength - ie_offset);
 		if (p) {
 			struct HT_info_element *HT_info = (struct HT_info_element *)(p + 2);
 
@@ -2138,7 +2165,7 @@ static u8 collect_bss_info(struct adapter *padapter,
 	}
 
 	bssid->Configuration.BeaconPeriod =
-		get_unaligned_le16(rtw_get_beacon_interval_from_ie(bssid->ies));
+		get_unaligned_le16(rtw_get_beacon_interval_from_ie(bssid->IEs));
 
 	val16 = rtw_get_capability((struct wlan_bssid_ex *)bssid);
 
@@ -2161,7 +2188,7 @@ static u8 collect_bss_info(struct adapter *padapter,
 	if ((pregistrypriv->wifi_spec == 1) && (!pmlmeinfo->bwmode_updated)) {
 		struct mlme_priv *pmlmepriv = &padapter->mlmepriv;
 
-		p = rtw_get_ie(bssid->ies + ie_offset, _HT_CAPABILITY_IE_, &len, bssid->ie_length - ie_offset);
+		p = rtw_get_ie(bssid->IEs + ie_offset, _HT_CAPABILITY_IE_, &len, bssid->IELength - ie_offset);
 		if (p && len > 0) {
 			struct ieee80211_ht_cap *pHT_caps =
 				(struct ieee80211_ht_cap *)(p + 2);
@@ -2302,6 +2329,7 @@ static void start_clnt_auth(struct adapter *padapter)
 	pmlmeinfo->link_count = 0;
 	pmlmeext->retry = 0;
 
+
 	/*  Because of AP's not receiving deauth before */
 	/*  AP may: 1)not response auth or 2)deauth us after link is complete */
 	/*  issue deauth before issuing auth to deal with the situation */
@@ -2314,6 +2342,7 @@ static void start_clnt_auth(struct adapter *padapter)
 
 	set_link_timer(pmlmeext, REAUTH_TO);
 }
+
 
 static void start_clnt_assoc(struct adapter *padapter)
 {
@@ -2379,7 +2408,7 @@ static void process_80211d(struct adapter *padapter, struct wlan_bssid_ex *bssid
 		u8 noc; /*  number of channel */
 		u8 j, k;
 
-		ie = rtw_get_ie(bssid->ies + _FIXED_IE_LENGTH_, _COUNTRY_IE_, &len, bssid->ie_length - _FIXED_IE_LENGTH_);
+		ie = rtw_get_ie(bssid->IEs + _FIXED_IE_LENGTH_, _COUNTRY_IE_, &len, bssid->IELength - _FIXED_IE_LENGTH_);
 		if (!ie)
 			return;
 		if (len < 6)
@@ -2936,6 +2965,7 @@ static unsigned int OnAssocReq(struct adapter *padapter,
 		ie_offset = _REASOCREQ_IE_OFFSET_;
 	}
 
+
 	if (pkt_len < IEEE80211_3ADDR_LEN + ie_offset) {
 		DBG_88E("handle_assoc(reassoc=%d) - too short payload (len=%lu)"
 		       "\n", reassoc, (unsigned long)pkt_len);
@@ -2952,6 +2982,7 @@ static unsigned int OnAssocReq(struct adapter *padapter,
 
 	left = pkt_len - (IEEE80211_3ADDR_LEN + ie_offset);
 	pos = pframe + (IEEE80211_3ADDR_LEN + ie_offset);
+
 
 	DBG_88E("%s\n", __func__);
 
@@ -2977,6 +3008,7 @@ static unsigned int OnAssocReq(struct adapter *padapter,
 		status = _STATS_FAILURE_;
 		goto OnAssocReqFail;
 	}
+
 
 	/*  now we should check all the fields... */
 	/*  checking SSID */
@@ -3105,6 +3137,7 @@ static unsigned int OnAssocReq(struct adapter *padapter,
 				   "use\n");
 			pstat->flags |= WLAN_STA_MAYBE_WPS;
 		}
+
 
 		/*  AP support WPA/RSN, and sta is going to do WPS, but AP is not ready */
 		/*  that the selected registrar of AP is _FLASE */
@@ -3244,6 +3277,8 @@ static unsigned int OnAssocReq(struct adapter *padapter,
 		pstat->flags |= WLAN_STA_SHORT_PREAMBLE;
 	else
 		pstat->flags &= ~WLAN_STA_SHORT_PREAMBLE;
+
+
 
 	if (status != _STATS_SUCCESSFUL_)
 		goto OnAssocReqFail;
@@ -3465,6 +3500,7 @@ static unsigned int OnDeAuth(struct adapter *padapter,
 
 			associated_clients_update(padapter, updated);
 		}
+
 
 		return _SUCCESS;
 	} else
@@ -4061,6 +4097,7 @@ int	init_mlme_ext_priv(struct adapter *padapter)
 	pmlmeext->chan_scan_time = SURVEY_TO;
 	pmlmeext->mlmeext_init = true;
 
+
 	pmlmeext->active_keep_alive_check = true;
 
 	return _SUCCESS;
@@ -4193,6 +4230,7 @@ void report_survey_event(struct adapter *padapter,
 	pmlmeext = &padapter->mlmeextpriv;
 	pcmdpriv = &padapter->cmdpriv;
 
+
 	pcmd_obj = kzalloc(sizeof(struct cmd_obj), GFP_ATOMIC);
 	if (!pcmd_obj)
 		return;
@@ -4319,7 +4357,9 @@ void report_join_res(struct adapter *padapter, int res)
 
 	DBG_88E("%s(%d)\n", __func__, res);
 
+
 	rtw_joinbss_event_prehandle(padapter, (u8 *)&pjoinbss_evt->network);
+
 
 	rtw_enqueue_cmd(pcmdpriv, pcmd_obj);
 }
@@ -4365,6 +4405,7 @@ void report_del_sta_event(struct adapter *padapter, unsigned char *MacAddr,
 	pdel_sta_evt = (struct stadel_event *)(pevtcmd + sizeof(struct C2HEvent_Header));
 	ether_addr_copy((unsigned char *)(&(pdel_sta_evt->macaddr)), MacAddr);
 	memcpy((unsigned char *)(pdel_sta_evt->rsvd), (unsigned char *)(&reason), 2);
+
 
 	psta = rtw_get_stainfo(&padapter->stapriv, MacAddr);
 	if (psta)
@@ -4424,6 +4465,7 @@ void report_add_sta_event(struct adapter *padapter, unsigned char *MacAddr,
 	rtw_enqueue_cmd(pcmdpriv, pcmd_obj);
 }
 
+
 /****************************************************************************
 
 Following are the event callback functions
@@ -4468,6 +4510,7 @@ void update_sta_info(struct adapter *padapter, struct sta_info *psta)
 	if (pmlmepriv->qospriv.qos_option)
 		psta->qos_option = true;
 
+
 	psta->state = _FW_LINKED;
 }
 
@@ -4501,6 +4544,7 @@ void mlmeext_joinbss_event_callback(struct adapter *padapter, int join_res)
 			Update_RA_Entry(padapter, psta_bmc->mac_id);
 		}
 	}
+
 
 	/* turn on dynamic functions */
 	Switch_DM_Func(padapter, DYNAMIC_ALL_FUNC_ENABLE, true);
@@ -4606,6 +4650,7 @@ void mlmeext_sta_del_event_callback(struct adapter *padapter)
 
 		/* SelectChannel(padapter, pmlmeext->cur_channel, pmlmeext->cur_ch_offset); */
 		set_channel_bwmode(padapter, pmlmeext->cur_channel, pmlmeext->cur_ch_offset, pmlmeext->cur_bwmode);
+
 
 		flush_all_cam_entry(padapter);
 
@@ -4794,6 +4839,7 @@ void survey_timer_hdl(struct timer_list *t)
 		rtw_enqueue_cmd(pcmdpriv, ph2c);
 	}
 
+
 exit_survey_timer_hdl:
 	return;
 }
@@ -4885,6 +4931,7 @@ u8 createbss_hdl(struct adapter *padapter, u8 *pbuf)
 	struct wlan_bssid_ex *pparm = (struct wlan_bssid_ex *)pbuf;
 	/* u32	initialgain; */
 
+
 	if (pparm->InfrastructureMode == Ndis802_11APMode) {
 #ifdef CONFIG_88EU_AP_MODE
 
@@ -4923,13 +4970,13 @@ u8 createbss_hdl(struct adapter *padapter, u8 *pbuf)
 		/* clear CAM */
 		flush_all_cam_entry(padapter);
 
-		memcpy(pnetwork, pbuf, offsetof(struct wlan_bssid_ex, ie_length));
-		pnetwork->ie_length = ((struct wlan_bssid_ex *)pbuf)->ie_length;
+		memcpy(pnetwork, pbuf, offsetof(struct wlan_bssid_ex, IELength));
+		pnetwork->IELength = ((struct wlan_bssid_ex *)pbuf)->IELength;
 
-		if (pnetwork->ie_length > MAX_IE_SZ)/* Check pbuf->ie_length */
+		if (pnetwork->IELength > MAX_IE_SZ)/* Check pbuf->IELength */
 			return H2C_PARAMETERS_ERROR;
 
-		memcpy(pnetwork->ies, ((struct wlan_bssid_ex *)pbuf)->ies, pnetwork->ie_length);
+		memcpy(pnetwork->IEs, ((struct wlan_bssid_ex *)pbuf)->IEs, pnetwork->IELength);
 
 		start_create_ibss(padapter);
 	}
@@ -4963,6 +5010,7 @@ u8 join_cmd_hdl(struct adapter *padapter, u8 *pbuf)
 		/* set MSR to nolink -> infra. mode */
 		Set_MSR(padapter, _HW_STATE_STATION_);
 
+
 		rtw_hal_set_hwreg(padapter, HW_VAR_MLME_DISCONNECT, NULL);
 	}
 
@@ -4981,18 +5029,18 @@ u8 join_cmd_hdl(struct adapter *padapter, u8 *pbuf)
 	pmlmeinfo->candidate_tid_bitmap = 0;
 	pmlmeinfo->bwmode_updated = false;
 
-	memcpy(pnetwork, pbuf, offsetof(struct wlan_bssid_ex, ie_length));
-	pnetwork->ie_length = ((struct wlan_bssid_ex *)pbuf)->ie_length;
+	memcpy(pnetwork, pbuf, offsetof(struct wlan_bssid_ex, IELength));
+	pnetwork->IELength = ((struct wlan_bssid_ex *)pbuf)->IELength;
 
-	if (pnetwork->ie_length > MAX_IE_SZ)/* Check pbuf->ie_length */
+	if (pnetwork->IELength > MAX_IE_SZ)/* Check pbuf->IELength */
 		return H2C_PARAMETERS_ERROR;
 
-	memcpy(pnetwork->ies, ((struct wlan_bssid_ex *)pbuf)->ies, pnetwork->ie_length);
+	memcpy(pnetwork->IEs, ((struct wlan_bssid_ex *)pbuf)->IEs, pnetwork->IELength);
 
 	/* Check AP vendor to move rtw_joinbss_cmd() */
 
-	for (i = sizeof(struct ndis_802_11_fixed_ie); i < pnetwork->ie_length;) {
-		pIE = (struct ndis_802_11_var_ie *)(pnetwork->ies + i);
+	for (i = sizeof(struct ndis_802_11_fixed_ie); i < pnetwork->IELength;) {
+		pIE = (struct ndis_802_11_var_ie *)(pnetwork->IEs + i);
 
 		switch (pIE->ElementID) {
 		case _VENDOR_SPECIFIC_IE_:/* Get WMM IE. */
@@ -5072,6 +5120,7 @@ u8 disconnect_hdl(struct adapter *padapter, unsigned char *pbuf)
 		val8 = 0;
 		rtw_hal_set_hwreg(padapter, HW_VAR_BCN_FUNC, (u8 *)(&val8));
 	}
+
 
 	/* set MSR to no link state -> infra. mode */
 	Set_MSR(padapter, _HW_STATE_STATION_);
@@ -5345,6 +5394,7 @@ u8 set_tx_beacon_cmd(struct adapter *padapter)
 	u8 res = _SUCCESS;
 	int len_diff = 0;
 
+
 	ph2c = kzalloc(sizeof(struct cmd_obj), GFP_ATOMIC);
 	if (!ph2c) {
 		res = _FAIL;
@@ -5359,16 +5409,19 @@ u8 set_tx_beacon_cmd(struct adapter *padapter)
 		goto exit;
 	}
 
-	len_diff = update_hidden_ssid(ptxBeacon_parm->ies+_BEACON_IE_OFFSET_,
-				      ptxBeacon_parm->ie_length-_BEACON_IE_OFFSET_,
+	len_diff = update_hidden_ssid(ptxBeacon_parm->IEs+_BEACON_IE_OFFSET_,
+				      ptxBeacon_parm->IELength-_BEACON_IE_OFFSET_,
 				      pmlmeinfo->hidden_ssid_mode);
-	ptxBeacon_parm->ie_length += len_diff;
+	ptxBeacon_parm->IELength += len_diff;
 
 	init_h2fwcmd_w_parm_no_rsp(ph2c, ptxBeacon_parm, _TX_Beacon_CMD_);
 
 	res = rtw_enqueue_cmd(pcmdpriv, ph2c);
 
+
 exit:
+
+
 	return res;
 }
 
@@ -5403,6 +5456,7 @@ u8 mlme_evt_hdl(struct adapter *padapter, unsigned char *pbuf)
 	if (peventbuf) {
 		event_callback = wlanevents[evt_code].event_callback;
 		event_callback(padapter, (u8 *)peventbuf);
+
 	}
 
 _abort_event_:

@@ -470,22 +470,6 @@ struct mlx5_ifc_ipsec_counters_bits {
 	u8         dropped_cmd[0x40];
 };
 
-enum {
-	MLX5_FPGA_QP_ERROR_EVENT_SYNDROME_RETRY_COUNTER_EXPIRED  = 0x1,
-	MLX5_FPGA_QP_ERROR_EVENT_SYNDROME_RNR_EXPIRED            = 0x2,
-};
-
-struct mlx5_ifc_fpga_qp_error_event_bits {
-	u8         reserved_at_0[0x40];
-
-	u8         reserved_at_40[0x18];
-	u8         syndrome[0x8];
-
-	u8         reserved_at_60[0x60];
-
-	u8         reserved_at_c0[0x8];
-	u8         fpga_qpn[0x18];
-};
 enum mlx5_ifc_fpga_ipsec_response_syndrome {
 	MLX5_FPGA_IPSEC_RESPONSE_SUCCESS = 0,
 	MLX5_FPGA_IPSEC_RESPONSE_ILLEGAL_REQUEST = 1,
@@ -576,7 +560,6 @@ struct mlx5_ifc_fpga_ipsec_sa {
 enum fpga_tls_cmds {
 	CMD_SETUP_STREAM		= 0x1001,
 	CMD_TEARDOWN_STREAM		= 0x1002,
-	CMD_RESYNC_RX			= 0x1003,
 };
 
 #define MLX5_TLS_1_2 (0)

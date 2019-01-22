@@ -561,7 +561,6 @@ static __be32 *xdr_decode_nfstime3(__be32 *p, struct timespec *timep)
  */
 static void encode_sattr3(struct xdr_stream *xdr, const struct iattr *attr)
 {
-	struct timespec ts;
 	u32 nbytes;
 	__be32 *p;
 
@@ -611,10 +610,8 @@ static void encode_sattr3(struct xdr_stream *xdr, const struct iattr *attr)
 		*p++ = xdr_zero;
 
 	if (attr->ia_valid & ATTR_ATIME_SET) {
-		struct timespec ts;
 		*p++ = xdr_two;
-		ts = timespec64_to_timespec(attr->ia_atime);
-		p = xdr_encode_nfstime3(p, &ts);
+		p = xdr_encode_nfstime3(p, &attr->ia_atime);
 	} else if (attr->ia_valid & ATTR_ATIME) {
 		*p++ = xdr_one;
 	} else
@@ -622,8 +619,7 @@ static void encode_sattr3(struct xdr_stream *xdr, const struct iattr *attr)
 
 	if (attr->ia_valid & ATTR_MTIME_SET) {
 		*p++ = xdr_two;
-		ts = timespec64_to_timespec(attr->ia_mtime);
-		xdr_encode_nfstime3(p, &ts);
+		xdr_encode_nfstime3(p, &attr->ia_mtime);
 	} else if (attr->ia_valid & ATTR_MTIME) {
 		*p = xdr_one;
 	} else

@@ -907,9 +907,8 @@ struct ishtp_device *ish_dev_init(struct pci_dev *pdev)
 	struct ishtp_device *dev;
 	int	i;
 
-	dev = devm_kzalloc(&pdev->dev,
-			   sizeof(struct ishtp_device) + sizeof(struct ish_hw),
-			   GFP_KERNEL);
+	dev = kzalloc(sizeof(struct ishtp_device) + sizeof(struct ish_hw),
+		GFP_KERNEL);
 	if (!dev)
 		return NULL;
 
@@ -926,9 +925,7 @@ struct ishtp_device *ish_dev_init(struct pci_dev *pdev)
 	for (i = 0; i < IPC_TX_FIFO_SIZE; ++i) {
 		struct wr_msg_ctl_info	*tx_buf;
 
-		tx_buf = devm_kzalloc(&pdev->dev,
-				      sizeof(struct wr_msg_ctl_info),
-				      GFP_KERNEL);
+		tx_buf = kzalloc(sizeof(struct wr_msg_ctl_info), GFP_KERNEL);
 		if (!tx_buf) {
 			/*
 			 * IPC buffers may be limited or not available

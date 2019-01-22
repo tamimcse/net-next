@@ -153,9 +153,6 @@ int phy_pm_runtime_get(struct phy *phy)
 {
 	int ret;
 
-	if (!phy)
-		return 0;
-
 	if (!pm_runtime_enabled(&phy->dev))
 		return -ENOTSUPP;
 
@@ -171,9 +168,6 @@ int phy_pm_runtime_get_sync(struct phy *phy)
 {
 	int ret;
 
-	if (!phy)
-		return 0;
-
 	if (!pm_runtime_enabled(&phy->dev))
 		return -ENOTSUPP;
 
@@ -187,9 +181,6 @@ EXPORT_SYMBOL_GPL(phy_pm_runtime_get_sync);
 
 int phy_pm_runtime_put(struct phy *phy)
 {
-	if (!phy)
-		return 0;
-
 	if (!pm_runtime_enabled(&phy->dev))
 		return -ENOTSUPP;
 
@@ -199,9 +190,6 @@ EXPORT_SYMBOL_GPL(phy_pm_runtime_put);
 
 int phy_pm_runtime_put_sync(struct phy *phy)
 {
-	if (!phy)
-		return 0;
-
 	if (!pm_runtime_enabled(&phy->dev))
 		return -ENOTSUPP;
 
@@ -211,9 +199,6 @@ EXPORT_SYMBOL_GPL(phy_pm_runtime_put_sync);
 
 void phy_pm_runtime_allow(struct phy *phy)
 {
-	if (!phy)
-		return;
-
 	if (!pm_runtime_enabled(&phy->dev))
 		return;
 
@@ -223,9 +208,6 @@ EXPORT_SYMBOL_GPL(phy_pm_runtime_allow);
 
 void phy_pm_runtime_forbid(struct phy *phy)
 {
-	if (!phy)
-		return;
-
 	if (!pm_runtime_enabled(&phy->dev))
 		return;
 

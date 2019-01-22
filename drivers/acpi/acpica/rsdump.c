@@ -539,7 +539,7 @@ static void acpi_rs_out_title(const char *title)
 
 static void acpi_rs_dump_byte_list(u16 length, u8 * data)
 {
-	u16 i;
+	u8 i;
 
 	for (i = 0; i < length; i++) {
 		acpi_os_printf("%25s%2.2X : %2.2X\n", "Byte", i, data[i]);

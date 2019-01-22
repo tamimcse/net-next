@@ -71,6 +71,10 @@ static struct inode *__lookup_free_space_inode(struct btrfs_root *root,
 	inode = btrfs_iget(fs_info->sb, &location, root, NULL);
 	if (IS_ERR(inode))
 		return inode;
+	if (is_bad_inode(inode)) {
+		iput(inode);
+		return ERR_PTR(-ENOENT);
+	}
 
 	mapping_set_gfp_mask(inode->i_mapping,
 			mapping_gfp_constraint(inode->i_mapping,
@@ -249,8 +253,10 @@ int btrfs_truncate_free_space_cache(struct btrfs_trans_handle *trans,
 	truncate_pagecache(inode, 0);
 
 	/*
-	 * We skip the throttling logic for free space cache inodes, so we don't
-	 * need to check for -EAGAIN.
+	 * We don't need an orphan item because truncating the free space cache
+	 * will never be split across transactions.
+	 * We don't need to check for -EAGAIN because we're a free space
+	 * cache inode
 	 */
 	ret = btrfs_truncate_inode_items(trans, root, inode,
 					 0, BTRFS_EXTENT_DATA_KEY);
@@ -296,9 +302,9 @@ static int io_ctl_init(struct btrfs_io_ctl *io_ctl, struct inode *inode,
 	if (btrfs_ino(BTRFS_I(inode)) != BTRFS_FREE_INO_OBJECTID)
 		check_crcs = 1;
 
-	/* Make sure we can fit our crcs and generation into the first page */
+	/* Make sure we can fit our crcs into the first page */
 	if (write && check_crcs &&
-	    (num_pages * sizeof(u32) + sizeof(u64)) > PAGE_SIZE)
+	    (num_pages * sizeof(u32)) >= PAGE_SIZE)
 		return -ENOSPC;
 
 	memset(io_ctl, 0, sizeof(struct btrfs_io_ctl));
@@ -543,7 +549,7 @@ static int io_ctl_add_bitmap(struct btrfs_io_ctl *io_ctl, void *bitmap)
 		io_ctl_map_page(io_ctl, 0);
 	}
 
-	copy_page(io_ctl->cur, bitmap);
+	memcpy(io_ctl->cur, bitmap, PAGE_SIZE);
 	io_ctl_set_crc(io_ctl, io_ctl->index - 1);
 	if (io_ctl->index < io_ctl->num_pages)
 		io_ctl_map_page(io_ctl, 0);
@@ -603,7 +609,7 @@ static int io_ctl_read_bitmap(struct btrfs_io_ctl *io_ctl,
 	if (ret)
 		return ret;
 
-	copy_page(entry->bitmap, io_ctl->cur);
+	memcpy(entry->bitmap, io_ctl->cur, PAGE_SIZE);
 	io_ctl_unmap_page(io_ctl);
 
 	return 0;
@@ -651,7 +657,7 @@ static int __load_free_space_cache(struct btrfs_root *root, struct inode *inode,
 				   struct btrfs_free_space_ctl *ctl,
 				   struct btrfs_path *path, u64 offset)
 {
-	struct btrfs_fs_info *fs_info = root->fs_info;
+	struct btrfs_fs_info *fs_info = btrfs_sb(inode->i_sb);
 	struct btrfs_free_space_header *header;
 	struct extent_buffer *leaf;
 	struct btrfs_io_ctl io_ctl;
@@ -1119,9 +1125,12 @@ static int __btrfs_wait_cache_io(struct btrfs_root *root,
 {
 	int ret;
 	struct inode *inode = io_ctl->inode;
+	struct btrfs_fs_info *fs_info;
 
 	if (!inode)
 		return 0;
+
+	fs_info = btrfs_sb(inode->i_sb);
 
 	/* Flush the dirty pages in the cache file. */
 	ret = flush_dirty_cache(inode);
@@ -1138,7 +1147,7 @@ out:
 		BTRFS_I(inode)->generation = 0;
 		if (block_group) {
 #ifdef DEBUG
-			btrfs_err(root->fs_info,
+			btrfs_err(fs_info,
 				  "failed to write free space cache for block group %llu",
 				  block_group->key.objectid);
 #endif

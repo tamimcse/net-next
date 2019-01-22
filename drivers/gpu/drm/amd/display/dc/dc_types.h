@@ -25,7 +25,7 @@
 #ifndef DC_TYPES_H_
 #define DC_TYPES_H_
 
-#include "os_types.h"
+#include "fixed32_32.h"
 #include "fixed31_32.h"
 #include "irq_types.h"
 #include "dc_dp_types.h"
@@ -77,6 +77,8 @@ struct dc_context {
 	struct dc *dc;
 
 	void *driver_context; /* e.g. amdgpu_device */
+
+	struct dal_logger *logger;
 	void *cgs_device;
 
 	enum dce_environment dce_environment;
@@ -90,12 +92,13 @@ struct dc_context {
 	bool created_bios;
 	struct gpio_service *gpio_service;
 	struct i2caux *i2caux;
-	uint32_t dc_sink_id_count;
+#if defined(CONFIG_DRM_AMD_DC_FBC)
 	uint64_t fbc_gpu_addr;
+#endif
 };
 
 
-#define DC_MAX_EDID_BUFFER_SIZE 512
+#define MAX_EDID_BUFFER_SIZE 512
 #define EDID_BLOCK_SIZE 128
 #define MAX_SURFACE_NUM 4
 #define NUM_PIXEL_FORMATS 10
@@ -134,13 +137,13 @@ enum plane_stereo_format {
  */
 
 enum dc_edid_connector_type {
-	DC_EDID_CONNECTOR_UNKNOWN = 0,
-	DC_EDID_CONNECTOR_ANALOG = 1,
-	DC_EDID_CONNECTOR_DIGITAL = 10,
-	DC_EDID_CONNECTOR_DVI = 11,
-	DC_EDID_CONNECTOR_HDMIA = 12,
-	DC_EDID_CONNECTOR_MDDI = 14,
-	DC_EDID_CONNECTOR_DISPLAYPORT = 15
+	EDID_CONNECTOR_UNKNOWN = 0,
+	EDID_CONNECTOR_ANALOG = 1,
+	EDID_CONNECTOR_DIGITAL = 10,
+	EDID_CONNECTOR_DVI = 11,
+	EDID_CONNECTOR_HDMIA = 12,
+	EDID_CONNECTOR_MDDI = 14,
+	EDID_CONNECTOR_DISPLAYPORT = 15
 };
 
 enum dc_edid_status {
@@ -166,7 +169,7 @@ struct dc_cea_audio_mode {
 
 struct dc_edid {
 	uint32_t length;
-	uint8_t raw_edid[DC_MAX_EDID_BUFFER_SIZE];
+	uint8_t raw_edid[MAX_EDID_BUFFER_SIZE];
 };
 
 /* When speaker location data block is not available, DEFAULT_SPEAKER_LOCATION
@@ -192,7 +195,6 @@ union display_content_support {
 
 struct dc_panel_patch {
 	unsigned int dppowerup_delay;
-	unsigned int extra_t12_ms;
 };
 
 struct dc_edid_caps {
@@ -368,6 +370,12 @@ struct dc_csc_adjustments {
 	struct fixed31_32 hue;
 };
 
+enum {
+	MAX_LANES = 2,
+	MAX_COFUNC_PATH = 6,
+	LAYER_INDEX_PRIMARY = -1,
+};
+
 enum dpcd_downstream_port_max_bpc {
 	DOWN_STREAM_MAX_8BPC = 0,
 	DOWN_STREAM_MAX_10BPC,
@@ -520,15 +528,6 @@ struct vrr_params {
 	uint32_t inserted_frame_duration_in_us;
 	uint32_t frames_to_insert;
 	uint32_t frame_counter;
-};
-
-struct dc_info_packet {
-	bool valid;
-	uint8_t hb0;
-	uint8_t hb1;
-	uint8_t hb2;
-	uint8_t hb3;
-	uint8_t sb[32];
 };
 
 #define DC_PLANE_UPDATE_TIMES_MAX 10

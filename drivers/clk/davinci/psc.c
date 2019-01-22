@@ -15,7 +15,6 @@
 
 #include <linux/clk-provider.h>
 #include <linux/clk.h>
-#include <linux/clk/davinci.h>
 #include <linux/clkdev.h>
 #include <linux/err.h>
 #include <linux/of_address.h>
@@ -64,7 +63,7 @@ struct davinci_psc_data {
 
 /**
  * struct davinci_lpsc_clk - LPSC clock structure
- * @dev: the device that provides this LPSC or NULL
+ * @dev: the device that provides this LPSC
  * @hw: clk_hw for the LPSC
  * @pm_domain: power domain for the LPSC
  * @genpd_clk: clock reference owned by @pm_domain
@@ -222,7 +221,6 @@ static void davinci_psc_genpd_detach_dev(struct generic_pm_domain *pm_domain,
 
 /**
  * davinci_lpsc_clk_register - register LPSC clock
- * @dev: the clocks's device or NULL
  * @name: name of this clock
  * @parent_name: name of clock's parent
  * @regmap: PSC MMIO region
@@ -240,7 +238,7 @@ davinci_lpsc_clk_register(struct device *dev, const char *name,
 	int ret;
 	bool is_on;
 
-	lpsc = kzalloc(sizeof(*lpsc), GFP_KERNEL);
+	lpsc = devm_kzalloc(dev, sizeof(*lpsc), GFP_KERNEL);
 	if (!lpsc)
 		return ERR_PTR(-ENOMEM);
 
@@ -263,15 +261,9 @@ davinci_lpsc_clk_register(struct device *dev, const char *name,
 	lpsc->pd = pd;
 	lpsc->flags = flags;
 
-	ret = clk_hw_register(dev, &lpsc->hw);
-	if (ret < 0) {
-		kfree(lpsc);
+	ret = devm_clk_hw_register(dev, &lpsc->hw);
+	if (ret < 0)
 		return ERR_PTR(ret);
-	}
-
-	/* for now, genpd is only registered when using device-tree */
-	if (!dev || !dev->of_node)
-		return lpsc;
 
 	/* genpd attach needs a way to look up this clock */
 	ret = clk_hw_register_clkdev(&lpsc->hw, name, best_dev_name(dev));
@@ -386,15 +378,13 @@ __davinci_psc_register_clocks(struct device *dev,
 	struct regmap *regmap;
 	int i, ret;
 
-	psc = kzalloc(sizeof(*psc), GFP_KERNEL);
+	psc = devm_kzalloc(dev, sizeof(*psc), GFP_KERNEL);
 	if (!psc)
 		return ERR_PTR(-ENOMEM);
 
-	clks = kmalloc_array(num_clks, sizeof(*clks), GFP_KERNEL);
-	if (!clks) {
-		ret = -ENOMEM;
-		goto err_free_psc;
-	}
+	clks = devm_kmalloc_array(dev, num_clks, sizeof(*clks), GFP_KERNEL);
+	if (!clks)
+		return ERR_PTR(-ENOMEM);
 
 	psc->clk_data.clks = clks;
 	psc->clk_data.clk_num = num_clks;
@@ -406,20 +396,16 @@ __davinci_psc_register_clocks(struct device *dev,
 	for (i = 0; i < num_clks; i++)
 		clks[i] = ERR_PTR(-ENOENT);
 
-	pm_domains = kcalloc(num_clks, sizeof(*pm_domains), GFP_KERNEL);
-	if (!pm_domains) {
-		ret = -ENOMEM;
-		goto err_free_clks;
-	}
+	pm_domains = devm_kcalloc(dev, num_clks, sizeof(*pm_domains), GFP_KERNEL);
+	if (!pm_domains)
+		return ERR_PTR(-ENOMEM);
 
 	psc->pm_data.domains = pm_domains;
 	psc->pm_data.num_domains = num_clks;
 
-	regmap = regmap_init_mmio(dev, base, &davinci_psc_regmap_config);
-	if (IS_ERR(regmap)) {
-		ret = PTR_ERR(regmap);
-		goto err_free_pm_domains;
-	}
+	regmap = devm_regmap_init_mmio(dev, base, &davinci_psc_regmap_config);
+	if (IS_ERR(regmap))
+		return ERR_CAST(regmap);
 
 	for (; info->name; info++) {
 		struct davinci_lpsc_clk *lpsc;
@@ -437,13 +423,6 @@ __davinci_psc_register_clocks(struct device *dev,
 		pm_domains[info->md] = &lpsc->pm_domain;
 	}
 
-	/*
-	 * for now, a reset controller is only registered when there is a device
-	 * to associate it with.
-	 */
-	if (!dev)
-		return psc;
-
 	psc->rcdev.ops = &davinci_psc_reset_ops;
 	psc->rcdev.owner = THIS_MODULE;
 	psc->rcdev.dev = dev;
@@ -457,15 +436,6 @@ __davinci_psc_register_clocks(struct device *dev,
 		dev_warn(dev, "Failed to register reset controller (%d)\n", ret);
 
 	return psc;
-
-err_free_pm_domains:
-	kfree(pm_domains);
-err_free_clks:
-	kfree(clks);
-err_free_psc:
-	kfree(psc);
-
-	return ERR_PTR(ret);
 }
 
 int davinci_psc_register_clocks(struct device *dev,
@@ -513,34 +483,20 @@ int of_davinci_psc_clk_init(struct device *dev,
 }
 
 static const struct of_device_id davinci_psc_of_match[] = {
-#ifdef CONFIG_ARCH_DAVINCI_DA850
 	{ .compatible = "ti,da850-psc0", .data = &of_da850_psc0_init_data },
 	{ .compatible = "ti,da850-psc1", .data = &of_da850_psc1_init_data },
-#endif
 	{ }
 };
 
 static const struct platform_device_id davinci_psc_id_table[] = {
-#ifdef CONFIG_ARCH_DAVINCI_DA830
 	{ .name = "da830-psc0", .driver_data = (kernel_ulong_t)&da830_psc0_init_data },
 	{ .name = "da830-psc1", .driver_data = (kernel_ulong_t)&da830_psc1_init_data },
-#endif
-#ifdef CONFIG_ARCH_DAVINCI_DA850
 	{ .name = "da850-psc0", .driver_data = (kernel_ulong_t)&da850_psc0_init_data },
 	{ .name = "da850-psc1", .driver_data = (kernel_ulong_t)&da850_psc1_init_data },
-#endif
-#ifdef CONFIG_ARCH_DAVINCI_DM355
 	{ .name = "dm355-psc",  .driver_data = (kernel_ulong_t)&dm355_psc_init_data  },
-#endif
-#ifdef CONFIG_ARCH_DAVINCI_DM365
 	{ .name = "dm365-psc",  .driver_data = (kernel_ulong_t)&dm365_psc_init_data  },
-#endif
-#ifdef CONFIG_ARCH_DAVINCI_DM644x
 	{ .name = "dm644x-psc", .driver_data = (kernel_ulong_t)&dm644x_psc_init_data },
-#endif
-#ifdef CONFIG_ARCH_DAVINCI_DM646x
 	{ .name = "dm646x-psc", .driver_data = (kernel_ulong_t)&dm646x_psc_init_data },
-#endif
 	{ }
 };
 

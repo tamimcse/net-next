@@ -1,5 +1,5 @@
 /*
- * Copyright(c) 2015 - 2018 Intel Corporation.
+ * Copyright(c) 2015, 2016 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -923,10 +923,9 @@ ssize_t sdma_set_cpu_to_sde_map(struct sdma_engine *sde, const char *buf,
 	cpumask_var_t mask, new_mask;
 	unsigned long cpu;
 	int ret, vl, sz;
-	struct sdma_rht_node *rht_node;
 
 	vl = sdma_engine_get_vl(sde);
-	if (unlikely(vl < 0 || vl >= ARRAY_SIZE(rht_node->map)))
+	if (unlikely(vl < 0))
 		return -EINVAL;
 
 	ret = zalloc_cpumask_var(&mask, GFP_KERNEL);
@@ -954,10 +953,17 @@ ssize_t sdma_set_cpu_to_sde_map(struct sdma_engine *sde, const char *buf,
 	mutex_lock(&process_to_sde_mutex);
 
 	for_each_cpu(cpu, mask) {
+		struct sdma_rht_node *rht_node;
+
 		/* Check if we have this already mapped */
 		if (cpumask_test_cpu(cpu, &sde->cpu_mask)) {
 			cpumask_set_cpu(cpu, new_mask);
 			continue;
+		}
+
+		if (vl >= ARRAY_SIZE(rht_node->map)) {
+			ret = -EINVAL;
+			goto out;
 		}
 
 		rht_node = rhashtable_lookup_fast(dd->sdma_rht, &cpu,
@@ -1351,7 +1357,7 @@ int sdma_init(struct hfi1_devdata *dd, u8 port)
 	struct hfi1_pportdata *ppd = dd->pport + port;
 	u32 per_sdma_credits;
 	uint idle_cnt = sdma_idle_cnt;
-	size_t num_engines = chip_sdma_engines(dd);
+	size_t num_engines = dd->chip_sdma_engines;
 	int ret = -ENOMEM;
 
 	if (!HFI1_CAP_IS_KSET(SDMA)) {
@@ -1360,18 +1366,18 @@ int sdma_init(struct hfi1_devdata *dd, u8 port)
 	}
 	if (mod_num_sdma &&
 	    /* can't exceed chip support */
-	    mod_num_sdma <= chip_sdma_engines(dd) &&
+	    mod_num_sdma <= dd->chip_sdma_engines &&
 	    /* count must be >= vls */
 	    mod_num_sdma >= num_vls)
 		num_engines = mod_num_sdma;
 
 	dd_dev_info(dd, "SDMA mod_num_sdma: %u\n", mod_num_sdma);
-	dd_dev_info(dd, "SDMA chip_sdma_engines: %u\n", chip_sdma_engines(dd));
+	dd_dev_info(dd, "SDMA chip_sdma_engines: %u\n", dd->chip_sdma_engines);
 	dd_dev_info(dd, "SDMA chip_sdma_mem_size: %u\n",
-		    chip_sdma_mem_size(dd));
+		    dd->chip_sdma_mem_size);
 
 	per_sdma_credits =
-		chip_sdma_mem_size(dd) / (num_engines * SDMA_BLOCK_SIZE);
+		dd->chip_sdma_mem_size / (num_engines * SDMA_BLOCK_SIZE);
 
 	/* set up freeze waitqueue */
 	init_waitqueue_head(&dd->sdma_unfreeze_wq);
@@ -1461,8 +1467,7 @@ int sdma_init(struct hfi1_devdata *dd, u8 port)
 		if (!sde->descq)
 			goto bail;
 		sde->tx_ring =
-			kvzalloc_node(array_size(descq_cnt,
-						 sizeof(struct sdma_txreq *)),
+			kvzalloc_node(sizeof(struct sdma_txreq *) * descq_cnt,
 				      GFP_KERNEL, dd->node);
 		if (!sde->tx_ring)
 			goto bail;

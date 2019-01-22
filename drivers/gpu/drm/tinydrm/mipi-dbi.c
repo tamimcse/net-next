@@ -219,8 +219,14 @@ static int mipi_dbi_fb_dirty(struct drm_framebuffer *fb,
 	bool full;
 	void *tr;
 
+	mutex_lock(&tdev->dirty_lock);
+
 	if (!mipi->enabled)
-		return 0;
+		goto out_unlock;
+
+	/* fbdev can flush even when we're not interested */
+	if (tdev->pipe.plane.fb != fb)
+		goto out_unlock;
 
 	full = tinydrm_merge_clips(&clip, clips, num_clips, flags,
 				   fb->width, fb->height);
@@ -233,7 +239,7 @@ static int mipi_dbi_fb_dirty(struct drm_framebuffer *fb,
 		tr = mipi->tx_buf;
 		ret = mipi_dbi_buf_copy(mipi->tx_buf, fb, &clip, swap);
 		if (ret)
-			return ret;
+			goto out_unlock;
 	} else {
 		tr = cma_obj->vaddr;
 	}
@@ -248,35 +254,37 @@ static int mipi_dbi_fb_dirty(struct drm_framebuffer *fb,
 	ret = mipi_dbi_command_buf(mipi, MIPI_DCS_WRITE_MEMORY_START, tr,
 				(clip.x2 - clip.x1) * (clip.y2 - clip.y1) * 2);
 
+out_unlock:
+	mutex_unlock(&tdev->dirty_lock);
+
+	if (ret)
+		dev_err_once(fb->dev->dev, "Failed to update display %d\n",
+			     ret);
+
 	return ret;
 }
 
 static const struct drm_framebuffer_funcs mipi_dbi_fb_funcs = {
 	.destroy	= drm_gem_fb_destroy,
 	.create_handle	= drm_gem_fb_create_handle,
-	.dirty		= tinydrm_fb_dirty,
+	.dirty		= mipi_dbi_fb_dirty,
 };
 
 /**
  * mipi_dbi_enable_flush - MIPI DBI enable helper
  * @mipi: MIPI DBI structure
- * @crtc_state: CRTC state
- * @plane_state: Plane state
  *
  * This function sets &mipi_dbi->enabled, flushes the whole framebuffer and
  * enables the backlight. Drivers can use this in their
  * &drm_simple_display_pipe_funcs->enable callback.
  */
-void mipi_dbi_enable_flush(struct mipi_dbi *mipi,
-			   struct drm_crtc_state *crtc_state,
-			   struct drm_plane_state *plane_state)
+void mipi_dbi_enable_flush(struct mipi_dbi *mipi)
 {
-	struct tinydrm_device *tdev = &mipi->tinydrm;
-	struct drm_framebuffer *fb = plane_state->fb;
+	struct drm_framebuffer *fb = mipi->tinydrm.pipe.plane.fb;
 
 	mipi->enabled = true;
 	if (fb)
-		tdev->fb_dirty(fb, NULL, 0, 0, NULL, 0);
+		fb->funcs->dirty(fb, NULL, 0, 0, NULL, 0);
 
 	backlight_enable(mipi->backlight);
 }
@@ -372,8 +380,6 @@ int mipi_dbi_init(struct device *dev, struct mipi_dbi *mipi,
 	ret = devm_tinydrm_init(dev, tdev, &mipi_dbi_fb_funcs, driver);
 	if (ret)
 		return ret;
-
-	tdev->fb_dirty = mipi_dbi_fb_dirty;
 
 	/* TODO: Maybe add DRM_MODE_CONNECTOR_SPI */
 	ret = tinydrm_display_pipe_init(tdev, pipe_funcs,

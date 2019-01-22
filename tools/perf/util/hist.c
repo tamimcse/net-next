@@ -370,11 +370,9 @@ void hists__delete_entries(struct hists *hists)
 
 static int hist_entry__init(struct hist_entry *he,
 			    struct hist_entry *template,
-			    bool sample_self,
-			    size_t callchain_size)
+			    bool sample_self)
 {
 	*he = *template;
-	he->callchain_size = callchain_size;
 
 	if (symbol_conf.cumulate_callchain) {
 		he->stat_acc = malloc(sizeof(he->stat));
@@ -412,7 +410,7 @@ static int hist_entry__init(struct hist_entry *he,
 		map__get(he->mem_info->daddr.map);
 	}
 
-	if (hist_entry__has_callchains(he) && symbol_conf.use_callchain)
+	if (symbol_conf.use_callchain)
 		callchain_init(he->callchain);
 
 	if (he->raw_data) {
@@ -475,7 +473,7 @@ static struct hist_entry *hist_entry__new(struct hist_entry *template,
 
 	he = ops->new(callchain_size);
 	if (he) {
-		err = hist_entry__init(he, template, sample_self, callchain_size);
+		err = hist_entry__init(he, template, sample_self);
 		if (err) {
 			ops->free(he);
 			he = NULL;
@@ -494,7 +492,7 @@ static u8 symbol__parent_filter(const struct symbol *parent)
 
 static void hist_entry__add_callchain_period(struct hist_entry *he, u64 period)
 {
-	if (!hist_entry__has_callchains(he) || !symbol_conf.use_callchain)
+	if (!symbol_conf.use_callchain)
 		return;
 
 	he->hists->callchain_period += period;
@@ -621,11 +619,9 @@ __hists__add_entry(struct hists *hists,
 		.raw_data = sample->raw_data,
 		.raw_size = sample->raw_size,
 		.ops = ops,
-	}, *he = hists__findnew_entry(hists, &entry, al, sample_self);
+	};
 
-	if (!hists->has_callchains && he && he->callchain_size != 0)
-		hists->has_callchains = true;
-	return he;
+	return hists__findnew_entry(hists, &entry, al, sample_self);
 }
 
 struct hist_entry *hists__add_entry(struct hists *hists,
@@ -990,7 +986,7 @@ iter_add_next_cumulative_entry(struct hist_entry_iter *iter,
 	iter->he = he;
 	he_cache[iter->curr++] = he;
 
-	if (hist_entry__has_callchains(he) && symbol_conf.use_callchain)
+	if (symbol_conf.use_callchain)
 		callchain_append(he->callchain, &cursor, sample->period);
 	return 0;
 }
@@ -1043,7 +1039,7 @@ int hist_entry_iter__add(struct hist_entry_iter *iter, struct addr_location *al,
 	int err, err2;
 	struct map *alm = NULL;
 
-	if (al)
+	if (al && al->map)
 		alm = map__get(al->map);
 
 	err = sample__resolve_callchain(iter->sample, &callchain_cursor, &iter->parent,
@@ -1377,8 +1373,7 @@ static int hists__hierarchy_insert_entry(struct hists *hists,
 	if (new_he) {
 		new_he->leaf = true;
 
-		if (hist_entry__has_callchains(new_he) &&
-		    symbol_conf.use_callchain) {
+		if (symbol_conf.use_callchain) {
 			callchain_cursor_reset(&callchain_cursor);
 			if (callchain_merge(&callchain_cursor,
 					    new_he->callchain,
@@ -1419,7 +1414,7 @@ static int hists__collapse_insert_entry(struct hists *hists,
 			if (symbol_conf.cumulate_callchain)
 				he_stat__add_stat(iter->stat_acc, he->stat_acc);
 
-			if (hist_entry__has_callchains(he) && symbol_conf.use_callchain) {
+			if (symbol_conf.use_callchain) {
 				callchain_cursor_reset(&callchain_cursor);
 				if (callchain_merge(&callchain_cursor,
 						    iter->callchain,
@@ -1762,7 +1757,7 @@ void perf_evsel__output_resort(struct perf_evsel *evsel, struct ui_progress *pro
 	bool use_callchain;
 
 	if (evsel && symbol_conf.use_callchain && !symbol_conf.show_ref_callgraph)
-		use_callchain = evsel__has_callchain(evsel);
+		use_callchain = evsel->attr.sample_type & PERF_SAMPLE_CALLCHAIN;
 	else
 		use_callchain = symbol_conf.use_callchain;
 

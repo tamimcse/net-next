@@ -1001,7 +1001,7 @@ static int smiapp_read_nvm(struct smiapp_sensor *sensor,
 		if (rval)
 			goto out;
 
-		for (i = 1000; i > 0; i--) {
+		for (i = 0; i < 1000; i++) {
 			rval = smiapp_read(
 				sensor,
 				SMIAPP_REG_U8_DATA_TRANSFER_IF_1_STATUS, &s);
@@ -1012,10 +1012,11 @@ static int smiapp_read_nvm(struct smiapp_sensor *sensor,
 			if (s & SMIAPP_DATA_TRANSFER_IF_1_STATUS_RD_READY)
 				break;
 
-		}
-		if (!i) {
-			rval = -ETIMEDOUT;
-			goto out;
+			if (--i == 0) {
+				rval = -ETIMEDOUT;
+				goto out;
+			}
+
 		}
 
 		for (i = 0; i < SMIAPP_NVM_PAGE_SIZE; i++) {
@@ -1892,7 +1893,7 @@ static int scaling_goodness(struct v4l2_subdev *subdev, int w, int ask_w,
 		val -= SCALING_GOODNESS_EXTREME;
 
 	dev_dbg(&client->dev, "w %d ask_w %d h %d ask_h %d goodness %d\n",
-		w, ask_w, h, ask_h, val);
+		w, ask_h, h, ask_h, val);
 
 	return val;
 }
@@ -2764,7 +2765,6 @@ static struct smiapp_hwconfig *smiapp_get_hwconfig(struct device *dev)
 	struct v4l2_fwnode_endpoint *bus_cfg;
 	struct fwnode_handle *ep;
 	struct fwnode_handle *fwnode = dev_fwnode(dev);
-	u32 rotation;
 	int i;
 	int rval;
 
@@ -2800,21 +2800,6 @@ static struct smiapp_hwconfig *smiapp_get_hwconfig(struct device *dev)
 	}
 
 	dev_dbg(dev, "lanes %u\n", hwcfg->lanes);
-
-	rval = fwnode_property_read_u32(fwnode, "rotation", &rotation);
-	if (!rval) {
-		switch (rotation) {
-		case 180:
-			hwcfg->module_board_orient =
-				SMIAPP_MODULE_BOARD_ORIENT_180;
-			/* Fall through */
-		case 0:
-			break;
-		default:
-			dev_err(dev, "invalid rotation %u\n", rotation);
-			goto out_err;
-		}
-	}
 
 	/* NVM size is not mandatory */
 	fwnode_property_read_u32(fwnode, "nokia,nvm-size", &hwcfg->nvm_size);
@@ -3187,4 +3172,4 @@ module_i2c_driver(smiapp_i2c_driver);
 
 MODULE_AUTHOR("Sakari Ailus <sakari.ailus@iki.fi>");
 MODULE_DESCRIPTION("Generic SMIA/SMIA++ camera module driver");
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");

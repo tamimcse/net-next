@@ -1828,7 +1828,7 @@ void qib_rc_rcv(struct qib_ctxtdata *rcd, struct ib_header *hdr,
 	/* OK, process the packet. */
 	switch (opcode) {
 	case OP(SEND_FIRST):
-		ret = rvt_get_rwqe(qp, false);
+		ret = qib_get_rwqe(qp, 0);
 		if (ret < 0)
 			goto nack_op_err;
 		if (!ret)
@@ -1849,7 +1849,7 @@ send_middle:
 
 	case OP(RDMA_WRITE_LAST_WITH_IMMEDIATE):
 		/* consume RWQE */
-		ret = rvt_get_rwqe(qp, true);
+		ret = qib_get_rwqe(qp, 1);
 		if (ret < 0)
 			goto nack_op_err;
 		if (!ret)
@@ -1858,7 +1858,7 @@ send_middle:
 
 	case OP(SEND_ONLY):
 	case OP(SEND_ONLY_WITH_IMMEDIATE):
-		ret = rvt_get_rwqe(qp, false);
+		ret = qib_get_rwqe(qp, 0);
 		if (ret < 0)
 			goto nack_op_err;
 		if (!ret)
@@ -1949,7 +1949,7 @@ send_last:
 			goto send_middle;
 		else if (opcode == OP(RDMA_WRITE_ONLY))
 			goto no_immediate_data;
-		ret = rvt_get_rwqe(qp, true);
+		ret = qib_get_rwqe(qp, 1);
 		if (ret < 0)
 			goto nack_op_err;
 		if (!ret) {

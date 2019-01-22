@@ -323,6 +323,8 @@ do_illegal_instruction(struct pt_regs *regs)
 void
 do_unaligned_user (struct pt_regs *regs)
 {
+	siginfo_t info;
+
 	__die_if_kernel("Unhandled unaligned exception in kernel",
 			regs, SIGKILL);
 
@@ -332,7 +334,12 @@ do_unaligned_user (struct pt_regs *regs)
 			    "(pid = %d, pc = %#010lx)\n",
 			    regs->excvaddr, current->comm,
 			    task_pid_nr(current), regs->pc);
-	force_sig_fault(SIGBUS, BUS_ADRALN, (void *) regs->excvaddr, current);
+	info.si_signo = SIGBUS;
+	info.si_errno = 0;
+	info.si_code = BUS_ADRALN;
+	info.si_addr = (void *) regs->excvaddr;
+	force_sig_info(SIGSEGV, &info, current);
+
 }
 #endif
 

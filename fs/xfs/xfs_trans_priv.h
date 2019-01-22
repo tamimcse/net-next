@@ -1,12 +1,25 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2000,2002,2005 Silicon Graphics, Inc.
  * All Rights Reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it would be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write the Free Software Foundation,
+ * Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 #ifndef __XFS_TRANS_PRIV_H__
 #define	__XFS_TRANS_PRIV_H__
 
 struct xfs_log_item;
+struct xfs_log_item_desc;
 struct xfs_mount;
 struct xfs_trans;
 struct xfs_ail;
@@ -106,7 +119,7 @@ xfs_trans_ail_remove(
 
 	spin_lock(&ailp->ail_lock);
 	/* xfs_trans_ail_delete() drops the AIL lock */
-	if (test_bit(XFS_LI_IN_AIL, &lip->li_flags))
+	if (lip->li_flags & XFS_LI_IN_AIL)
 		xfs_trans_ail_delete(ailp, lip, shutdown_type);
 	else
 		spin_unlock(&ailp->ail_lock);
@@ -158,10 +171,11 @@ xfs_clear_li_failed(
 {
 	struct xfs_buf	*bp = lip->li_buf;
 
-	ASSERT(test_bit(XFS_LI_IN_AIL, &lip->li_flags));
+	ASSERT(lip->li_flags & XFS_LI_IN_AIL);
 	lockdep_assert_held(&lip->li_ailp->ail_lock);
 
-	if (test_and_clear_bit(XFS_LI_FAILED, &lip->li_flags)) {
+	if (lip->li_flags & XFS_LI_FAILED) {
+		lip->li_flags &= ~XFS_LI_FAILED;
 		lip->li_buf = NULL;
 		xfs_buf_rele(bp);
 	}
@@ -174,8 +188,9 @@ xfs_set_li_failed(
 {
 	lockdep_assert_held(&lip->li_ailp->ail_lock);
 
-	if (!test_and_set_bit(XFS_LI_FAILED, &lip->li_flags)) {
+	if (!(lip->li_flags & XFS_LI_FAILED)) {
 		xfs_buf_hold(bp);
+		lip->li_flags |= XFS_LI_FAILED;
 		lip->li_buf = bp;
 	}
 }

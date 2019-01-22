@@ -266,29 +266,13 @@ if ($arch eq "x86_64") {
     $objcopy .= " -O elf32-sh-linux";
 
 } elsif ($arch eq "powerpc") {
-    my $ldemulation;
-
     $local_regex = "^[0-9a-fA-F]+\\s+t\\s+(\\.?\\S+)";
     # See comment in the sparc64 section for why we use '\w'.
     $function_regex = "^([0-9a-fA-F]+)\\s+<(\\.?\\w*?)>:";
     $mcount_regex = "^\\s*([0-9a-fA-F]+):.*\\s\\.?_mcount\$";
 
-    if ($endian eq "big") {
-	    $cc .= " -mbig-endian ";
-	    $ld .= " -EB ";
-	    $ldemulation = "ppc"
-    } else {
-	    $cc .= " -mlittle-endian ";
-	    $ld .= " -EL ";
-	    $ldemulation = "lppc"
-    }
     if ($bits == 64) {
-        $type = ".quad";
-        $cc .= " -m64 ";
-        $ld .= " -m elf64".$ldemulation." ";
-    } else {
-        $cc .= " -m32 ";
-        $ld .= " -m elf32".$ldemulation." ";
+	$type = ".quad";
     }
 
 } elsif ($arch eq "arm") {
@@ -388,9 +372,6 @@ if ($arch eq "x86_64") {
     $function_regex = "^([0-9a-fA-F]+)\\s+<([^.0-9][0-9a-zA-Z_\\.]+)>:";
     $mcount_regex = "^\\s*([0-9a-fA-F]+):\\sR_RISCV_CALL\\s_mcount\$";
     $type = ".quad";
-    $alignment = 2;
-} elsif ($arch eq "nds32") {
-    $mcount_regex = "^\\s*([0-9a-fA-F]+):\\s*R_NDS32_HI20_RELA\\s+_mcount\$";
     $alignment = 2;
 } else {
     die "Arch $arch is not supported with CONFIG_FTRACE_MCOUNT_RECORD";

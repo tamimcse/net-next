@@ -63,7 +63,6 @@
 #endif
 
 unsigned long long memory_limit;
-bool init_mem_is_free;
 
 #ifdef CONFIG_HIGHMEM
 pte_t *kmap_pte;
@@ -216,7 +215,7 @@ void __init mem_topology_setup(void)
 	/* Place all memblock_regions in the same node and merge contiguous
 	 * memblock_regions
 	 */
-	memblock_set_node(0, PHYS_ADDR_MAX, &memblock.memory, 0);
+	memblock_set_node(0, (phys_addr_t)ULLONG_MAX, &memblock.memory, 0);
 }
 
 void __init initmem_init(void)
@@ -397,7 +396,6 @@ void free_initmem(void)
 {
 	ppc_md.progress = ppc_printk_progress;
 	mark_initmem_nx();
-	init_mem_is_free = true;
 	free_initmem_default(POISON_FREE_INITMEM);
 }
 
@@ -511,10 +509,8 @@ void update_mmu_cache(struct vm_area_struct *vma, unsigned long address,
 	 */
 	unsigned long access, trap;
 
-	if (radix_enabled()) {
-		prefetch((void *)address);
+	if (radix_enabled())
 		return;
-	}
 
 	/* We only want HPTEs for linux PTEs that have _PAGE_ACCESSED set */
 	if (!pte_young(*ptep) || address >= TASK_SIZE)

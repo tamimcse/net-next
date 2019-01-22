@@ -1071,7 +1071,7 @@ struct vnic_dev *vnic_dev_register(struct vnic_dev *vdev,
 	unsigned int num_bars)
 {
 	if (!vdev) {
-		vdev = kzalloc(sizeof(struct vnic_dev), GFP_KERNEL);
+		vdev = kzalloc(sizeof(struct vnic_dev), GFP_ATOMIC);
 		if (!vdev)
 			return NULL;
 	}
@@ -1282,23 +1282,19 @@ int vnic_dev_get_supported_feature_ver(struct vnic_dev *vdev, u8 feature,
 	return ret;
 }
 
-int vnic_dev_capable_rss_hash_type(struct vnic_dev *vdev, u8 *rss_hash_type)
+bool vnic_dev_capable_udp_rss(struct vnic_dev *vdev)
 {
 	u64 a0 = CMD_NIC_CFG, a1 = 0;
+	u64 rss_hash_type;
 	int wait = 1000;
 	int err;
 
 	err = vnic_dev_cmd(vdev, CMD_CAPABILITY, &a0, &a1, wait);
-	/* rss_hash_type is valid only when a0 is 1. Adapter which does not
-	 * support CMD_CAPABILITY for rss_hash_type has a0 = 0
-	 */
-	if (err || (a0 != 1))
-		return -EOPNOTSUPP;
+	if (err || !a0)
+		return false;
 
-	a1 = (a1 >> NIC_CFG_RSS_HASH_TYPE_SHIFT) &
-	     NIC_CFG_RSS_HASH_TYPE_MASK_FIELD;
+	rss_hash_type = (a1 >> NIC_CFG_RSS_HASH_TYPE_SHIFT) &
+			NIC_CFG_RSS_HASH_TYPE_MASK_FIELD;
 
-	*rss_hash_type = (u8)a1;
-
-	return 0;
+	return (rss_hash_type & NIC_CFG_RSS_HASH_TYPE_UDP);
 }

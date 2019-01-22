@@ -11,7 +11,6 @@
 #include "cpumap.h"
 #include "print_binary.h"
 #include "thread_map.h"
-#include "mmap.h"
 
 #if PY_MAJOR_VERSION < 3
 #define _PyUnicode_FromString(arg) \
@@ -342,7 +341,7 @@ static bool is_tracepoint(struct pyrf_event *pevent)
 static PyObject*
 tracepoint_field(struct pyrf_event *pe, struct format_field *field)
 {
-	struct tep_handle *pevent = field->event->pevent;
+	struct pevent *pevent = field->event->pevent;
 	void *data = pe->sample.raw_data;
 	PyObject *ret = NULL;
 	unsigned long long val;
@@ -352,7 +351,7 @@ tracepoint_field(struct pyrf_event *pe, struct format_field *field)
 		offset = field->offset;
 		len    = field->size;
 		if (field->flags & FIELD_IS_DYNAMIC) {
-			val     = tep_read_number(pevent, data + offset, len);
+			val     = pevent_read_number(pevent, data + offset, len);
 			offset  = val;
 			len     = offset >> 16;
 			offset &= 0xffff;
@@ -365,8 +364,8 @@ tracepoint_field(struct pyrf_event *pe, struct format_field *field)
 			field->flags &= ~FIELD_IS_STRING;
 		}
 	} else {
-		val = tep_read_number(pevent, data + field->offset,
-				      field->size);
+		val = pevent_read_number(pevent, data + field->offset,
+					 field->size);
 		if (field->flags & FIELD_IS_POINTER)
 			ret = PyLong_FromUnsignedLong((unsigned long) val);
 		else if (field->flags & FIELD_IS_SIGNED)
@@ -395,7 +394,7 @@ get_tracepoint_field(struct pyrf_event *pevent, PyObject *attr_name)
 		evsel->tp_format = tp_format;
 	}
 
-	field = tep_find_any_field(evsel->tp_format, str);
+	field = pevent_find_any_field(evsel->tp_format, str);
 	if (!field)
 		return NULL;
 
@@ -977,20 +976,6 @@ static PyObject *pyrf_evlist__add(struct pyrf_evlist *pevlist,
 	return Py_BuildValue("i", evlist->nr_entries);
 }
 
-static struct perf_mmap *get_md(struct perf_evlist *evlist, int cpu)
-{
-	int i;
-
-	for (i = 0; i < evlist->nr_mmaps; i++) {
-		struct perf_mmap *md = &evlist->mmap[i];
-
-		if (md->cpu == cpu)
-			return md;
-	}
-
-	return NULL;
-}
-
 static PyObject *pyrf_evlist__read_on_cpu(struct pyrf_evlist *pevlist,
 					  PyObject *args, PyObject *kwargs)
 {
@@ -1005,10 +990,7 @@ static PyObject *pyrf_evlist__read_on_cpu(struct pyrf_evlist *pevlist,
 					 &cpu, &sample_id_all))
 		return NULL;
 
-	md = get_md(evlist, cpu);
-	if (!md)
-		return NULL;
-
+	md = &evlist->mmap[cpu];
 	if (perf_mmap__read_init(md) < 0)
 		goto end;
 

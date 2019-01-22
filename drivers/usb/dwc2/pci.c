@@ -77,12 +77,6 @@ static int dwc2_pci_quirks(struct pci_dev *pdev, struct platform_device *dwc2)
 	return 0;
 }
 
-/**
- * dwc2_pci_probe() - Provides the cleanup entry points for the DWC_otg PCI
- * driver
- *
- * @pci: The programming view of DWC_otg PCI
- */
 static void dwc2_pci_remove(struct pci_dev *pci)
 {
 	struct dwc2_pci_glue *glue = pci_get_drvdata(pci);
@@ -147,10 +141,8 @@ static int dwc2_pci_probe(struct pci_dev *pci,
 		goto err;
 
 	glue = devm_kzalloc(dev, sizeof(*glue), GFP_KERNEL);
-	if (!glue) {
-		ret = -ENOMEM;
+	if (!glue)
 		goto err;
-	}
 
 	ret = platform_device_add(dwc2);
 	if (ret) {

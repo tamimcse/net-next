@@ -35,6 +35,7 @@ struct _strp_msg {
 	 */
 	struct strp_msg strp;
 	int accum_len;
+	int early_eaten;
 };
 
 static inline struct _strp_msg *_strp_msg(struct sk_buff *skb)
@@ -114,6 +115,20 @@ static int __strp_recv(read_descriptor_t *desc, struct sk_buff *orig_skb,
 	head = strp->skb_head;
 	if (head) {
 		/* Message already in progress */
+
+		stm = _strp_msg(head);
+		if (unlikely(stm->early_eaten)) {
+			/* Already some number of bytes on the receive sock
+			 * data saved in skb_head, just indicate they
+			 * are consumed.
+			 */
+			eaten = orig_len <= stm->early_eaten ?
+				orig_len : stm->early_eaten;
+			stm->early_eaten -= eaten;
+
+			return eaten;
+		}
+
 		if (unlikely(orig_offset)) {
 			/* Getting data with a non-zero offset when a message is
 			 * in progress is not expected. If it does happen, we
@@ -140,13 +155,11 @@ static int __strp_recv(read_descriptor_t *desc, struct sk_buff *orig_skb,
 			/* We are going to append to the frags_list of head.
 			 * Need to unshare the frag_list.
 			 */
-			if (skb_has_frag_list(head)) {
-				err = skb_unclone(head, GFP_ATOMIC);
-				if (err) {
-					STRP_STATS_INCR(strp->stats.mem_fail);
-					desc->error = err;
-					return 0;
-				}
+			err = skb_unclone(head, GFP_ATOMIC);
+			if (err) {
+				STRP_STATS_INCR(strp->stats.mem_fail);
+				desc->error = err;
+				return 0;
 			}
 
 			if (unlikely(skb_shinfo(head)->frag_list)) {
@@ -203,16 +216,14 @@ static int __strp_recv(read_descriptor_t *desc, struct sk_buff *orig_skb,
 			memset(stm, 0, sizeof(*stm));
 			stm->strp.offset = orig_offset + eaten;
 		} else {
-			/* Unclone if we are appending to an skb that we
+			/* Unclone since we may be appending to an skb that we
 			 * already share a frag_list with.
 			 */
-			if (skb_has_frag_list(skb)) {
-				err = skb_unclone(skb, GFP_ATOMIC);
-				if (err) {
-					STRP_STATS_INCR(strp->stats.mem_fail);
-					desc->error = err;
-					break;
-				}
+			err = skb_unclone(skb, GFP_ATOMIC);
+			if (err) {
+				STRP_STATS_INCR(strp->stats.mem_fail);
+				desc->error = err;
+				break;
 			}
 
 			stm = _strp_msg(head);
@@ -286,9 +297,9 @@ static int __strp_recv(read_descriptor_t *desc, struct sk_buff *orig_skb,
 				}
 
 				stm->accum_len += cand_len;
-				eaten += cand_len;
 				strp->need_bytes = stm->strp.full_len -
 						       stm->accum_len;
+				stm->early_eaten = cand_len;
 				STRP_STATS_ADD(strp->stats.bytes, cand_len);
 				desc->count = 0; /* Stop reading socket */
 				break;
@@ -381,7 +392,7 @@ static int strp_read_sock(struct strparser *strp)
 /* Lower sock lock held */
 void strp_data_ready(struct strparser *strp)
 {
-	if (unlikely(strp->stopped) || strp->paused)
+	if (unlikely(strp->stopped))
 		return;
 
 	/* This check is needed to synchronize with do_strp_work.
@@ -396,6 +407,9 @@ void strp_data_ready(struct strparser *strp)
 		return;
 	}
 
+	if (strp->paused)
+		return;
+
 	if (strp->need_bytes) {
 		if (strp_peek_len(strp) < strp->need_bytes)
 			return;
@@ -408,6 +422,8 @@ EXPORT_SYMBOL_GPL(strp_data_ready);
 
 static void do_strp_work(struct strparser *strp)
 {
+	read_descriptor_t rd_desc;
+
 	/* We need the read lock to synchronize with strp_data_ready. We
 	 * need the socket lock for calling strp_read_sock.
 	 */
@@ -418,6 +434,8 @@ static void do_strp_work(struct strparser *strp)
 
 	if (strp->paused)
 		goto out;
+
+	rd_desc.arg.data = strp;
 
 	if (strp_read_sock(strp) == -ENOMEM)
 		queue_work(strp_wq, &strp->work);
@@ -493,19 +511,6 @@ int strp_init(struct strparser *strp, struct sock *sk,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(strp_init);
-
-/* Sock process lock held (lock_sock) */
-void __strp_unpause(struct strparser *strp)
-{
-	strp->paused = 0;
-
-	if (strp->need_bytes) {
-		if (strp_peek_len(strp) < strp->need_bytes)
-			return;
-	}
-	strp_read_sock(strp);
-}
-EXPORT_SYMBOL_GPL(__strp_unpause);
 
 void strp_unpause(struct strparser *strp)
 {

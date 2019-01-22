@@ -151,15 +151,13 @@ struct mmu_notifier_ops {
 	 * address space but may still be referenced by sptes until
 	 * the last refcount is dropped.
 	 *
-	 * If blockable argument is set to false then the callback cannot
-	 * sleep and has to return with -EAGAIN. 0 should be returned
-	 * otherwise.
-	 *
+	 * If both of these callbacks cannot block, and invalidate_range
+	 * cannot block, mmu_notifier_ops.flags should have
+	 * MMU_INVALIDATE_DOES_NOT_BLOCK set.
 	 */
-	int (*invalidate_range_start)(struct mmu_notifier *mn,
+	void (*invalidate_range_start)(struct mmu_notifier *mn,
 				       struct mm_struct *mm,
-				       unsigned long start, unsigned long end,
-				       bool blockable);
+				       unsigned long start, unsigned long end);
 	void (*invalidate_range_end)(struct mmu_notifier *mn,
 				     struct mm_struct *mm,
 				     unsigned long start, unsigned long end);
@@ -176,7 +174,7 @@ struct mmu_notifier_ops {
 	 * invalidate_range_start()/end() notifiers, as
 	 * invalidate_range() alread catches the points in time when an
 	 * external TLB range needs to be flushed. For more in depth
-	 * discussion on this see Documentation/vm/mmu_notifier.rst
+	 * discussion on this see Documentation/vm/mmu_notifier.txt
 	 *
 	 * Note that this function might be called with just a sub-range
 	 * of what was passed to invalidate_range_start()/end(), if
@@ -231,9 +229,8 @@ extern int __mmu_notifier_test_young(struct mm_struct *mm,
 				     unsigned long address);
 extern void __mmu_notifier_change_pte(struct mm_struct *mm,
 				      unsigned long address, pte_t pte);
-extern int __mmu_notifier_invalidate_range_start(struct mm_struct *mm,
-				  unsigned long start, unsigned long end,
-				  bool blockable);
+extern void __mmu_notifier_invalidate_range_start(struct mm_struct *mm,
+				  unsigned long start, unsigned long end);
 extern void __mmu_notifier_invalidate_range_end(struct mm_struct *mm,
 				  unsigned long start, unsigned long end,
 				  bool only_end);
@@ -284,15 +281,7 @@ static inline void mmu_notifier_invalidate_range_start(struct mm_struct *mm,
 				  unsigned long start, unsigned long end)
 {
 	if (mm_has_notifiers(mm))
-		__mmu_notifier_invalidate_range_start(mm, start, end, true);
-}
-
-static inline int mmu_notifier_invalidate_range_start_nonblock(struct mm_struct *mm,
-				  unsigned long start, unsigned long end)
-{
-	if (mm_has_notifiers(mm))
-		return __mmu_notifier_invalidate_range_start(mm, start, end, false);
-	return 0;
+		__mmu_notifier_invalidate_range_start(mm, start, end);
 }
 
 static inline void mmu_notifier_invalidate_range_end(struct mm_struct *mm,
@@ -470,12 +459,6 @@ static inline void mmu_notifier_change_pte(struct mm_struct *mm,
 static inline void mmu_notifier_invalidate_range_start(struct mm_struct *mm,
 				  unsigned long start, unsigned long end)
 {
-}
-
-static inline int mmu_notifier_invalidate_range_start_nonblock(struct mm_struct *mm,
-				  unsigned long start, unsigned long end)
-{
-	return 0;
 }
 
 static inline void mmu_notifier_invalidate_range_end(struct mm_struct *mm,

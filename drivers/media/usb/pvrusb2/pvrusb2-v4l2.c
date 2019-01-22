@@ -159,12 +159,9 @@ static int pvr2_s_std(struct file *file, void *priv, v4l2_std_id std)
 {
 	struct pvr2_v4l2_fh *fh = file->private_data;
 	struct pvr2_hdw *hdw = fh->channel.mc_head->hdw;
-	int ret;
 
-	ret = pvr2_ctrl_set_value(
+	return pvr2_ctrl_set_value(
 		pvr2_hdw_get_ctrl_by_id(hdw, PVR2_CID_STDCUR), std);
-	pvr2_hdw_commit_ctl(hdw);
-	return ret;
 }
 
 static int pvr2_querystd(struct file *file, void *priv, v4l2_std_id *std)
@@ -254,15 +251,12 @@ static int pvr2_s_input(struct file *file, void *priv, unsigned int inp)
 {
 	struct pvr2_v4l2_fh *fh = file->private_data;
 	struct pvr2_hdw *hdw = fh->channel.mc_head->hdw;
-	int ret;
 
 	if (inp >= fh->input_cnt)
 		return -EINVAL;
-	ret = pvr2_ctrl_set_value(
+	return pvr2_ctrl_set_value(
 			pvr2_hdw_get_ctrl_by_id(hdw, PVR2_CID_INPUT),
 			fh->input_map[inp]);
-	pvr2_hdw_commit_ctl(hdw);
-	return ret;
 }
 
 static int pvr2_enumaudio(struct file *file, void *priv, struct v4l2_audio *vin)
@@ -321,16 +315,13 @@ static int pvr2_s_tuner(struct file *file, void *priv, const struct v4l2_tuner *
 {
 	struct pvr2_v4l2_fh *fh = file->private_data;
 	struct pvr2_hdw *hdw = fh->channel.mc_head->hdw;
-	int ret;
 
 	if (vt->index != 0)
 		return -EINVAL;
 
-	ret = pvr2_ctrl_set_value(
+	return pvr2_ctrl_set_value(
 			pvr2_hdw_get_ctrl_by_id(hdw, PVR2_CID_AUDIOMODE),
 			vt->audmode);
-	pvr2_hdw_commit_ctl(hdw);
-	return ret;
 }
 
 static int pvr2_s_frequency(struct file *file, void *priv, const struct v4l2_frequency *vf)
@@ -362,10 +353,8 @@ static int pvr2_s_frequency(struct file *file, void *priv, const struct v4l2_fre
 		fv = (fv * 125) / 2;
 	else
 		fv = fv * 62500;
-	ret = pvr2_ctrl_set_value(
+	return pvr2_ctrl_set_value(
 			pvr2_hdw_get_ctrl_by_id(hdw,PVR2_CID_FREQUENCY),fv);
-	pvr2_hdw_commit_ctl(hdw);
-	return ret;
 }
 
 static int pvr2_g_frequency(struct file *file, void *priv, struct v4l2_frequency *vf)
@@ -481,7 +470,6 @@ static int pvr2_s_fmt_vid_cap(struct file *file, void *priv, struct v4l2_format 
 	vcp = pvr2_hdw_get_ctrl_by_id(hdw, PVR2_CID_VRES);
 	pvr2_ctrl_set_value(hcp, vf->fmt.pix.width);
 	pvr2_ctrl_set_value(vcp, vf->fmt.pix.height);
-	pvr2_hdw_commit_ctl(hdw);
 	return 0;
 }
 
@@ -609,12 +597,9 @@ static int pvr2_s_ctrl(struct file *file, void *priv, struct v4l2_control *vc)
 {
 	struct pvr2_v4l2_fh *fh = file->private_data;
 	struct pvr2_hdw *hdw = fh->channel.mc_head->hdw;
-	int ret;
 
-	ret = pvr2_ctrl_set_value(pvr2_hdw_get_ctrl_v4l(hdw, vc->id),
+	return pvr2_ctrl_set_value(pvr2_hdw_get_ctrl_v4l(hdw, vc->id),
 			vc->value);
-	pvr2_hdw_commit_ctl(hdw);
-	return ret;
 }
 
 static int pvr2_g_ext_ctrls(struct file *file, void *priv,
@@ -673,12 +658,10 @@ static int pvr2_s_ext_ctrls(struct file *file, void *priv,
 				ctrl->value);
 		if (ret) {
 			ctls->error_idx = idx;
-			goto commit;
+			return ret;
 		}
 	}
-commit:
-	pvr2_hdw_commit_ctl(hdw);
-	return ret;
+	return 0;
 }
 
 static int pvr2_try_ext_ctrls(struct file *file, void *priv,
@@ -781,23 +764,23 @@ static int pvr2_s_selection(struct file *file, void *priv,
 			pvr2_hdw_get_ctrl_by_id(hdw, PVR2_CID_CROPL),
 			sel->r.left);
 	if (ret != 0)
-		goto commit;
+		return -EINVAL;
 	ret = pvr2_ctrl_set_value(
 			pvr2_hdw_get_ctrl_by_id(hdw, PVR2_CID_CROPT),
 			sel->r.top);
 	if (ret != 0)
-		goto commit;
+		return -EINVAL;
 	ret = pvr2_ctrl_set_value(
 			pvr2_hdw_get_ctrl_by_id(hdw, PVR2_CID_CROPW),
 			sel->r.width);
 	if (ret != 0)
-		goto commit;
+		return -EINVAL;
 	ret = pvr2_ctrl_set_value(
 			pvr2_hdw_get_ctrl_by_id(hdw, PVR2_CID_CROPH),
 			sel->r.height);
-commit:
-	pvr2_hdw_commit_ctl(hdw);
-	return ret;
+	if (ret != 0)
+		return -EINVAL;
+	return 0;
 }
 
 static int pvr2_log_status(struct file *file, void *priv)
@@ -919,6 +902,44 @@ static void pvr2_v4l2_internal_check(struct pvr2_channel *chp)
 	    !list_empty(&vp->dev_radio->devbase.fh_list))
 		return;
 	pvr2_v4l2_destroy_no_lock(vp);
+}
+
+
+static long pvr2_v4l2_ioctl(struct file *file,
+			   unsigned int cmd, unsigned long arg)
+{
+
+	struct pvr2_v4l2_fh *fh = file->private_data;
+	struct pvr2_hdw *hdw = fh->channel.mc_head->hdw;
+	long ret = -EINVAL;
+
+	if (pvrusb2_debug & PVR2_TRACE_V4LIOCTL)
+		v4l_printk_ioctl(pvr2_hdw_get_driver_name(hdw), cmd);
+
+	if (!pvr2_hdw_dev_ok(hdw)) {
+		pvr2_trace(PVR2_TRACE_ERROR_LEGS,
+			   "ioctl failed - bad or no context");
+		return -EFAULT;
+	}
+
+	ret = video_ioctl2(file, cmd, arg);
+
+	pvr2_hdw_commit_ctl(hdw);
+
+	if (ret < 0) {
+		if (pvrusb2_debug & PVR2_TRACE_V4LIOCTL) {
+			pvr2_trace(PVR2_TRACE_V4LIOCTL,
+				   "pvr2_v4l2_do_ioctl failure, ret=%ld command was:",
+ret);
+			v4l_printk_ioctl(pvr2_hdw_get_driver_name(hdw), cmd);
+		}
+	} else {
+		pvr2_trace(PVR2_TRACE_V4LIOCTL,
+			   "pvr2_v4l2_do_ioctl complete, ret=%ld (0x%lx)",
+			   ret, ret);
+	}
+	return ret;
+
 }
 
 
@@ -1184,7 +1205,7 @@ static const struct v4l2_file_operations vdev_fops = {
 	.open       = pvr2_v4l2_open,
 	.release    = pvr2_v4l2_release,
 	.read       = pvr2_v4l2_read,
-	.unlocked_ioctl = video_ioctl2,
+	.unlocked_ioctl = pvr2_v4l2_ioctl,
 	.poll       = pvr2_v4l2_poll,
 };
 

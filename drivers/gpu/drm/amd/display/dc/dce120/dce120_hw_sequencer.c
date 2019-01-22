@@ -244,6 +244,8 @@ static void dce120_update_dchub(
 	dh_data->dchub_info_valid = false;
 }
 
+
+
 void dce120_hw_sequencer_construct(struct dc *dc)
 {
 	/* All registers used by dce11.2 match those in dce11 in offset and

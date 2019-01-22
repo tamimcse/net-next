@@ -119,8 +119,7 @@ typedef int (*umem_call_back)(struct ib_umem *item, u64 start, u64 end,
  */
 int rbt_ib_umem_for_each_in_range(struct rb_root_cached *root,
 				  u64 start, u64 end,
-				  umem_call_back cb,
-				  bool blockable, void *cookie);
+				  umem_call_back cb, void *cookie);
 
 /*
  * Find first region intersecting with address range.

@@ -19,6 +19,8 @@
 #include <linux/platform_data/brcmfmac.h>
 #include "fwil_types.h"
 
+extern const u8 ALLFFMAC[ETH_ALEN];
+
 #define BRCMF_FW_ALTPATH_LEN			256
 
 /* Definitions for the module global and device specific settings are defined

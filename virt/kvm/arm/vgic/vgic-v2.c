@@ -37,6 +37,13 @@ void vgic_v2_init_lrs(void)
 		vgic_v2_write_lr(i, 0);
 }
 
+void vgic_v2_set_npie(struct kvm_vcpu *vcpu)
+{
+	struct vgic_v2_cpu_if *cpuif = &vcpu->arch.vgic_cpu.vgic_v2;
+
+	cpuif->vgic_hcr |= GICH_HCR_NPIE;
+}
+
 void vgic_v2_set_underflow(struct kvm_vcpu *vcpu)
 {
 	struct vgic_v2_cpu_if *cpuif = &vcpu->arch.vgic_cpu.vgic_v2;
@@ -62,20 +69,14 @@ void vgic_v2_fold_lr_state(struct kvm_vcpu *vcpu)
 	struct vgic_cpu *vgic_cpu = &vcpu->arch.vgic_cpu;
 	struct vgic_v2_cpu_if *cpuif = &vgic_cpu->vgic_v2;
 	int lr;
+	unsigned long flags;
 
-	DEBUG_SPINLOCK_BUG_ON(!irqs_disabled());
-
-	cpuif->vgic_hcr &= ~GICH_HCR_UIE;
+	cpuif->vgic_hcr &= ~(GICH_HCR_UIE | GICH_HCR_NPIE);
 
 	for (lr = 0; lr < vgic_cpu->used_lrs; lr++) {
 		u32 val = cpuif->vgic_lr[lr];
-		u32 cpuid, intid = val & GICH_LR_VIRTUALID;
+		u32 intid = val & GICH_LR_VIRTUALID;
 		struct vgic_irq *irq;
-
-		/* Extract the source vCPU id from the LR */
-		cpuid = val & GICH_LR_PHYSID_CPUID;
-		cpuid >>= GICH_LR_PHYSID_CPUID_SHIFT;
-		cpuid &= 7;
 
 		/* Notify fds when the guest EOI'ed a level-triggered SPI */
 		if (lr_signals_eoi_mi(val) && vgic_valid_spi(vcpu->kvm, intid))
@@ -84,21 +85,22 @@ void vgic_v2_fold_lr_state(struct kvm_vcpu *vcpu)
 
 		irq = vgic_get_irq(vcpu->kvm, vcpu, intid);
 
-		spin_lock(&irq->irq_lock);
+		spin_lock_irqsave(&irq->irq_lock, flags);
 
 		/* Always preserve the active bit */
 		irq->active = !!(val & GICH_LR_ACTIVE_BIT);
-
-		if (irq->active && vgic_irq_is_sgi(intid))
-			irq->active_source = cpuid;
 
 		/* Edge is the only case where we preserve the pending bit */
 		if (irq->config == VGIC_CONFIG_EDGE &&
 		    (val & GICH_LR_PENDING_BIT)) {
 			irq->pending_latch = true;
 
-			if (vgic_irq_is_sgi(intid))
+			if (vgic_irq_is_sgi(intid)) {
+				u32 cpuid = val & GICH_LR_PHYSID_CPUID;
+
+				cpuid >>= GICH_LR_PHYSID_CPUID_SHIFT;
 				irq->source |= (1 << cpuid);
+			}
 		}
 
 		/*
@@ -127,7 +129,7 @@ void vgic_v2_fold_lr_state(struct kvm_vcpu *vcpu)
 				vgic_irq_set_phys_active(irq, false);
 		}
 
-		spin_unlock(&irq->irq_lock);
+		spin_unlock_irqrestore(&irq->irq_lock, flags);
 		vgic_put_irq(vcpu->kvm, irq);
 	}
 
@@ -150,18 +152,8 @@ void vgic_v2_populate_lr(struct kvm_vcpu *vcpu, struct vgic_irq *irq, int lr)
 	u32 val = irq->intid;
 	bool allow_pending = true;
 
-	if (irq->active) {
+	if (irq->active)
 		val |= GICH_LR_ACTIVE_BIT;
-		if (vgic_irq_is_sgi(irq->intid))
-			val |= irq->active_source << GICH_LR_PHYSID_CPUID_SHIFT;
-		if (vgic_irq_is_multi_sgi(irq)) {
-			allow_pending = false;
-			val |= GICH_LR_EOI;
-		}
-	}
-
-	if (irq->group)
-		val |= GICH_LR_GROUP1;
 
 	if (irq->hw) {
 		val |= GICH_LR_HW;
@@ -198,10 +190,8 @@ void vgic_v2_populate_lr(struct kvm_vcpu *vcpu, struct vgic_irq *irq, int lr)
 			BUG_ON(!src);
 			val |= (src - 1) << GICH_LR_PHYSID_CPUID_SHIFT;
 			irq->source &= ~(1 << (src - 1));
-			if (irq->source) {
+			if (irq->source)
 				irq->pending_latch = true;
-				val |= GICH_LR_EOI;
-			}
 		}
 	}
 

@@ -50,7 +50,7 @@ EXPORT_TRACEPOINT_SYMBOL(s390_zcrypt_req);
 EXPORT_TRACEPOINT_SYMBOL(s390_zcrypt_rep);
 
 static int zcrypt_hwrng_seed = 1;
-module_param_named(hwrng_seed, zcrypt_hwrng_seed, int, 0440);
+module_param_named(hwrng_seed, zcrypt_hwrng_seed, int, S_IRUSR|S_IRGRP);
 MODULE_PARM_DESC(hwrng_seed, "Turn on/off hwrng auto seed, default is 1 (on).");
 
 DEFINE_SPINLOCK(zcrypt_list_lock);
@@ -182,8 +182,7 @@ static inline void zcrypt_drop_queue(struct zcrypt_card *zc,
 
 static inline bool zcrypt_card_compare(struct zcrypt_card *zc,
 				       struct zcrypt_card *pref_zc,
-				       unsigned int weight,
-				       unsigned int pref_weight)
+				       unsigned weight, unsigned pref_weight)
 {
 	if (!pref_zc)
 		return false;
@@ -197,8 +196,7 @@ static inline bool zcrypt_card_compare(struct zcrypt_card *zc,
 
 static inline bool zcrypt_queue_compare(struct zcrypt_queue *zq,
 					struct zcrypt_queue *pref_zq,
-					unsigned int weight,
-					unsigned int pref_weight)
+					unsigned weight, unsigned pref_weight)
 {
 	if (!pref_zq)
 		return false;
@@ -373,7 +371,6 @@ long zcrypt_send_cprb(struct ica_xcRB *xcRB)
 
 	trace_s390_zcrypt_req(xcRB, TB_ZSECSENDCPRB);
 
-	ap_init_message(&ap_msg);
 	rc = get_cprb_fc(xcRB, &ap_msg, &func_code, &domain);
 	if (rc)
 		goto out;
@@ -428,7 +425,6 @@ long zcrypt_send_cprb(struct ica_xcRB *xcRB)
 	spin_unlock(&zcrypt_list_lock);
 
 out:
-	ap_release_message(&ap_msg);
 	trace_s390_zcrypt_rep(xcRB, func_code, rc,
 			      AP_QID_CARD(qid), AP_QID_QUEUE(qid));
 	return rc;
@@ -472,8 +468,6 @@ static long zcrypt_send_ep11_cprb(struct ep11_urb *xcrb)
 
 	trace_s390_zcrypt_req(xcrb, TP_ZSENDEP11CPRB);
 
-	ap_init_message(&ap_msg);
-
 	target_num = (unsigned short) xcrb->targets_num;
 
 	/* empty list indicates autoselect (all available targets) */
@@ -491,7 +485,7 @@ static long zcrypt_send_ep11_cprb(struct ep11_urb *xcrb)
 		if (copy_from_user(targets, uptr,
 				   target_num * sizeof(*targets))) {
 			rc = -EFAULT;
-			goto out_free;
+			goto out;
 		}
 	}
 
@@ -548,7 +542,6 @@ static long zcrypt_send_ep11_cprb(struct ep11_urb *xcrb)
 out_free:
 	kfree(targets);
 out:
-	ap_release_message(&ap_msg);
 	trace_s390_zcrypt_rep(xcrb, func_code, rc,
 			      AP_QID_CARD(qid), AP_QID_QUEUE(qid));
 	return rc;
@@ -566,7 +559,6 @@ static long zcrypt_rng(char *buffer)
 
 	trace_s390_zcrypt_req(buffer, TP_HWRNGCPRB);
 
-	ap_init_message(&ap_msg);
 	rc = get_rng_fc(&ap_msg, &func_code, &domain);
 	if (rc)
 		goto out;
@@ -597,10 +589,8 @@ static long zcrypt_rng(char *buffer)
 	pref_zq = zcrypt_pick_queue(pref_zc, pref_zq, weight);
 	spin_unlock(&zcrypt_list_lock);
 
-	if (!pref_zq) {
-		rc = -ENODEV;
-		goto out;
-	}
+	if (!pref_zq)
+		return -ENODEV;
 
 	qid = pref_zq->queue->qid;
 	rc = pref_zq->ops->rng(pref_zq, buffer, &ap_msg);
@@ -610,7 +600,6 @@ static long zcrypt_rng(char *buffer)
 	spin_unlock(&zcrypt_list_lock);
 
 out:
-	ap_release_message(&ap_msg);
 	trace_s390_zcrypt_rep(buffer, func_code, rc,
 			      AP_QID_CARD(qid), AP_QID_QUEUE(qid));
 	return rc;
@@ -794,7 +783,6 @@ static long zcrypt_unlocked_ioctl(struct file *filp, unsigned int cmd,
 	case ICARSAMODEXPO: {
 		struct ica_rsa_modexpo __user *umex = (void __user *) arg;
 		struct ica_rsa_modexpo mex;
-
 		if (copy_from_user(&mex, umex, sizeof(mex)))
 			return -EFAULT;
 		do {
@@ -814,7 +802,6 @@ static long zcrypt_unlocked_ioctl(struct file *filp, unsigned int cmd,
 	case ICARSACRT: {
 		struct ica_rsa_modexpo_crt __user *ucrt = (void __user *) arg;
 		struct ica_rsa_modexpo_crt crt;
-
 		if (copy_from_user(&crt, ucrt, sizeof(crt)))
 			return -EFAULT;
 		do {
@@ -834,7 +821,6 @@ static long zcrypt_unlocked_ioctl(struct file *filp, unsigned int cmd,
 	case ZSECSENDCPRB: {
 		struct ica_xcRB __user *uxcRB = (void __user *) arg;
 		struct ica_xcRB xcRB;
-
 		if (copy_from_user(&xcRB, uxcRB, sizeof(xcRB)))
 			return -EFAULT;
 		do {
@@ -854,7 +840,6 @@ static long zcrypt_unlocked_ioctl(struct file *filp, unsigned int cmd,
 	case ZSENDEP11CPRB: {
 		struct ep11_urb __user *uxcrb = (void __user *)arg;
 		struct ep11_urb xcrb;
-
 		if (copy_from_user(&xcrb, uxcrb, sizeof(xcrb)))
 			return -EFAULT;
 		do {
@@ -1043,7 +1028,7 @@ static long trans_modexpo_crt32(struct file *filp, unsigned int cmd,
 		return -EFAULT;
 	crt64.inputdata = compat_ptr(crt32.inputdata);
 	crt64.inputdatalength = crt32.inputdatalength;
-	crt64.outputdata = compat_ptr(crt32.outputdata);
+	crt64.outputdata=  compat_ptr(crt32.outputdata);
 	crt64.outputdatalength = crt32.outputdatalength;
 	crt64.bp_key = compat_ptr(crt32.bp_key);
 	crt64.bq_key = compat_ptr(crt32.bq_key);
@@ -1069,20 +1054,20 @@ struct compat_ica_xcRB {
 	unsigned int	user_defined;
 	unsigned short	request_ID;
 	unsigned int	request_control_blk_length;
-	unsigned char	padding1[16 - sizeof(compat_uptr_t)];
+	unsigned char	padding1[16 - sizeof (compat_uptr_t)];
 	compat_uptr_t	request_control_blk_addr;
 	unsigned int	request_data_length;
-	char		padding2[16 - sizeof(compat_uptr_t)];
+	char		padding2[16 - sizeof (compat_uptr_t)];
 	compat_uptr_t	request_data_address;
 	unsigned int	reply_control_blk_length;
-	char		padding3[16 - sizeof(compat_uptr_t)];
+	char		padding3[16 - sizeof (compat_uptr_t)];
 	compat_uptr_t	reply_control_blk_addr;
 	unsigned int	reply_data_length;
-	char		padding4[16 - sizeof(compat_uptr_t)];
+	char		padding4[16 - sizeof (compat_uptr_t)];
 	compat_uptr_t	reply_data_addr;
 	unsigned short	priority_window;
 	unsigned int	status;
-} __packed;
+} __attribute__((packed));
 
 static long trans_xcRB32(struct file *filp, unsigned int cmd,
 			 unsigned long arg)
@@ -1126,7 +1111,7 @@ static long trans_xcRB32(struct file *filp, unsigned int cmd,
 	xcRB32.reply_data_length = xcRB64.reply_data_length;
 	xcRB32.status = xcRB64.status;
 	if (copy_to_user(uxcRB32, &xcRB32, sizeof(xcRB32)))
-		return -EFAULT;
+			return -EFAULT;
 	return rc;
 }
 
@@ -1188,10 +1173,10 @@ static int zcrypt_rng_data_read(struct hwrng *rng, u32 *data)
 			rc = zcrypt_rng((char *) zcrypt_rng_buffer);
 		if (rc < 0)
 			return -EIO;
-		zcrypt_rng_buffer_index = rc / sizeof(*data);
+		zcrypt_rng_buffer_index = rc / sizeof *data;
 	}
 	*data = zcrypt_rng_buffer[--zcrypt_rng_buffer_index];
-	return sizeof(*data);
+	return sizeof *data;
 }
 
 static struct hwrng zcrypt_rng_dev = {

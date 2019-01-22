@@ -294,10 +294,11 @@ static int lpc32xx_rtc_remove(struct platform_device *pdev)
 #ifdef CONFIG_PM
 static int lpc32xx_rtc_suspend(struct device *dev)
 {
-	struct lpc32xx_rtc *rtc = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct lpc32xx_rtc *rtc = platform_get_drvdata(pdev);
 
 	if (rtc->irq >= 0) {
-		if (device_may_wakeup(dev))
+		if (device_may_wakeup(&pdev->dev))
 			enable_irq_wake(rtc->irq);
 		else
 			disable_irq_wake(rtc->irq);
@@ -308,9 +309,10 @@ static int lpc32xx_rtc_suspend(struct device *dev)
 
 static int lpc32xx_rtc_resume(struct device *dev)
 {
-	struct lpc32xx_rtc *rtc = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct lpc32xx_rtc *rtc = platform_get_drvdata(pdev);
 
-	if (rtc->irq >= 0 && device_may_wakeup(dev))
+	if (rtc->irq >= 0 && device_may_wakeup(&pdev->dev))
 		disable_irq_wake(rtc->irq);
 
 	return 0;
@@ -319,7 +321,8 @@ static int lpc32xx_rtc_resume(struct device *dev)
 /* Unconditionally disable the alarm */
 static int lpc32xx_rtc_freeze(struct device *dev)
 {
-	struct lpc32xx_rtc *rtc = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct lpc32xx_rtc *rtc = platform_get_drvdata(pdev);
 
 	spin_lock_irq(&rtc->lock);
 
@@ -334,7 +337,8 @@ static int lpc32xx_rtc_freeze(struct device *dev)
 
 static int lpc32xx_rtc_thaw(struct device *dev)
 {
-	struct lpc32xx_rtc *rtc = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct lpc32xx_rtc *rtc = platform_get_drvdata(pdev);
 
 	if (rtc->alarm_enabled) {
 		spin_lock_irq(&rtc->lock);

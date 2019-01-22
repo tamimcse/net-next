@@ -716,6 +716,9 @@ static void dwc3_debugfs_create_endpoint_dir(struct dwc3_ep *dep,
 	struct dentry		*dir;
 
 	dir = debugfs_create_dir(dep->name, parent);
+	if (IS_ERR_OR_NULL(dir))
+		return;
+
 	dwc3_debugfs_create_endpoint_files(dep, dir);
 }
 
@@ -737,31 +740,49 @@ static void dwc3_debugfs_create_endpoint_dirs(struct dwc3 *dwc,
 void dwc3_debugfs_init(struct dwc3 *dwc)
 {
 	struct dentry		*root;
+	struct dentry           *file;
+
+	root = debugfs_create_dir(dev_name(dwc->dev), NULL);
+	if (IS_ERR_OR_NULL(root)) {
+		if (!root)
+			dev_err(dwc->dev, "Can't create debugfs root\n");
+		return;
+	}
+	dwc->root = root;
 
 	dwc->regset = kzalloc(sizeof(*dwc->regset), GFP_KERNEL);
-	if (!dwc->regset)
+	if (!dwc->regset) {
+		debugfs_remove_recursive(root);
 		return;
+	}
 
 	dwc->regset->regs = dwc3_regs;
 	dwc->regset->nregs = ARRAY_SIZE(dwc3_regs);
 	dwc->regset->base = dwc->regs - DWC3_GLOBALS_REGS_START;
 
-	root = debugfs_create_dir(dev_name(dwc->dev), NULL);
-	dwc->root = root;
-
-	debugfs_create_regset32("regdump", S_IRUGO, root, dwc->regset);
+	file = debugfs_create_regset32("regdump", S_IRUGO, root, dwc->regset);
+	if (!file)
+		dev_dbg(dwc->dev, "Can't create debugfs regdump\n");
 
 	if (IS_ENABLED(CONFIG_USB_DWC3_DUAL_ROLE)) {
-		debugfs_create_file("mode", S_IRUGO | S_IWUSR, root, dwc,
-				    &dwc3_mode_fops);
+		file = debugfs_create_file("mode", S_IRUGO | S_IWUSR, root,
+				dwc, &dwc3_mode_fops);
+		if (!file)
+			dev_dbg(dwc->dev, "Can't create debugfs mode\n");
 	}
 
 	if (IS_ENABLED(CONFIG_USB_DWC3_DUAL_ROLE) ||
 			IS_ENABLED(CONFIG_USB_DWC3_GADGET)) {
-		debugfs_create_file("testmode", S_IRUGO | S_IWUSR, root, dwc,
-				    &dwc3_testmode_fops);
-		debugfs_create_file("link_state", S_IRUGO | S_IWUSR, root, dwc,
-				    &dwc3_link_state_fops);
+		file = debugfs_create_file("testmode", S_IRUGO | S_IWUSR, root,
+				dwc, &dwc3_testmode_fops);
+		if (!file)
+			dev_dbg(dwc->dev, "Can't create debugfs testmode\n");
+
+		file = debugfs_create_file("link_state", S_IRUGO | S_IWUSR,
+				root, dwc, &dwc3_link_state_fops);
+		if (!file)
+			dev_dbg(dwc->dev, "Can't create debugfs link_state\n");
+
 		dwc3_debugfs_create_endpoint_dirs(dwc, root);
 	}
 }

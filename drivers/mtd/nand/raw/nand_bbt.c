@@ -1349,14 +1349,15 @@ static int nand_create_badblock_pattern(struct nand_chip *this)
 }
 
 /**
- * nand_create_bbt - [NAND Interface] Select a default bad block table for the device
- * @this: NAND chip object
+ * nand_default_bbt - [NAND Interface] Select a default bad block table for the device
+ * @mtd: MTD device structure
  *
  * This function selects the default bad block table support for the device and
  * calls the nand_scan_bbt function.
  */
-int nand_create_bbt(struct nand_chip *this)
+int nand_default_bbt(struct mtd_info *mtd)
 {
+	struct nand_chip *this = mtd_to_nand(mtd);
 	int ret;
 
 	/* Is a flash based bad block table requested? */
@@ -1382,9 +1383,8 @@ int nand_create_bbt(struct nand_chip *this)
 			return ret;
 	}
 
-	return nand_scan_bbt(nand_to_mtd(this), this->badblock_pattern);
+	return nand_scan_bbt(mtd, this->badblock_pattern);
 }
-EXPORT_SYMBOL(nand_create_bbt);
 
 /**
  * nand_isreserved_bbt - [NAND Interface] Check if a block is reserved

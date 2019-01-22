@@ -35,15 +35,6 @@ void
 acpi_db_dump_method_info(acpi_status status, struct acpi_walk_state *walk_state)
 {
 	struct acpi_thread_state *thread;
-	struct acpi_namespace_node *node;
-
-	node = walk_state->method_node;
-
-	/* There are no locals or arguments for the module-level code case */
-
-	if (node == acpi_gbl_root_node) {
-		return;
-	}
 
 	/* Ignore control codes, they are not errors */
 
@@ -393,14 +384,8 @@ void acpi_db_decode_locals(struct acpi_walk_state *walk_state)
 	struct acpi_namespace_node *node;
 	u8 display_locals = FALSE;
 
-	node = walk_state->method_node;
 	obj_desc = walk_state->method_desc;
-
-	/* There are no locals for the module-level code case */
-
-	if (node == acpi_gbl_root_node) {
-		return;
-	}
+	node = walk_state->method_node;
 
 	if (!node) {
 		acpi_os_printf
@@ -466,12 +451,6 @@ void acpi_db_decode_arguments(struct acpi_walk_state *walk_state)
 
 	node = walk_state->method_node;
 	obj_desc = walk_state->method_desc;
-
-	/* There are no arguments for the module-level code case */
-
-	if (node == acpi_gbl_root_node) {
-		return;
-	}
 
 	if (!node) {
 		acpi_os_printf

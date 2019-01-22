@@ -59,7 +59,6 @@
 #include <asm/kexec.h>
 #include <asm/asm-prototypes.h>
 #include <asm/cpu_has_feature.h>
-#include <asm/ftrace.h>
 
 #ifdef DEBUG
 #include <asm/udbg.h>
@@ -156,13 +155,11 @@ static irqreturn_t reschedule_action(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-#ifdef CONFIG_GENERIC_CLOCKEVENTS_BROADCAST
 static irqreturn_t tick_broadcast_ipi_action(int irq, void *data)
 {
-	timer_broadcast_interrupt();
+	tick_broadcast_ipi_handler();
 	return IRQ_HANDLED;
 }
-#endif
 
 #ifdef CONFIG_NMI_IPI
 static irqreturn_t nmi_ipi_action(int irq, void *data)
@@ -175,9 +172,7 @@ static irqreturn_t nmi_ipi_action(int irq, void *data)
 static irq_handler_t smp_ipi_action[] = {
 	[PPC_MSG_CALL_FUNCTION] =  call_function_action,
 	[PPC_MSG_RESCHEDULE] = reschedule_action,
-#ifdef CONFIG_GENERIC_CLOCKEVENTS_BROADCAST
 	[PPC_MSG_TICK_BROADCAST] = tick_broadcast_ipi_action,
-#endif
 #ifdef CONFIG_NMI_IPI
 	[PPC_MSG_NMI_IPI] = nmi_ipi_action,
 #endif
@@ -191,12 +186,8 @@ static irq_handler_t smp_ipi_action[] = {
 const char *smp_ipi_name[] = {
 	[PPC_MSG_CALL_FUNCTION] =  "ipi call function",
 	[PPC_MSG_RESCHEDULE] = "ipi reschedule",
-#ifdef CONFIG_GENERIC_CLOCKEVENTS_BROADCAST
 	[PPC_MSG_TICK_BROADCAST] = "ipi tick-broadcast",
-#endif
-#ifdef CONFIG_NMI_IPI
 	[PPC_MSG_NMI_IPI] = "nmi ipi",
-#endif
 };
 
 /* optional function to request ipi, for controllers with >= 4 ipis */
@@ -286,10 +277,8 @@ irqreturn_t smp_ipi_demux_relaxed(void)
 			generic_smp_call_function_interrupt();
 		if (all & IPI_MESSAGE(PPC_MSG_RESCHEDULE))
 			scheduler_ipi();
-#ifdef CONFIG_GENERIC_CLOCKEVENTS_BROADCAST
 		if (all & IPI_MESSAGE(PPC_MSG_TICK_BROADCAST))
-			timer_broadcast_interrupt();
-#endif
+			tick_broadcast_ipi_handler();
 #ifdef CONFIG_NMI_IPI
 		if (all & IPI_MESSAGE(PPC_MSG_NMI_IPI))
 			nmi_ipi_action(0, NULL);
@@ -423,17 +412,16 @@ int smp_handle_nmi_ipi(struct pt_regs *regs)
 	fn(regs);
 
 	nmi_ipi_lock();
-	if (nmi_ipi_busy_count > 1) /* Can race with caller time-out */
-		nmi_ipi_busy_count--;
+	nmi_ipi_busy_count--;
 out:
 	nmi_ipi_unlock_end(&flags);
 
 	return ret;
 }
 
-static void do_smp_send_nmi_ipi(int cpu, bool safe)
+static void do_smp_send_nmi_ipi(int cpu)
 {
-	if (!safe && smp_ops->cause_nmi_ipi && smp_ops->cause_nmi_ipi(cpu))
+	if (smp_ops->cause_nmi_ipi && smp_ops->cause_nmi_ipi(cpu))
 		return;
 
 	if (cpu >= 0) {
@@ -449,13 +437,31 @@ static void do_smp_send_nmi_ipi(int cpu, bool safe)
 	}
 }
 
+void smp_flush_nmi_ipi(u64 delay_us)
+{
+	unsigned long flags;
+
+	nmi_ipi_lock_start(&flags);
+	while (nmi_ipi_busy_count) {
+		nmi_ipi_unlock_end(&flags);
+		udelay(1);
+		if (delay_us) {
+			delay_us--;
+			if (!delay_us)
+				return;
+		}
+		nmi_ipi_lock_start(&flags);
+	}
+	nmi_ipi_unlock_end(&flags);
+}
+
 /*
  * - cpu is the target CPU (must not be this CPU), or NMI_IPI_ALL_OTHERS.
  * - fn is the target callback function.
  * - delay_us > 0 is the delay before giving up waiting for targets to
- *   complete executing the handler, == 0 specifies indefinite delay.
+ *   enter the handler, == 0 specifies indefinite delay.
  */
-int __smp_send_nmi_ipi(int cpu, void (*fn)(struct pt_regs *), u64 delay_us, bool safe)
+int smp_send_nmi_ipi(int cpu, void (*fn)(struct pt_regs *), u64 delay_us)
 {
 	unsigned long flags;
 	int me = raw_smp_processor_id();
@@ -488,57 +494,27 @@ int __smp_send_nmi_ipi(int cpu, void (*fn)(struct pt_regs *), u64 delay_us, bool
 	nmi_ipi_busy_count++;
 	nmi_ipi_unlock();
 
-	do_smp_send_nmi_ipi(cpu, safe);
+	do_smp_send_nmi_ipi(cpu);
+
+	while (!cpumask_empty(&nmi_ipi_pending_mask)) {
+		udelay(1);
+		if (delay_us) {
+			delay_us--;
+			if (!delay_us)
+				break;
+		}
+	}
 
 	nmi_ipi_lock();
-	/* nmi_ipi_busy_count is held here, so unlock/lock is okay */
-	while (!cpumask_empty(&nmi_ipi_pending_mask)) {
-		nmi_ipi_unlock();
-		udelay(1);
-		nmi_ipi_lock();
-		if (delay_us) {
-			delay_us--;
-			if (!delay_us)
-				break;
-		}
-	}
-
-	while (nmi_ipi_busy_count > 1) {
-		nmi_ipi_unlock();
-		udelay(1);
-		nmi_ipi_lock();
-		if (delay_us) {
-			delay_us--;
-			if (!delay_us)
-				break;
-		}
-	}
-
 	if (!cpumask_empty(&nmi_ipi_pending_mask)) {
-		/* Timeout waiting for CPUs to call smp_handle_nmi_ipi */
+		/* Could not gather all CPUs */
 		ret = 0;
 		cpumask_clear(&nmi_ipi_pending_mask);
 	}
-	if (nmi_ipi_busy_count > 1) {
-		/* Timeout waiting for CPUs to execute fn */
-		ret = 0;
-		nmi_ipi_busy_count = 1;
-	}
-
 	nmi_ipi_busy_count--;
 	nmi_ipi_unlock_end(&flags);
 
 	return ret;
-}
-
-int smp_send_nmi_ipi(int cpu, void (*fn)(struct pt_regs *), u64 delay_us)
-{
-	return __smp_send_nmi_ipi(cpu, fn, delay_us, false);
-}
-
-int smp_send_safe_nmi_ipi(int cpu, void (*fn)(struct pt_regs *), u64 delay_us)
-{
-	return __smp_send_nmi_ipi(cpu, fn, delay_us, true);
 }
 #endif /* CONFIG_NMI_IPI */
 
@@ -583,7 +559,7 @@ void crash_send_ipi(void (*crash_ipi_callback)(struct pt_regs *))
 			 * entire NMI dance and waiting for
 			 * cpus to clear pending mask, etc.
 			 */
-			do_smp_send_nmi_ipi(cpu, false);
+			do_smp_send_nmi_ipi(cpu);
 		}
 	}
 }
@@ -600,9 +576,11 @@ static void nmi_stop_this_cpu(struct pt_regs *regs)
 	 * IRQs are already hard disabled by the smp_handle_nmi_ipi.
 	 */
 	nmi_ipi_lock();
-	if (nmi_ipi_busy_count > 1)
-		nmi_ipi_busy_count--;
+	nmi_ipi_busy_count--;
 	nmi_ipi_unlock();
+
+	/* Remove this CPU */
+	set_cpu_online(smp_processor_id(), false);
 
 	spin_begin();
 	while (1)
@@ -618,6 +596,9 @@ void smp_send_stop(void)
 
 static void stop_this_cpu(void *dummy)
 {
+	/* Remove this CPU */
+	set_cpu_online(smp_processor_id(), false);
+
 	hard_irq_disable();
 	spin_begin();
 	while (1)
@@ -1085,9 +1066,6 @@ void start_secondary(void *unused)
 
 	local_irq_enable();
 
-	/* We can enable ftrace for secondary cpus now */
-	this_cpu_enable_ftrace();
-
 	cpu_startup_entry(CPUHP_AP_ONLINE_IDLE);
 
 	BUG();
@@ -1160,11 +1138,6 @@ void __init smp_cpus_done(unsigned int max_cpus)
 	if (smp_ops && smp_ops->bringup_done)
 		smp_ops->bringup_done();
 
-	/*
-	 * On a shared LPAR, associativity needs to be requested.
-	 * Hence, get numa topology before dumping cpu topology
-	 */
-	shared_proc_topology_init();
 	dump_numa_cpu_topology();
 
 	/*
@@ -1189,8 +1162,6 @@ int __cpu_disable(void)
 	if (!smp_ops->cpu_disable)
 		return -ENOSYS;
 
-	this_cpu_disable_ftrace();
-
 	err = smp_ops->cpu_disable();
 	if (err)
 		return err;
@@ -1209,12 +1180,6 @@ void __cpu_die(unsigned int cpu)
 
 void cpu_die(void)
 {
-	/*
-	 * Disable on the down path. This will be re-enabled by
-	 * start_secondary() via start_secondary_resume() below
-	 */
-	this_cpu_disable_ftrace();
-
 	if (ppc_md.cpu_die)
 		ppc_md.cpu_die();
 

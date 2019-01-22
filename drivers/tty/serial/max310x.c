@@ -531,8 +531,8 @@ static int max310x_update_best_err(unsigned long f, long *besterr)
 	return 1;
 }
 
-static int max310x_set_ref_clk(struct device *dev, struct max310x_port *s,
-			       unsigned long freq, bool xtal)
+static int max310x_set_ref_clk(struct max310x_port *s, unsigned long freq,
+			       bool xtal)
 {
 	unsigned int div, clksrc, pllcfg = 0;
 	long besterr = -1;
@@ -588,14 +588,8 @@ static int max310x_set_ref_clk(struct device *dev, struct max310x_port *s,
 	regmap_write(s->regmap, MAX310X_CLKSRC_REG, clksrc);
 
 	/* Wait for crystal */
-	if (xtal) {
-		unsigned int val;
+	if (pllcfg && xtal)
 		msleep(10);
-		regmap_read(s->regmap, MAX310X_STS_IRQSTS_REG, &val);
-		if (!(val & MAX310X_STS_CLKREADY_BIT)) {
-			dev_warn(dev, "clock is not stable yet\n");
-		}
-	}
 
 	return (int)bestfreq;
 }
@@ -1266,7 +1260,7 @@ static int max310x_probe(struct device *dev, struct max310x_devtype *devtype,
 				   MAX310X_MODE1_AUTOSLEEP_BIT);
 	}
 
-	uartclk = max310x_set_ref_clk(dev, s, freq, xtal);
+	uartclk = max310x_set_ref_clk(s, freq, xtal);
 	dev_dbg(dev, "Reference clock set to %i Hz\n", uartclk);
 
 	mutex_init(&s->mutex);

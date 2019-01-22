@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2009 Nokia Corporation
- * Author: Tomi Valkeinen <tomi.valkeinen@ti.com>
+ * Author: Tomi Valkeinen <tomi.valkeinen@nokia.com>
  *
  * VENC settings from TI's DSS driver
  *

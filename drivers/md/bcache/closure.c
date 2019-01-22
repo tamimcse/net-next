@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Asynchronous refcounty things
  *
@@ -163,13 +162,12 @@ static struct dentry *closure_debug;
 static int debug_seq_show(struct seq_file *f, void *data)
 {
 	struct closure *cl;
-
 	spin_lock_irq(&closure_list_lock);
 
 	list_for_each_entry(cl, &closure_list, all) {
 		int r = atomic_read(&cl->remaining);
 
-		seq_printf(f, "%p: %pS -> %pS p %p r %i ",
+		seq_printf(f, "%p: %pF -> %pf p %p r %i ",
 			   cl, (void *) cl->ip, cl->fn, cl->parent,
 			   r & CLOSURE_REMAINING_MASK);
 
@@ -179,7 +177,7 @@ static int debug_seq_show(struct seq_file *f, void *data)
 			   r & CLOSURE_RUNNING	? "R" : "");
 
 		if (r & CLOSURE_WAITING)
-			seq_printf(f, " W %pS\n",
+			seq_printf(f, " W %pF\n",
 				   (void *) cl->waiting_on);
 
 		seq_printf(f, "\n");
@@ -201,16 +199,11 @@ static const struct file_operations debug_ops = {
 	.release	= single_release
 };
 
-void  __init closure_debug_init(void)
+int __init closure_debug_init(void)
 {
-	if (!IS_ERR_OR_NULL(bcache_debug))
-		/*
-		 * it is unnecessary to check return value of
-		 * debugfs_create_file(), we should not care
-		 * about this.
-		 */
-		closure_debug = debugfs_create_file(
-			"closures", 0400, bcache_debug, NULL, &debug_ops);
+	closure_debug = debugfs_create_file("closures",
+				0400, bcache_debug, NULL, &debug_ops);
+	return IS_ERR_OR_NULL(closure_debug);
 }
 #endif
 

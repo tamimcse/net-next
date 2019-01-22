@@ -827,14 +827,12 @@ static int ceph_mknod(struct inode *dir, struct dentry *dentry,
 	if (ceph_snap(dir) != CEPH_NOSNAP)
 		return -EROFS;
 
-	if (ceph_quota_is_max_files_exceeded(dir)) {
-		err = -EDQUOT;
-		goto out;
-	}
+	if (ceph_quota_is_max_files_exceeded(dir))
+		return -EDQUOT;
 
 	err = ceph_pre_init_acls(dir, &mode, &acls);
 	if (err < 0)
-		goto out;
+		return err;
 
 	dout("mknod in dir %p dentry %p mode 0%ho rdev %d\n",
 	     dir, dentry, mode, rdev);
@@ -885,10 +883,8 @@ static int ceph_symlink(struct inode *dir, struct dentry *dentry,
 	if (ceph_snap(dir) != CEPH_NOSNAP)
 		return -EROFS;
 
-	if (ceph_quota_is_max_files_exceeded(dir)) {
-		err = -EDQUOT;
-		goto out;
-	}
+	if (ceph_quota_is_max_files_exceeded(dir))
+		return -EDQUOT;
 
 	dout("symlink in dir %p dentry %p to '%s'\n", dir, dentry, dest);
 	req = ceph_mdsc_create_request(mdsc, CEPH_MDS_OP_SYMLINK, USE_AUTH_MDS);
@@ -1397,7 +1393,7 @@ static ssize_t ceph_read_dir(struct file *file, char __user *buf, size_t size,
 				" rfiles:   %20lld\n"
 				" rsubdirs: %20lld\n"
 				"rbytes:    %20lld\n"
-				"rctime:    %10lld.%09ld\n",
+				"rctime:    %10ld.%09ld\n",
 				ci->i_files + ci->i_subdirs,
 				ci->i_files,
 				ci->i_subdirs,
@@ -1405,8 +1401,8 @@ static ssize_t ceph_read_dir(struct file *file, char __user *buf, size_t size,
 				ci->i_rfiles,
 				ci->i_rsubdirs,
 				ci->i_rbytes,
-				ci->i_rctime.tv_sec,
-				ci->i_rctime.tv_nsec);
+				(long)ci->i_rctime.tv_sec,
+				(long)ci->i_rctime.tv_nsec);
 	}
 
 	if (*ppos >= dfi->dir_info_len)
@@ -1490,8 +1486,6 @@ const struct file_operations ceph_dir_fops = {
 	.release = ceph_release,
 	.unlocked_ioctl = ceph_ioctl,
 	.fsync = ceph_fsync,
-	.lock = ceph_lock,
-	.flock = ceph_flock,
 };
 
 const struct file_operations ceph_snapdir_fops = {

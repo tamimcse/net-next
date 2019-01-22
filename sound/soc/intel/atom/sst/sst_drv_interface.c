@@ -266,15 +266,17 @@ static int sst_cdev_ack(struct device *dev, unsigned int str_id,
 	stream->cumm_bytes += bytes;
 	dev_dbg(dev, "bytes copied %d inc by %ld\n", stream->cumm_bytes, bytes);
 
-	addr =  ((void __iomem *)(ctx->mailbox + ctx->tstamp)) +
-		(str_id * sizeof(fw_tstamp));
-
-	memcpy_fromio(&fw_tstamp, addr, sizeof(fw_tstamp));
+	memcpy_fromio(&fw_tstamp,
+		((void *)(ctx->mailbox + ctx->tstamp)
+		+(str_id * sizeof(fw_tstamp))),
+		sizeof(fw_tstamp));
 
 	fw_tstamp.bytes_copied = stream->cumm_bytes;
 	dev_dbg(dev, "bytes sent to fw %llu inc by %ld\n",
 			fw_tstamp.bytes_copied, bytes);
 
+	addr =  ((void *)(ctx->mailbox + ctx->tstamp)) +
+			(str_id * sizeof(fw_tstamp));
 	offset =  offsetof(struct snd_sst_tstamp, bytes_copied);
 	sst_shim_write(addr, offset, fw_tstamp.bytes_copied);
 	return 0;
@@ -358,12 +360,11 @@ static int sst_cdev_tstamp(struct device *dev, unsigned int str_id,
 	struct snd_sst_tstamp fw_tstamp = {0,};
 	struct stream_info *stream;
 	struct intel_sst_drv *ctx = dev_get_drvdata(dev);
-	void __iomem *addr;
 
-	addr = (void __iomem *)(ctx->mailbox + ctx->tstamp) +
-		(str_id * sizeof(fw_tstamp));
-
-	memcpy_fromio(&fw_tstamp, addr, sizeof(fw_tstamp));
+	memcpy_fromio(&fw_tstamp,
+		((void *)(ctx->mailbox + ctx->tstamp)
+		+(str_id * sizeof(fw_tstamp))),
+		sizeof(fw_tstamp));
 
 	stream = get_stream_info(ctx, str_id);
 	if (!stream)
@@ -529,7 +530,6 @@ static int sst_read_timestamp(struct device *dev, struct pcm_stream_info *info)
 	struct snd_sst_tstamp fw_tstamp;
 	unsigned int str_id;
 	struct intel_sst_drv *ctx = dev_get_drvdata(dev);
-	void __iomem *addr;
 
 	str_id = info->str_id;
 	stream = get_stream_info(ctx, str_id);
@@ -540,11 +540,10 @@ static int sst_read_timestamp(struct device *dev, struct pcm_stream_info *info)
 		return -EINVAL;
 	substream = stream->pcm_substream;
 
-	addr = (void __iomem *)(ctx->mailbox + ctx->tstamp) +
-		(str_id * sizeof(fw_tstamp));
-
-	memcpy_fromio(&fw_tstamp, addr, sizeof(fw_tstamp));
-
+	memcpy_fromio(&fw_tstamp,
+		((void *)(ctx->mailbox + ctx->tstamp)
+			+ (str_id * sizeof(fw_tstamp))),
+		sizeof(fw_tstamp));
 	return sst_calc_tstamp(ctx, info, substream, &fw_tstamp);
 }
 

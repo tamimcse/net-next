@@ -132,7 +132,6 @@ struct vhost_virtqueue {
 	struct vhost_umem *iotlb;
 	void *private_data;
 	u64 acked_features;
-	u64 acked_backend_features;
 	/* Log write descriptors */
 	void __user *log_base;
 	struct vhost_log *log;
@@ -148,10 +147,7 @@ struct vhost_virtqueue {
 };
 
 struct vhost_msg_node {
-  union {
-	  struct vhost_msg msg;
-	  struct vhost_msg_v2 msg_v2;
-  };
+  struct vhost_msg msg;
   struct vhost_virtqueue *vq;
   struct list_head node;
 };
@@ -240,11 +236,6 @@ enum {
 static inline bool vhost_has_feature(struct vhost_virtqueue *vq, int bit)
 {
 	return vq->acked_features & (1ULL << bit);
-}
-
-static inline bool vhost_backend_has_feature(struct vhost_virtqueue *vq, int bit)
-{
-	return vq->acked_backend_features & (1ULL << bit);
 }
 
 #ifdef CONFIG_VHOST_CROSS_ENDIAN_LEGACY

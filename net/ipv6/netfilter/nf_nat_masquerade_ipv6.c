@@ -10,6 +10,7 @@
  */
 
 #include <linux/kernel.h>
+#include <linux/module.h>
 #include <linux/atomic.h>
 #include <linux/netdevice.h>
 #include <linux/ipv6.h>
@@ -185,3 +186,6 @@ void nf_nat_masquerade_ipv6_unregister_notifier(void)
 	unregister_netdevice_notifier(&masq_dev_notifier);
 }
 EXPORT_SYMBOL_GPL(nf_nat_masquerade_ipv6_unregister_notifier);
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Patrick McHardy <kaber@trash.net>");

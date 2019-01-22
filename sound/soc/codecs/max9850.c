@@ -52,9 +52,9 @@ static bool max9850_volatile_register(struct device *dev, unsigned int reg)
 	switch (reg) {
 	case MAX9850_STATUSA:
 	case MAX9850_STATUSB:
-		return true;
+		return 1;
 	default:
-		return false;
+		return 0;
 	}
 }
 

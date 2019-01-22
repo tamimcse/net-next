@@ -494,7 +494,7 @@ static int tegra_ahci_probe(struct platform_device *pdev)
 	int ret;
 	unsigned int i;
 
-	hpriv = ahci_platform_get_resources(pdev, 0);
+	hpriv = ahci_platform_get_resources(pdev);
 	if (IS_ERR(hpriv))
 		return PTR_ERR(hpriv);
 

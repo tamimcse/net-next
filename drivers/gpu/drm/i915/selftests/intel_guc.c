@@ -196,23 +196,19 @@ static int igt_guc_clients(void *args)
 	}
 
 	unreserve_doorbell(guc->execbuf_client);
-
-	__create_doorbell(guc->execbuf_client);
-	err = __guc_allocate_doorbell(guc, guc->execbuf_client->stage_id);
+	err = guc_clients_doorbell_init(guc);
 	if (err != -EIO) {
 		pr_err("unexpected (err = %d)", err);
-		goto out_db;
+		goto out;
 	}
 
 	if (!available_dbs(guc, guc->execbuf_client->priority)) {
 		pr_err("doorbell not available when it should\n");
 		err = -EIO;
-		goto out_db;
+		goto out;
 	}
 
-out_db:
 	/* clean after test */
-	__destroy_doorbell(guc->execbuf_client);
 	err = reserve_doorbell(guc->execbuf_client);
 	if (err) {
 		pr_err("failed to reserve back the doorbell back\n");

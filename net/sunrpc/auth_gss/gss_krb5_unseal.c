@@ -225,3 +225,4 @@ gss_verify_mic_kerberos(struct gss_ctx *gss_ctx,
 		return gss_verify_mic_v2(ctx, message_buffer, read_token);
 	}
 }
+

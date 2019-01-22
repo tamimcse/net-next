@@ -21,7 +21,10 @@
 #include <linux/mtd/sharpsl.h>
 #include <linux/interrupt.h>
 #include <linux/platform_device.h>
-#include <linux/io.h>
+
+#include <asm/io.h>
+#include <mach/hardware.h>
+#include <asm/mach-types.h>
 
 struct sharpsl_nand {
 	struct nand_chip	chip;

@@ -1,7 +1,6 @@
 msg_zerocopy
 socket
 psock_fanout
-psock_snd
 psock_tpacket
 reuseport_bpf
 reuseport_bpf_cpu
@@ -12,5 +11,3 @@ tcp_mmap
 udpgso
 udpgso_bench_rx
 udpgso_bench_tx
-tcp_inq
-tls

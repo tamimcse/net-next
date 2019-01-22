@@ -562,7 +562,7 @@ static int s3c_cpufreq_build_freq(void)
 	size = cpu_cur.info->calc_freqtable(&cpu_cur, NULL, 0);
 	size++;
 
-	ftab = kcalloc(size, sizeof(*ftab), GFP_KERNEL);
+	ftab = kzalloc(sizeof(*ftab) * size, GFP_KERNEL);
 	if (!ftab)
 		return -ENOMEM;
 

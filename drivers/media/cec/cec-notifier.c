@@ -21,7 +21,6 @@ struct cec_notifier {
 	struct list_head head;
 	struct kref kref;
 	struct device *dev;
-	const char *conn;
 	struct cec_adapter *cec_adap;
 	void (*callback)(struct cec_adapter *adap, u16 pa);
 
@@ -31,14 +30,13 @@ struct cec_notifier {
 static LIST_HEAD(cec_notifiers);
 static DEFINE_MUTEX(cec_notifiers_lock);
 
-struct cec_notifier *cec_notifier_get_conn(struct device *dev, const char *conn)
+struct cec_notifier *cec_notifier_get(struct device *dev)
 {
 	struct cec_notifier *n;
 
 	mutex_lock(&cec_notifiers_lock);
 	list_for_each_entry(n, &cec_notifiers, head) {
-		if (n->dev == dev &&
-		    (!conn || !strcmp(n->conn, conn))) {
+		if (n->dev == dev) {
 			kref_get(&n->kref);
 			mutex_unlock(&cec_notifiers_lock);
 			return n;
@@ -48,8 +46,6 @@ struct cec_notifier *cec_notifier_get_conn(struct device *dev, const char *conn)
 	if (!n)
 		goto unlock;
 	n->dev = dev;
-	if (conn)
-		n->conn = kstrdup(conn, GFP_KERNEL);
 	n->phys_addr = CEC_PHYS_ADDR_INVALID;
 	mutex_init(&n->lock);
 	kref_init(&n->kref);
@@ -58,7 +54,7 @@ unlock:
 	mutex_unlock(&cec_notifiers_lock);
 	return n;
 }
-EXPORT_SYMBOL_GPL(cec_notifier_get_conn);
+EXPORT_SYMBOL_GPL(cec_notifier_get);
 
 static void cec_notifier_release(struct kref *kref)
 {
@@ -66,7 +62,6 @@ static void cec_notifier_release(struct kref *kref)
 		container_of(kref, struct cec_notifier, kref);
 
 	list_del(&n->head);
-	kfree(n->conn);
 	kfree(n);
 }
 

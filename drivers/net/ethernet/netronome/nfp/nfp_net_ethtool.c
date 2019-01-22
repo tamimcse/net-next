@@ -233,10 +233,12 @@ nfp_net_get_drvinfo(struct net_device *netdev, struct ethtool_drvinfo *drvinfo)
 static void
 nfp_app_get_drvinfo(struct net_device *netdev, struct ethtool_drvinfo *drvinfo)
 {
-	struct nfp_app *app = nfp_app_from_netdev(netdev);
+	struct nfp_app *app;
 
-	strlcpy(drvinfo->bus_info, pci_name(app->pdev),
-		sizeof(drvinfo->bus_info));
+	app = nfp_app_from_netdev(netdev);
+	if (!app)
+		return;
+
 	nfp_get_drvinfo(app, app->pdev, "*", drvinfo);
 }
 
@@ -435,7 +437,7 @@ static int nfp_net_set_ringparam(struct net_device *netdev,
 	return nfp_net_set_ring_size(nn, rxd_cnt, txd_cnt);
 }
 
-__printf(2, 3) u8 *nfp_pr_et(u8 *data, const char *fmt, ...)
+static __printf(2, 3) u8 *nfp_pr_et(u8 *data, const char *fmt, ...)
 {
 	va_list args;
 
@@ -450,7 +452,7 @@ static unsigned int nfp_vnic_get_sw_stats_count(struct net_device *netdev)
 {
 	struct nfp_net *nn = netdev_priv(netdev);
 
-	return NN_RVEC_GATHER_STATS + nn->max_r_vecs * NN_RVEC_PER_Q_STATS;
+	return NN_RVEC_GATHER_STATS + nn->dp.num_r_vecs * NN_RVEC_PER_Q_STATS;
 }
 
 static u8 *nfp_vnic_get_sw_stats_strings(struct net_device *netdev, u8 *data)
@@ -458,7 +460,7 @@ static u8 *nfp_vnic_get_sw_stats_strings(struct net_device *netdev, u8 *data)
 	struct nfp_net *nn = netdev_priv(netdev);
 	int i;
 
-	for (i = 0; i < nn->max_r_vecs; i++) {
+	for (i = 0; i < nn->dp.num_r_vecs; i++) {
 		data = nfp_pr_et(data, "rvec_%u_rx_pkts", i);
 		data = nfp_pr_et(data, "rvec_%u_tx_pkts", i);
 		data = nfp_pr_et(data, "rvec_%u_tx_busy", i);
@@ -484,7 +486,7 @@ static u64 *nfp_vnic_get_sw_stats(struct net_device *netdev, u64 *data)
 	u64 tmp[NN_RVEC_GATHER_STATS];
 	unsigned int i, j;
 
-	for (i = 0; i < nn->max_r_vecs; i++) {
+	for (i = 0; i < nn->dp.num_r_vecs; i++) {
 		unsigned int start;
 
 		do {
@@ -519,13 +521,15 @@ static u64 *nfp_vnic_get_sw_stats(struct net_device *netdev, u64 *data)
 	return data;
 }
 
-static unsigned int nfp_vnic_get_hw_stats_count(unsigned int num_vecs)
+static unsigned int
+nfp_vnic_get_hw_stats_count(unsigned int rx_rings, unsigned int tx_rings)
 {
-	return NN_ET_GLOBAL_STATS_LEN + num_vecs * 4;
+	return NN_ET_GLOBAL_STATS_LEN + (rx_rings + tx_rings) * 2;
 }
 
 static u8 *
-nfp_vnic_get_hw_stats_strings(u8 *data, unsigned int num_vecs, bool repr)
+nfp_vnic_get_hw_stats_strings(u8 *data, unsigned int rx_rings,
+			      unsigned int tx_rings, bool repr)
 {
 	int swap_off, i;
 
@@ -545,29 +549,36 @@ nfp_vnic_get_hw_stats_strings(u8 *data, unsigned int num_vecs, bool repr)
 	for (i = NN_ET_SWITCH_STATS_LEN * 2; i < NN_ET_GLOBAL_STATS_LEN; i++)
 		data = nfp_pr_et(data, nfp_net_et_stats[i].name);
 
-	for (i = 0; i < num_vecs; i++) {
-		data = nfp_pr_et(data, "rxq_%u_pkts", i);
-		data = nfp_pr_et(data, "rxq_%u_bytes", i);
+	for (i = 0; i < tx_rings; i++) {
 		data = nfp_pr_et(data, "txq_%u_pkts", i);
 		data = nfp_pr_et(data, "txq_%u_bytes", i);
+	}
+
+	for (i = 0; i < rx_rings; i++) {
+		data = nfp_pr_et(data, "rxq_%u_pkts", i);
+		data = nfp_pr_et(data, "rxq_%u_bytes", i);
 	}
 
 	return data;
 }
 
 static u64 *
-nfp_vnic_get_hw_stats(u64 *data, u8 __iomem *mem, unsigned int num_vecs)
+nfp_vnic_get_hw_stats(u64 *data, u8 __iomem *mem,
+		      unsigned int rx_rings, unsigned int tx_rings)
 {
 	unsigned int i;
 
 	for (i = 0; i < NN_ET_GLOBAL_STATS_LEN; i++)
 		*data++ = readq(mem + nfp_net_et_stats[i].off);
 
-	for (i = 0; i < num_vecs; i++) {
-		*data++ = readq(mem + NFP_NET_CFG_RXR_STATS(i));
-		*data++ = readq(mem + NFP_NET_CFG_RXR_STATS(i) + 8);
+	for (i = 0; i < tx_rings; i++) {
 		*data++ = readq(mem + NFP_NET_CFG_TXR_STATS(i));
 		*data++ = readq(mem + NFP_NET_CFG_TXR_STATS(i) + 8);
+	}
+
+	for (i = 0; i < rx_rings; i++) {
+		*data++ = readq(mem + NFP_NET_CFG_RXR_STATS(i));
+		*data++ = readq(mem + NFP_NET_CFG_RXR_STATS(i) + 8);
 	}
 
 	return data;
@@ -622,10 +633,10 @@ static void nfp_net_get_strings(struct net_device *netdev,
 	switch (stringset) {
 	case ETH_SS_STATS:
 		data = nfp_vnic_get_sw_stats_strings(netdev, data);
-		data = nfp_vnic_get_hw_stats_strings(data, nn->max_r_vecs,
+		data = nfp_vnic_get_hw_stats_strings(data, nn->dp.num_rx_rings,
+						     nn->dp.num_tx_rings,
 						     false);
 		data = nfp_mac_get_stats_strings(netdev, data);
-		data = nfp_app_port_get_stats_strings(nn->port, data);
 		break;
 	}
 }
@@ -637,9 +648,9 @@ nfp_net_get_stats(struct net_device *netdev, struct ethtool_stats *stats,
 	struct nfp_net *nn = netdev_priv(netdev);
 
 	data = nfp_vnic_get_sw_stats(netdev, data);
-	data = nfp_vnic_get_hw_stats(data, nn->dp.ctrl_bar, nn->max_r_vecs);
+	data = nfp_vnic_get_hw_stats(data, nn->dp.ctrl_bar,
+				     nn->dp.num_rx_rings, nn->dp.num_tx_rings);
 	data = nfp_mac_get_stats(netdev, data);
-	data = nfp_app_port_get_stats(nn->port, data);
 }
 
 static int nfp_net_get_sset_count(struct net_device *netdev, int sset)
@@ -649,9 +660,9 @@ static int nfp_net_get_sset_count(struct net_device *netdev, int sset)
 	switch (sset) {
 	case ETH_SS_STATS:
 		return nfp_vnic_get_sw_stats_count(netdev) +
-		       nfp_vnic_get_hw_stats_count(nn->max_r_vecs) +
-		       nfp_mac_get_stats_count(netdev) +
-		       nfp_app_port_get_stats_count(nn->port);
+		       nfp_vnic_get_hw_stats_count(nn->dp.num_rx_rings,
+						   nn->dp.num_tx_rings) +
+		       nfp_mac_get_stats_count(netdev);
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -665,10 +676,9 @@ static void nfp_port_get_strings(struct net_device *netdev,
 	switch (stringset) {
 	case ETH_SS_STATS:
 		if (nfp_port_is_vnic(port))
-			data = nfp_vnic_get_hw_stats_strings(data, 0, true);
+			data = nfp_vnic_get_hw_stats_strings(data, 0, 0, true);
 		else
 			data = nfp_mac_get_stats_strings(netdev, data);
-		data = nfp_app_port_get_stats_strings(port, data);
 		break;
 	}
 }
@@ -680,10 +690,9 @@ nfp_port_get_stats(struct net_device *netdev, struct ethtool_stats *stats,
 	struct nfp_port *port = nfp_port_from_netdev(netdev);
 
 	if (nfp_port_is_vnic(port))
-		data = nfp_vnic_get_hw_stats(data, port->vnic, 0);
+		data = nfp_vnic_get_hw_stats(data, port->vnic, 0, 0);
 	else
 		data = nfp_mac_get_stats(netdev, data);
-	data = nfp_app_port_get_stats(port, data);
 }
 
 static int nfp_port_get_sset_count(struct net_device *netdev, int sset)
@@ -694,10 +703,9 @@ static int nfp_port_get_sset_count(struct net_device *netdev, int sset)
 	switch (sset) {
 	case ETH_SS_STATS:
 		if (nfp_port_is_vnic(port))
-			count = nfp_vnic_get_hw_stats_count(0);
+			count = nfp_vnic_get_hw_stats_count(0, 0);
 		else
 			count = nfp_mac_get_stats_count(netdev);
-		count += nfp_app_port_get_stats_count(port);
 		return count;
 	default:
 		return -EOPNOTSUPP;

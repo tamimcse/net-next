@@ -416,6 +416,7 @@ int qed_sp_init_request(struct qed_hwfn *p_hwfn,
  * @param p_hwfn
  * @param p_ptt
  * @param p_tunn
+ * @param mode
  * @param allow_npar_tx_switch
  *
  * @return int
@@ -424,7 +425,7 @@ int qed_sp_init_request(struct qed_hwfn *p_hwfn,
 int qed_sp_pf_start(struct qed_hwfn *p_hwfn,
 		    struct qed_ptt *p_ptt,
 		    struct qed_tunnel_info *p_tunn,
-		    bool allow_npar_tx_switch);
+		    enum qed_mf_mode mode, bool allow_npar_tx_switch);
 
 /**
  * @brief qed_sp_pf_update - PF Function Update Ramrod
@@ -461,15 +462,6 @@ int qed_sp_pf_update_stag(struct qed_hwfn *p_hwfn);
  *
  * @return int
  */
-
-/**
- * @brief qed_sp_pf_update_ufp - PF ufp update Ramrod
- *
- * @param p_hwfn
- *
- * @return int
- */
-int qed_sp_pf_update_ufp(struct qed_hwfn *p_hwfn);
 
 int qed_sp_pf_stop(struct qed_hwfn *p_hwfn);
 

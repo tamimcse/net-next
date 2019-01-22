@@ -262,7 +262,7 @@ int i915_request_mock_selftests(void)
 		return -ENOMEM;
 
 	err = i915_subtests(tests, i915);
-	drm_dev_put(&i915->drm);
+	drm_dev_unref(&i915->drm);
 
 	return err;
 }
@@ -286,9 +286,7 @@ static int begin_live_test(struct live_test *t,
 	t->func = func;
 	t->name = name;
 
-	err = i915_gem_wait_for_idle(i915,
-				     I915_WAIT_LOCKED,
-				     MAX_SCHEDULE_TIMEOUT);
+	err = i915_gem_wait_for_idle(i915, I915_WAIT_LOCKED);
 	if (err) {
 		pr_err("%s(%s): failed to idle before, with err=%d!",
 		       func, name, err);
@@ -344,9 +342,9 @@ static int live_nop_request(void *arg)
 	mutex_lock(&i915->drm.struct_mutex);
 
 	for_each_engine(engine, i915, id) {
-		struct i915_request *request = NULL;
-		unsigned long n, prime;
 		IGT_TIMEOUT(end_time);
+		struct i915_request *request;
+		unsigned long n, prime;
 		ktime_t times[2] = {};
 
 		err = begin_live_test(&t, i915, __func__, engine->name);
@@ -432,7 +430,7 @@ static struct i915_vma *empty_batch(struct drm_i915_private *i915)
 	if (err)
 		goto err;
 
-	vma = i915_vma_instance(obj, &i915->ggtt.vm, NULL);
+	vma = i915_vma_instance(obj, &i915->ggtt.base, NULL);
 	if (IS_ERR(vma)) {
 		err = PTR_ERR(vma);
 		goto err;
@@ -468,7 +466,7 @@ empty_request(struct intel_engine_cs *engine,
 		goto out_request;
 
 out_request:
-	i915_request_add(request);
+	__i915_request_add(request, err == 0);
 	return err ? ERR_PTR(err) : request;
 }
 
@@ -557,8 +555,7 @@ out_unlock:
 static struct i915_vma *recursive_batch(struct drm_i915_private *i915)
 {
 	struct i915_gem_context *ctx = i915->kernel_context;
-	struct i915_address_space *vm =
-		ctx->ppgtt ? &ctx->ppgtt->vm : &i915->ggtt.vm;
+	struct i915_address_space *vm = ctx->ppgtt ? &ctx->ppgtt->base : &i915->ggtt.base;
 	struct drm_i915_gem_object *obj;
 	const int gen = INTEL_GEN(i915);
 	struct i915_vma *vma;
@@ -596,8 +593,11 @@ static struct i915_vma *recursive_batch(struct drm_i915_private *i915)
 	} else if (gen >= 6) {
 		*cmd++ = MI_BATCH_BUFFER_START | 1 << 8;
 		*cmd++ = lower_32_bits(vma->node.start);
-	} else {
+	} else if (gen >= 4) {
 		*cmd++ = MI_BATCH_BUFFER_START | MI_BATCH_GTT;
+		*cmd++ = lower_32_bits(vma->node.start);
+	} else {
+		*cmd++ = MI_BATCH_BUFFER_START | MI_BATCH_GTT | 1;
 		*cmd++ = lower_32_bits(vma->node.start);
 	}
 	*cmd++ = MI_BATCH_BUFFER_END; /* terminate early in case of error */
@@ -677,9 +677,7 @@ static int live_all_engines(void *arg)
 			i915_gem_object_set_active_reference(batch->obj);
 		}
 
-		err = i915_vma_move_to_active(batch, request[id], 0);
-		GEM_BUG_ON(err);
-
+		i915_vma_move_to_active(batch, request[id], 0);
 		i915_request_get(request[id]);
 		i915_request_add(request[id]);
 	}
@@ -789,9 +787,7 @@ static int live_sequential_engines(void *arg)
 		GEM_BUG_ON(err);
 		request[id]->batch = batch;
 
-		err = i915_vma_move_to_active(batch, request[id], 0);
-		GEM_BUG_ON(err);
-
+		i915_vma_move_to_active(batch, request[id], 0);
 		i915_gem_object_set_active_reference(batch->obj);
 		i915_vma_get(batch);
 
@@ -865,9 +861,5 @@ int i915_request_live_selftests(struct drm_i915_private *i915)
 		SUBTEST(live_sequential_engines),
 		SUBTEST(live_empty_request),
 	};
-
-	if (i915_terminally_wedged(&i915->gpu_error))
-		return 0;
-
 	return i915_subtests(tests, i915);
 }

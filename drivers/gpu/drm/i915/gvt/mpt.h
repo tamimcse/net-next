@@ -230,18 +230,17 @@ static inline unsigned long intel_gvt_hypervisor_gfn_to_mfn(
 /**
  * intel_gvt_hypervisor_dma_map_guest_page - setup dma map for guest page
  * @vgpu: a vGPU
- * @gfn: guest pfn
- * @size: page size
+ * @gpfn: guest pfn
  * @dma_addr: retrieve allocated dma addr
  *
  * Returns:
  * 0 on success, negative error code if failed.
  */
 static inline int intel_gvt_hypervisor_dma_map_guest_page(
-		struct intel_vgpu *vgpu, unsigned long gfn, unsigned long size,
+		struct intel_vgpu *vgpu, unsigned long gfn,
 		dma_addr_t *dma_addr)
 {
-	return intel_gvt_host.mpt->dma_map_guest_page(vgpu->handle, gfn, size,
+	return intel_gvt_host.mpt->dma_map_guest_page(vgpu->handle, gfn,
 						      dma_addr);
 }
 

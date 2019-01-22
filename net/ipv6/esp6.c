@@ -669,10 +669,8 @@ skip_cow:
 
 	sg_init_table(sg, nfrags);
 	ret = skb_to_sgvec(skb, sg, 0, skb->len);
-	if (unlikely(ret < 0)) {
-		kfree(tmp);
+	if (unlikely(ret < 0))
 		goto out;
-	}
 
 	skb->ip_summed = CHECKSUM_NONE;
 

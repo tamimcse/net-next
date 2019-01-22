@@ -311,16 +311,8 @@ static void nft_rhash_gc(struct work_struct *work)
 			continue;
 		}
 
-		if (nft_set_ext_exists(&he->ext, NFT_SET_EXT_EXPR)) {
-			struct nft_expr *expr = nft_set_ext_expr(&he->ext);
-
-			if (expr->ops->gc &&
-			    expr->ops->gc(read_pnet(&set->net), expr))
-				goto gc;
-		}
 		if (!nft_set_elem_expired(&he->ext))
 			continue;
-gc:
 		if (nft_set_elem_mark_busy(&he->ext))
 			continue;
 
@@ -341,18 +333,10 @@ schedule:
 			   nft_set_gc_interval(set));
 }
 
-static u64 nft_rhash_privsize(const struct nlattr * const nla[],
-			      const struct nft_set_desc *desc)
+static unsigned int nft_rhash_privsize(const struct nlattr * const nla[],
+				       const struct nft_set_desc *desc)
 {
 	return sizeof(struct nft_rhash);
-}
-
-static void nft_rhash_gc_init(const struct nft_set *set)
-{
-	struct nft_rhash *priv = nft_set_priv(set);
-
-	queue_delayed_work(system_power_efficient_wq, &priv->gc_work,
-			   nft_set_gc_interval(set));
 }
 
 static int nft_rhash_init(const struct nft_set *set,
@@ -372,8 +356,8 @@ static int nft_rhash_init(const struct nft_set *set,
 
 	INIT_DEFERRABLE_WORK(&priv->gc_work, nft_rhash_gc);
 	if (set->flags & NFT_SET_TIMEOUT)
-		nft_rhash_gc_init(set);
-
+		queue_delayed_work(system_power_efficient_wq, &priv->gc_work,
+				   nft_set_gc_interval(set));
 	return 0;
 }
 
@@ -387,7 +371,6 @@ static void nft_rhash_destroy(const struct nft_set *set)
 	struct nft_rhash *priv = nft_set_priv(set);
 
 	cancel_delayed_work_sync(&priv->gc_work);
-	rcu_barrier();
 	rhashtable_free_and_destroy(&priv->ht, nft_rhash_elem_destroy,
 				    (void *)set);
 }
@@ -585,8 +568,8 @@ cont:
 	}
 }
 
-static u64 nft_hash_privsize(const struct nlattr * const nla[],
-			     const struct nft_set_desc *desc)
+static unsigned int nft_hash_privsize(const struct nlattr * const nla[],
+				      const struct nft_set_desc *desc)
 {
 	return sizeof(struct nft_hash) +
 	       nft_hash_buckets(desc->size) * sizeof(struct hlist_head);
@@ -655,7 +638,7 @@ static bool nft_hash_fast_estimate(const struct nft_set_desc *desc, u32 features
 	return true;
 }
 
-struct nft_set_type nft_set_rhash_type __read_mostly = {
+static struct nft_set_type nft_rhash_type __read_mostly = {
 	.owner		= THIS_MODULE,
 	.features	= NFT_SET_MAP | NFT_SET_OBJECT |
 			  NFT_SET_TIMEOUT | NFT_SET_EVAL,
@@ -664,7 +647,6 @@ struct nft_set_type nft_set_rhash_type __read_mostly = {
 		.elemsize	= offsetof(struct nft_rhash_elem, ext),
 		.estimate	= nft_rhash_estimate,
 		.init		= nft_rhash_init,
-		.gc_init	= nft_rhash_gc_init,
 		.destroy	= nft_rhash_destroy,
 		.insert		= nft_rhash_insert,
 		.activate	= nft_rhash_activate,
@@ -678,7 +660,7 @@ struct nft_set_type nft_set_rhash_type __read_mostly = {
 	},
 };
 
-struct nft_set_type nft_set_hash_type __read_mostly = {
+static struct nft_set_type nft_hash_type __read_mostly = {
 	.owner		= THIS_MODULE,
 	.features	= NFT_SET_MAP | NFT_SET_OBJECT,
 	.ops		= {
@@ -698,7 +680,7 @@ struct nft_set_type nft_set_hash_type __read_mostly = {
 	},
 };
 
-struct nft_set_type nft_set_hash_fast_type __read_mostly = {
+static struct nft_set_type nft_hash_fast_type __read_mostly = {
 	.owner		= THIS_MODULE,
 	.features	= NFT_SET_MAP | NFT_SET_OBJECT,
 	.ops		= {
@@ -717,3 +699,26 @@ struct nft_set_type nft_set_hash_fast_type __read_mostly = {
 		.get		= nft_hash_get,
 	},
 };
+
+static int __init nft_hash_module_init(void)
+{
+	if (nft_register_set(&nft_hash_fast_type) ||
+	    nft_register_set(&nft_hash_type) ||
+	    nft_register_set(&nft_rhash_type))
+		return 1;
+	return 0;
+}
+
+static void __exit nft_hash_module_exit(void)
+{
+	nft_unregister_set(&nft_rhash_type);
+	nft_unregister_set(&nft_hash_type);
+	nft_unregister_set(&nft_hash_fast_type);
+}
+
+module_init(nft_hash_module_init);
+module_exit(nft_hash_module_exit);
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Patrick McHardy <kaber@trash.net>");
+MODULE_ALIAS_NFT_SET();

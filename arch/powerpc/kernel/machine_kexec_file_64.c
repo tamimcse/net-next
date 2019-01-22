@@ -269,14 +269,18 @@ int setup_new_fdt(const struct kimage *image, void *fdt,
 		ret = fdt_setprop_u64(fdt, chosen_node,
 				      "linux,initrd-start",
 				      initrd_load_addr);
-		if (ret < 0)
-			goto err;
+		if (ret < 0) {
+			pr_err("Error setting up the new device tree.\n");
+			return -EINVAL;
+		}
 
 		/* initrd-end is the first address after the initrd image. */
 		ret = fdt_setprop_u64(fdt, chosen_node, "linux,initrd-end",
 				      initrd_load_addr + initrd_len);
-		if (ret < 0)
-			goto err;
+		if (ret < 0) {
+			pr_err("Error setting up the new device tree.\n");
+			return -EINVAL;
+		}
 
 		ret = fdt_add_mem_rsv(fdt, initrd_load_addr, initrd_len);
 		if (ret) {
@@ -288,8 +292,10 @@ int setup_new_fdt(const struct kimage *image, void *fdt,
 
 	if (cmdline != NULL) {
 		ret = fdt_setprop_string(fdt, chosen_node, "bootargs", cmdline);
-		if (ret < 0)
-			goto err;
+		if (ret < 0) {
+			pr_err("Error setting up the new device tree.\n");
+			return -EINVAL;
+		}
 	} else {
 		ret = fdt_delprop(fdt, chosen_node, "bootargs");
 		if (ret && ret != -FDT_ERR_NOTFOUND) {
@@ -305,12 +311,10 @@ int setup_new_fdt(const struct kimage *image, void *fdt,
 	}
 
 	ret = fdt_setprop(fdt, chosen_node, "linux,booted-from-kexec", NULL, 0);
-	if (ret)
-		goto err;
+	if (ret) {
+		pr_err("Error setting up the new device tree.\n");
+		return -EINVAL;
+	}
 
 	return 0;
-
-err:
-	pr_err("Error setting up the new device tree.\n");
-	return -EINVAL;
 }

@@ -858,7 +858,10 @@ static u16 read_mgtv(struct ips_driver *ips)
 
 static u16 read_ptv(struct ips_driver *ips)
 {
-	u16 val;
+	u16 val, slope, offset;
+
+	slope = (ips->pta_val & PTA_SLOPE_MASK) >> PTA_SLOPE_SHIFT;
+	offset = ips->pta_val & PTA_OFFSET_MASK;
 
 	val = thm_readw(THM_PTV) & PTV_MASK;
 
@@ -961,12 +964,12 @@ static int ips_monitor(void *data)
 	u16 *mcp_samples, *ctv1_samples, *ctv2_samples, *mch_samples;
 	u8 cur_seqno, last_seqno;
 
-	mcp_samples = kcalloc(IPS_SAMPLE_COUNT, sizeof(u16), GFP_KERNEL);
-	ctv1_samples = kcalloc(IPS_SAMPLE_COUNT, sizeof(u16), GFP_KERNEL);
-	ctv2_samples = kcalloc(IPS_SAMPLE_COUNT, sizeof(u16), GFP_KERNEL);
-	mch_samples = kcalloc(IPS_SAMPLE_COUNT, sizeof(u16), GFP_KERNEL);
-	cpu_samples = kcalloc(IPS_SAMPLE_COUNT, sizeof(u32), GFP_KERNEL);
-	mchp_samples = kcalloc(IPS_SAMPLE_COUNT, sizeof(u32), GFP_KERNEL);
+	mcp_samples = kzalloc(sizeof(u16) * IPS_SAMPLE_COUNT, GFP_KERNEL);
+	ctv1_samples = kzalloc(sizeof(u16) * IPS_SAMPLE_COUNT, GFP_KERNEL);
+	ctv2_samples = kzalloc(sizeof(u16) * IPS_SAMPLE_COUNT, GFP_KERNEL);
+	mch_samples = kzalloc(sizeof(u16) * IPS_SAMPLE_COUNT, GFP_KERNEL);
+	cpu_samples = kzalloc(sizeof(u32) * IPS_SAMPLE_COUNT, GFP_KERNEL);
+	mchp_samples = kzalloc(sizeof(u32) * IPS_SAMPLE_COUNT, GFP_KERNEL);
 	if (!mcp_samples || !ctv1_samples || !ctv2_samples || !mch_samples ||
 			!cpu_samples || !mchp_samples) {
 		dev_err(ips->dev,

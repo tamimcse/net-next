@@ -9,7 +9,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
-#include <linux/usb/typec_dp.h>
+#include <linux/usb/tcpm.h>
 #include <linux/usb/typec_mux.h>
 
 #define PI3USB30532_CONF			0x00
@@ -83,23 +83,20 @@ static int pi3usb30532_mux_set(struct typec_mux *mux, int state)
 	new_conf = pi->conf;
 
 	switch (state) {
-	case TYPEC_STATE_SAFE:
+	case TYPEC_MUX_NONE:
 		new_conf = PI3USB30532_CONF_OPEN;
 		break;
-	case TYPEC_STATE_USB:
+	case TYPEC_MUX_USB:
 		new_conf = (new_conf & PI3USB30532_CONF_SWAP) |
 			   PI3USB30532_CONF_USB3;
 		break;
-	case TYPEC_DP_STATE_C:
-	case TYPEC_DP_STATE_E:
+	case TYPEC_MUX_DP:
 		new_conf = (new_conf & PI3USB30532_CONF_SWAP) |
 			   PI3USB30532_CONF_4LANE_DP;
 		break;
-	case TYPEC_DP_STATE_D:
+	case TYPEC_MUX_DOCK:
 		new_conf = (new_conf & PI3USB30532_CONF_SWAP) |
 			   PI3USB30532_CONF_USB3_AND_2LANE_DP;
-		break;
-	default:
 		break;
 	}
 

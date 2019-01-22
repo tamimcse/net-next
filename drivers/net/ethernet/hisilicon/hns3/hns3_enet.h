@@ -1,5 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0+
-// Copyright (c) 2016-2017 Hisilicon Limited.
+/*
+ * Copyright (c) 2016 Hisilicon Limited.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ */
 
 #ifndef __HNS3_ENET_H
 #define __HNS3_ENET_H
@@ -7,8 +13,6 @@
 #include <linux/if_vlan.h>
 
 #include "hnae3.h"
-
-#define HNS3_MOD_VERSION "1.0"
 
 extern const char hns3_driver_version[];
 
@@ -37,7 +41,7 @@ enum hns3_nic_state {
 #define HNS3_RING_TX_RING_BASEADDR_L_REG	0x00040
 #define HNS3_RING_TX_RING_BASEADDR_H_REG	0x00044
 #define HNS3_RING_TX_RING_BD_NUM_REG		0x00048
-#define HNS3_RING_TX_RING_TC_REG		0x00050
+#define HNS3_RING_TX_RING_BD_LEN_REG		0x0004C
 #define HNS3_RING_TX_RING_TAIL_REG		0x00058
 #define HNS3_RING_TX_RING_HEAD_REG		0x0005C
 #define HNS3_RING_TX_RING_FBDNUM_REG		0x00060
@@ -98,9 +102,6 @@ enum hns3_nic_state {
 #define HNS3_RXD_L4ID_S				8
 #define HNS3_RXD_L4ID_M				(0xf << HNS3_RXD_L4ID_S)
 #define HNS3_RXD_FRAG_B				12
-#define HNS3_RXD_STRP_TAGP_S			13
-#define HNS3_RXD_STRP_TAGP_M			(0x3 << HNS3_RXD_STRP_TAGP_S)
-
 #define HNS3_RXD_L2E_B				16
 #define HNS3_RXD_L3E_B				17
 #define HNS3_RXD_L4E_B				18
@@ -284,10 +285,10 @@ struct hns3_desc_cb {
 
 	/* priv data for the desc, e.g. skb when use with ip stack*/
 	void *priv;
-	u32 page_offset;
-	u32 length;     /* length of the buffer */
-
+	u16 page_offset;
 	u16 reuse_flag;
+
+	u32 length;     /* length of the buffer */
 
        /* desc type, used by the ring user to mark the type of the priv data */
 	u16 type;
@@ -493,6 +494,7 @@ struct hns3_enet_tqp_vector {
 
 	u16 num_tqps;	/* total number of tqps in TQP vector */
 
+	cpumask_t affinity_mask;
 	char name[HNAE3_INT_NAME_LEN];
 
 	/* when 0 should adjust interrupt coalesce parameter */
@@ -584,7 +586,7 @@ static inline void hns3_write_reg(void __iomem *base, u32 reg, u32 value)
 #define hns3_write_dev(a, reg, value) \
 	hns3_write_reg((a)->io_base, (reg), (value))
 
-#define hnae3_queue_xmit(tqp, buf_num) writel_relaxed(buf_num, \
+#define hnae_queue_xmit(tqp, buf_num) writel_relaxed(buf_num, \
 		(tqp)->io_base + HNS3_RING_TX_RING_TAIL_REG)
 
 #define ring_to_dev(ring) (&(ring)->tqp->handle->pdev->dev)
@@ -594,9 +596,9 @@ static inline void hns3_write_reg(void __iomem *base, u32 reg, u32 value)
 
 #define tx_ring_data(priv, idx) ((priv)->ring_data[idx])
 
-#define hnae3_buf_size(_ring) ((_ring)->buf_size)
-#define hnae3_page_order(_ring) (get_order(hnae3_buf_size(_ring)))
-#define hnae3_page_size(_ring) (PAGE_SIZE << hnae3_page_order(_ring))
+#define hnae_buf_size(_ring) ((_ring)->buf_size)
+#define hnae_page_order(_ring) (get_order(hnae_buf_size(_ring)))
+#define hnae_page_size(_ring) (PAGE_SIZE << hnae_page_order(_ring))
 
 /* iterator for handling rings in ring group */
 #define hns3_for_each_ring(pos, head) \
@@ -618,7 +620,6 @@ int hns3_set_channels(struct net_device *netdev,
 bool hns3_clean_tx_ring(struct hns3_enet_ring *ring, int budget);
 int hns3_init_all_ring(struct hns3_nic_priv *priv);
 int hns3_uninit_all_ring(struct hns3_nic_priv *priv);
-int hns3_nic_reset_all_ring(struct hnae3_handle *h);
 netdev_tx_t hns3_nic_net_xmit(struct sk_buff *skb, struct net_device *netdev);
 int hns3_clean_rx_ring(
 		struct hns3_enet_ring *ring, int budget,

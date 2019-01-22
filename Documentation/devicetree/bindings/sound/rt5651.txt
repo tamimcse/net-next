@@ -50,7 +50,7 @@ Pins on the device (for linking into audio routes) for RT5651:
 
 Example:
 
-rt5651: codec@1a {
+codec: rt5651@1a {
 	compatible = "realtek,rt5651";
 	reg = <0x1a>;
 	realtek,dmic-en = "true";

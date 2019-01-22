@@ -1062,7 +1062,9 @@ static int ci_hdrc_probe(struct platform_device *pdev)
 		ci_hdrc_otg_fsm_start(ci);
 
 	device_set_wakeup_capable(&pdev->dev, true);
-	dbg_create_files(ci);
+	ret = dbg_create_files(ci);
+	if (ret)
+		goto stop;
 
 	ret = sysfs_create_group(&dev->kobj, &ci_attr_group);
 	if (ret)

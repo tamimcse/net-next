@@ -35,6 +35,7 @@
 struct ipu_crtc {
 	struct device		*dev;
 	struct drm_crtc		base;
+	struct imx_drm_crtc	*imx_crtc;
 
 	/* plane[0] is the full plane, plane[1] is the partial plane */
 	struct ipu_plane	*plane[2];
@@ -212,7 +213,7 @@ static bool ipu_crtc_mode_fixup(struct drm_crtc *crtc,
 static int ipu_crtc_atomic_check(struct drm_crtc *crtc,
 				 struct drm_crtc_state *state)
 {
-	u32 primary_plane_mask = drm_plane_mask(crtc->primary);
+	u32 primary_plane_mask = 1 << drm_plane_index(crtc->primary);
 
 	if (state->active && (primary_plane_mask & state->plane_mask) == 0)
 		return -EINVAL;

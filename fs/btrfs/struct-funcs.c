@@ -3,6 +3,7 @@
  * Copyright (C) 2007 Oracle.  All rights reserved.
  */
 
+#include <linux/highmem.h>
 #include <asm/unaligned.h>
 
 #include "ctree.h"

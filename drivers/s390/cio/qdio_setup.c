@@ -141,7 +141,7 @@ static int __qdio_allocate_qs(struct qdio_q **irq_ptr_qs, int nr_queues)
 	int i;
 
 	for (i = 0; i < nr_queues; i++) {
-		q = kmem_cache_zalloc(qdio_q_cache, GFP_KERNEL);
+		q = kmem_cache_alloc(qdio_q_cache, GFP_KERNEL);
 		if (!q)
 			return -ENOMEM;
 
@@ -456,6 +456,7 @@ int qdio_setup_irq(struct qdio_initialize *init_data)
 {
 	struct ciw *ciw;
 	struct qdio_irq *irq_ptr = init_data->cdev->private->qdio_data;
+	int rc;
 
 	memset(&irq_ptr->qib, 0, sizeof(irq_ptr->qib));
 	memset(&irq_ptr->siga_flag, 0, sizeof(irq_ptr->siga_flag));
@@ -492,14 +493,16 @@ int qdio_setup_irq(struct qdio_initialize *init_data)
 	ciw = ccw_device_get_ciw(init_data->cdev, CIW_TYPE_EQUEUE);
 	if (!ciw) {
 		DBF_ERROR("%4x NO EQ", irq_ptr->schid.sch_no);
-		return -EINVAL;
+		rc = -EINVAL;
+		goto out_err;
 	}
 	irq_ptr->equeue = *ciw;
 
 	ciw = ccw_device_get_ciw(init_data->cdev, CIW_TYPE_AQUEUE);
 	if (!ciw) {
 		DBF_ERROR("%4x NO AQ", irq_ptr->schid.sch_no);
-		return -EINVAL;
+		rc = -EINVAL;
+		goto out_err;
 	}
 	irq_ptr->aqueue = *ciw;
 
@@ -509,6 +512,9 @@ int qdio_setup_irq(struct qdio_initialize *init_data)
 	init_data->cdev->handler = qdio_int_handler;
 	spin_unlock_irq(get_ccwdev_lock(irq_ptr->cdev));
 	return 0;
+out_err:
+	qdio_release_memory(irq_ptr);
+	return rc;
 }
 
 void qdio_print_subchannel_info(struct qdio_irq *irq_ptr,
@@ -536,7 +542,7 @@ void qdio_print_subchannel_info(struct qdio_irq *irq_ptr,
 
 int qdio_enable_async_operation(struct qdio_output_q *outq)
 {
-	outq->aobs = kcalloc(QDIO_MAX_BUFFERS_PER_Q, sizeof(struct qaob *),
+	outq->aobs = kzalloc(sizeof(struct qaob *) * QDIO_MAX_BUFFERS_PER_Q,
 			     GFP_ATOMIC);
 	if (!outq->aobs) {
 		outq->use_cq = 0;

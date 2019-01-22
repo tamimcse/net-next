@@ -41,11 +41,9 @@ MODULE_FIRMWARE("amdgpu/polaris11_smc.bin");
 MODULE_FIRMWARE("amdgpu/polaris11_smc_sk.bin");
 MODULE_FIRMWARE("amdgpu/polaris11_k_smc.bin");
 MODULE_FIRMWARE("amdgpu/polaris12_smc.bin");
-MODULE_FIRMWARE("amdgpu/vegam_smc.bin");
 MODULE_FIRMWARE("amdgpu/vega10_smc.bin");
 MODULE_FIRMWARE("amdgpu/vega10_acg_smc.bin");
 MODULE_FIRMWARE("amdgpu/vega12_smc.bin");
-MODULE_FIRMWARE("amdgpu/vega20_smc.bin");
 
 int smum_thermal_avfs_enable(struct pp_hwmgr *hwmgr)
 {
@@ -96,7 +94,7 @@ int smum_process_firmware_header(struct pp_hwmgr *hwmgr)
 	return 0;
 }
 
-uint32_t smum_get_argument(struct pp_hwmgr *hwmgr)
+int smum_get_argument(struct pp_hwmgr *hwmgr)
 {
 	if (NULL != hwmgr->smumgr_funcs->get_argument)
 		return hwmgr->smumgr_funcs->get_argument(hwmgr);

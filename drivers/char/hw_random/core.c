@@ -516,18 +516,11 @@ EXPORT_SYMBOL_GPL(hwrng_register);
 
 void hwrng_unregister(struct hwrng *rng)
 {
-	int err;
-
 	mutex_lock(&rng_mutex);
 
 	list_del(&rng->list);
-	if (current_rng == rng) {
-		err = enable_best_rng();
-		if (err) {
-			drop_current_rng();
-			cur_rng_set_by_user = 0;
-		}
-	}
+	if (current_rng == rng)
+		enable_best_rng();
 
 	if (list_empty(&rng_list)) {
 		mutex_unlock(&rng_mutex);

@@ -138,7 +138,7 @@ static int set_evtchn_to_irq(unsigned evtchn, unsigned irq)
 		clear_evtchn_to_irq_row(row);
 	}
 
-	evtchn_to_irq[row][col] = irq;
+	evtchn_to_irq[EVTCHN_ROW(evtchn)][EVTCHN_COL(evtchn)] = irq;
 	return 0;
 }
 
@@ -627,6 +627,8 @@ static void __unbind_from_irq(unsigned int irq)
 
 		xen_irq_info_cleanup(info);
 	}
+
+	BUG_ON(info_for_irq(irq)->type == IRQT_UNBOUND);
 
 	xen_free_irq(irq);
 }

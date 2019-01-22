@@ -489,8 +489,7 @@ static int fb_show_logo_line(struct fb_info *info, int rotate,
 	}
 
 	if (fb_logo.depth <= 4) {
-		logo_new = kmalloc_array(logo->width, logo->height,
-					 GFP_KERNEL);
+		logo_new = kmalloc(logo->width * logo->height, GFP_KERNEL);
 		if (logo_new == NULL) {
 			kfree(palette);
 			if (saved_pseudo_palette)
@@ -507,8 +506,8 @@ static int fb_show_logo_line(struct fb_info *info, int rotate,
 	image.height = logo->height;
 
 	if (rotate) {
-		logo_rotate = kmalloc_array(logo->width, logo->height,
-					    GFP_KERNEL);
+		logo_rotate = kmalloc(logo->width *
+				      logo->height, GFP_KERNEL);
 		if (logo_rotate)
 			fb_rotate_logo(info, logo_rotate, &image, rotate);
 	}
@@ -712,6 +711,19 @@ static const struct seq_operations proc_fb_seq_ops = {
 	.next	= fb_seq_next,
 	.stop	= fb_seq_stop,
 	.show	= fb_seq_show,
+};
+
+static int proc_fb_open(struct inode *inode, struct file *file)
+{
+	return seq_open(file, &proc_fb_seq_ops);
+}
+
+static const struct file_operations fb_proc_fops = {
+	.owner		= THIS_MODULE,
+	.open		= proc_fb_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= seq_release,
 };
 
 /*
@@ -1347,7 +1359,6 @@ static long fb_compat_ioctl(struct file *file, unsigned int cmd,
 	case FBIOGET_CON2FBMAP:
 	case FBIOPUT_CON2FBMAP:
 		arg = (unsigned long) compat_ptr(arg);
-		/* fall through */
 	case FBIOBLANK:
 		ret = do_fb_ioctl(info, cmd, arg);
 		break;
@@ -1594,8 +1605,10 @@ static int do_remove_conflicting_framebuffers(struct apertures_struct *a,
 	int i, ret;
 
 	/* check all firmware fbs and kick off if the base addr overlaps */
-	for_each_registered_fb(i) {
+	for (i = 0 ; i < FB_MAX; i++) {
 		struct apertures_struct *gen_aper;
+		if (!registered_fb[i])
+			continue;
 
 		if (!(registered_fb[i]->flags & FBINFO_MISC_FIRMWARE))
 			continue;
@@ -1690,30 +1703,25 @@ static int do_register_framebuffer(struct fb_info *fb_info)
 	event.info = fb_info;
 	if (!lockless_register_fb)
 		console_lock();
-	else
-		atomic_inc(&ignore_console_lock_warning);
 	if (!lock_fb_info(fb_info)) {
-		ret = -ENODEV;
-		goto unlock_console;
+		if (!lockless_register_fb)
+			console_unlock();
+		return -ENODEV;
 	}
-	ret = 0;
 
 	fb_notifier_call_chain(FB_EVENT_FB_REGISTERED, &event);
 	unlock_fb_info(fb_info);
-unlock_console:
 	if (!lockless_register_fb)
 		console_unlock();
-	else
-		atomic_dec(&ignore_console_lock_warning);
-	return ret;
+	return 0;
 }
 
-static int unbind_console(struct fb_info *fb_info)
+static int do_unregister_framebuffer(struct fb_info *fb_info)
 {
 	struct fb_event event;
-	int ret;
-	int i = fb_info->node;
+	int i, ret = 0;
 
+	i = fb_info->node;
 	if (i < 0 || i >= FB_MAX || registered_fb[i] != fb_info)
 		return -EINVAL;
 
@@ -1728,29 +1736,17 @@ static int unbind_console(struct fb_info *fb_info)
 	unlock_fb_info(fb_info);
 	console_unlock();
 
-	return ret;
-}
-
-static int __unlink_framebuffer(struct fb_info *fb_info);
-
-static int do_unregister_framebuffer(struct fb_info *fb_info)
-{
-	struct fb_event event;
-	int ret;
-
-	ret = unbind_console(fb_info);
-
 	if (ret)
 		return -EINVAL;
 
 	pm_vt_switch_unregister(fb_info->dev);
 
-	__unlink_framebuffer(fb_info);
+	unlink_framebuffer(fb_info);
 	if (fb_info->pixmap.addr &&
 	    (fb_info->pixmap.flags & FB_PIXMAP_DEFAULT))
 		kfree(fb_info->pixmap.addr);
 	fb_destroy_modelist(&fb_info->modelist);
-	registered_fb[fb_info->node] = NULL;
+	registered_fb[i] = NULL;
 	num_registered_fb--;
 	fb_cleanup_device(fb_info);
 	event.info = fb_info;
@@ -1763,7 +1759,7 @@ static int do_unregister_framebuffer(struct fb_info *fb_info)
 	return 0;
 }
 
-static int __unlink_framebuffer(struct fb_info *fb_info)
+int unlink_framebuffer(struct fb_info *fb_info)
 {
 	int i;
 
@@ -1775,20 +1771,6 @@ static int __unlink_framebuffer(struct fb_info *fb_info)
 		device_destroy(fb_class, MKDEV(FB_MAJOR, i));
 		fb_info->dev = NULL;
 	}
-
-	return 0;
-}
-
-int unlink_framebuffer(struct fb_info *fb_info)
-{
-	int ret;
-
-	ret = __unlink_framebuffer(fb_info);
-	if (ret)
-		return ret;
-
-	unbind_console(fb_info);
-
 	return 0;
 }
 EXPORT_SYMBOL(unlink_framebuffer);
@@ -1895,7 +1877,7 @@ fbmem_init(void)
 {
 	int ret;
 
-	if (!proc_create_seq("fb", 0, NULL, &proc_fb_seq_ops))
+	if (!proc_create("fb", 0, NULL, &fb_proc_fops))
 		return -ENOMEM;
 
 	ret = register_chrdev(FB_MAJOR, "fb", &fb_fops);

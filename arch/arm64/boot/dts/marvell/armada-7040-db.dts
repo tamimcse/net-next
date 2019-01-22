@@ -242,11 +242,6 @@
 	phy-mode = "10gbase-kr";
 	/* Generic PHY, providing serdes lanes */
 	phys = <&cp0_comphy2 0>;
-
-	fixed-link {
-		speed = <10000>;
-		full-duplex;
-	};
 };
 
 &cp0_eth1 {

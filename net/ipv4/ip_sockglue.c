@@ -47,8 +47,6 @@
 #include <linux/errqueue.h>
 #include <linux/uaccess.h>
 
-#include <linux/bpfilter.h>
-
 /*
  *	SOL_IP control messages.
  */
@@ -150,18 +148,15 @@ static void ip_cmsg_recv_dstaddr(struct msghdr *msg, struct sk_buff *skb)
 {
 	struct sockaddr_in sin;
 	const struct iphdr *iph = ip_hdr(skb);
-	__be16 *ports;
-	int end;
+	__be16 *ports = (__be16 *)skb_transport_header(skb);
 
-	end = skb_transport_offset(skb) + 4;
-	if (end > 0 && !pskb_may_pull(skb, end))
+	if (skb_transport_offset(skb) + 4 > (int)skb->len)
 		return;
 
 	/* All current transport protocols have the port numbers in the
 	 * first four bytes of the transport header and this function is
 	 * written with this assumption in mind.
 	 */
-	ports = (__be16 *)skb_transport_header(skb);
 
 	sin.sin_family = AF_INET;
 	sin.sin_addr.s_addr = iph->daddr;
@@ -509,6 +504,8 @@ int ip_recv_error(struct sock *sk, struct msghdr *msg, int len, int *addr_len)
 	} errhdr;
 	int err;
 	int copied;
+
+	WARN_ON_ONCE(sk->sk_family == AF_INET6);
 
 	err = -EAGAIN;
 	skb = sock_dequeue_err_skb(sk);
@@ -987,7 +984,7 @@ static int do_ip_setsockopt(struct sock *sk, int level,
 			mreq.imr_multiaddr.s_addr = mreqs.imr_multiaddr;
 			mreq.imr_address.s_addr = mreqs.imr_interface;
 			mreq.imr_ifindex = 0;
-			err = ip_mc_join_group_ssm(sk, &mreq, MCAST_INCLUDE);
+			err = ip_mc_join_group(sk, &mreq);
 			if (err && err != -EADDRINUSE)
 				break;
 			omode = MCAST_INCLUDE;
@@ -1064,7 +1061,7 @@ static int do_ip_setsockopt(struct sock *sk, int level,
 			mreq.imr_multiaddr = psin->sin_addr;
 			mreq.imr_address.s_addr = 0;
 			mreq.imr_ifindex = greqs.gsr_interface;
-			err = ip_mc_join_group_ssm(sk, &mreq, MCAST_INCLUDE);
+			err = ip_mc_join_group(sk, &mreq);
 			if (err && err != -EADDRINUSE)
 				break;
 			greqs.gsr_interface = mreq.imr_ifindex;
@@ -1247,11 +1244,6 @@ int ip_setsockopt(struct sock *sk, int level,
 		return -ENOPROTOOPT;
 
 	err = do_ip_setsockopt(sk, level, optname, optval, optlen);
-#ifdef CONFIG_BPFILTER
-	if (optname >= BPFILTER_IPT_SO_SET_REPLACE &&
-	    optname < BPFILTER_IPT_SET_MAX)
-		err = bpfilter_ip_set_sockopt(sk, optname, optval, optlen);
-#endif
 #ifdef CONFIG_NETFILTER
 	/* we need to exclude all possible ENOPROTOOPTs except default case */
 	if (err == -ENOPROTOOPT && optname != IP_HDRINCL &&
@@ -1560,11 +1552,6 @@ int ip_getsockopt(struct sock *sk, int level,
 	int err;
 
 	err = do_ip_getsockopt(sk, level, optname, optval, optlen, 0);
-#ifdef CONFIG_BPFILTER
-	if (optname >= BPFILTER_IPT_SO_GET_INFO &&
-	    optname < BPFILTER_IPT_GET_MAX)
-		err = bpfilter_ip_get_sockopt(sk, optname, optval, optlen);
-#endif
 #ifdef CONFIG_NETFILTER
 	/* we need to exclude all possible ENOPROTOOPTs except default case */
 	if (err == -ENOPROTOOPT && optname != IP_PKTOPTIONS &&
@@ -1597,11 +1584,6 @@ int compat_ip_getsockopt(struct sock *sk, int level, int optname,
 	err = do_ip_getsockopt(sk, level, optname, optval, optlen,
 		MSG_CMSG_COMPAT);
 
-#ifdef CONFIG_BPFILTER
-	if (optname >= BPFILTER_IPT_SO_GET_INFO &&
-	    optname < BPFILTER_IPT_GET_MAX)
-		err = bpfilter_ip_get_sockopt(sk, optname, optval, optlen);
-#endif
 #ifdef CONFIG_NETFILTER
 	/* we need to exclude all possible ENOPROTOOPTs except default case */
 	if (err == -ENOPROTOOPT && optname != IP_PKTOPTIONS &&

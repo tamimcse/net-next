@@ -31,11 +31,9 @@
  * Auxiliary data attached to CIFS inode within the cache
  */
 struct cifs_fscache_inode_auxdata {
-	u64 last_write_time_sec;
-	u64 last_change_time_sec;
-	u32 last_write_time_nsec;
-	u32 last_change_time_nsec;
-	u64 eof;
+	struct timespec	last_write_time;
+	struct timespec	last_change_time;
+	u64		eof;
 };
 
 /*

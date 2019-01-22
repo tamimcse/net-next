@@ -21,7 +21,9 @@
 #define _XT_OSF_H
 
 #include <linux/types.h>
-#include <linux/netfilter/nfnetlink_osf.h>
+#include <linux/ip.h>
+#include <linux/tcp.h>
+#include <linux/netfilter/nf_osf.h>
 
 #define XT_OSF_GENRE		NF_OSF_GENRE
 #define XT_OSF_INVERT		NF_OSF_INVERT
@@ -35,7 +37,8 @@
 
 #define XT_OSF_TTL_TRUE		NF_OSF_TTL_TRUE
 #define XT_OSF_TTL_NOCHECK	NF_OSF_TTL_NOCHECK
-#define XT_OSF_TTL_LESS		NF_OSF_TTL_LESS
+
+#define XT_OSF_TTL_LESS	1	/* Check if ip TTL is less than fingerprint one */
 
 #define xt_osf_wc		nf_osf_wc
 #define xt_osf_opt		nf_osf_opt
@@ -44,8 +47,19 @@
 #define xt_osf_finger		nf_osf_finger
 #define xt_osf_nlmsg		nf_osf_nlmsg
 
-#define xt_osf_window_size_options	nf_osf_window_size_options
-#define xt_osf_attr_type	nf_osf_attr_type
-#define xt_osf_msg_types	nf_osf_msg_types
+/*
+ * Add/remove fingerprint from the kernel.
+ */
+enum xt_osf_msg_types {
+	OSF_MSG_ADD,
+	OSF_MSG_REMOVE,
+	OSF_MSG_MAX,
+};
+
+enum xt_osf_attr_type {
+	OSF_ATTR_UNSPEC,
+	OSF_ATTR_FINGER,
+	OSF_ATTR_MAX,
+};
 
 #endif				/* _XT_OSF_H */

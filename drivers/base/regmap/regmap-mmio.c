@@ -206,8 +206,7 @@ static void regmap_mmio_free_context(void *context)
 
 	if (!IS_ERR(ctx->clk)) {
 		clk_unprepare(ctx->clk);
-		if (!ctx->attached_clk)
-			clk_put(ctx->clk);
+		clk_put(ctx->clk);
 	}
 	kfree(context);
 }

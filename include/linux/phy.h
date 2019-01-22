@@ -406,17 +406,13 @@ struct phy_device {
 	u32 phy_id;
 
 	struct phy_c45_device_ids c45_ids;
-	unsigned is_c45:1;
-	unsigned is_internal:1;
-	unsigned is_pseudo_fixed_link:1;
-	unsigned has_fixups:1;
-	unsigned suspended:1;
-	unsigned sysfs_links:1;
-	unsigned loopback_enabled:1;
-
-	unsigned autoneg:1;
-	/* The most recently read link state */
-	unsigned link:1;
+	bool is_c45;
+	bool is_internal;
+	bool is_pseudo_fixed_link;
+	bool has_fixups;
+	bool suspended;
+	bool sysfs_links;
+	bool loopback_enabled;
 
 	enum phy_state state;
 
@@ -433,6 +429,9 @@ struct phy_device {
 	int pause;
 	int asym_pause;
 
+	/* The most recently read link state */
+	int link;
+
 	/* Enabled Interrupts */
 	u32 interrupts;
 
@@ -444,6 +443,8 @@ struct phy_device {
 
 	/* Energy efficient ethernet modes which should be prohibited */
 	u32 eee_broken_modes;
+
+	int autoneg;
 
 	int link_timeout;
 
@@ -825,16 +826,6 @@ static inline bool phy_interrupt_is_valid(struct phy_device *phydev)
 }
 
 /**
- * phy_polling_mode - Convenience function for testing whether polling is
- * used to detect PHY status changes
- * @phydev: the phy_device struct
- */
-static inline bool phy_polling_mode(struct phy_device *phydev)
-{
-	return phydev->irq == PHY_POLL;
-}
-
-/**
  * phy_is_internal - Convenience function for testing if a PHY is internal
  * @phydev: the phy_device struct
  */
@@ -952,8 +943,6 @@ void phy_start(struct phy_device *phydev);
 void phy_stop(struct phy_device *phydev);
 int phy_start_aneg(struct phy_device *phydev);
 int phy_aneg_done(struct phy_device *phydev);
-int phy_speed_down(struct phy_device *phydev, bool sync);
-int phy_speed_up(struct phy_device *phydev);
 
 int phy_stop_interrupts(struct phy_device *phydev);
 int phy_restart_aneg(struct phy_device *phydev);

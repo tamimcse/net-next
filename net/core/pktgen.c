@@ -1265,7 +1265,7 @@ static ssize_t pktgen_if_write(struct file *file,
 		buf[len] = 0;
 		if (strcmp(buf, pkt_dev->dst_min) != 0) {
 			memset(pkt_dev->dst_min, 0, sizeof(pkt_dev->dst_min));
-			strcpy(pkt_dev->dst_min, buf);
+			strncpy(pkt_dev->dst_min, buf, len);
 			pkt_dev->daddr_min = in_aton(pkt_dev->dst_min);
 			pkt_dev->cur_daddr = pkt_dev->daddr_min;
 		}
@@ -1280,12 +1280,14 @@ static ssize_t pktgen_if_write(struct file *file,
 		if (len < 0)
 			return len;
 
+
 		if (copy_from_user(buf, &user_buffer[i], len))
 			return -EFAULT;
+
 		buf[len] = 0;
 		if (strcmp(buf, pkt_dev->dst_max) != 0) {
 			memset(pkt_dev->dst_max, 0, sizeof(pkt_dev->dst_max));
-			strcpy(pkt_dev->dst_max, buf);
+			strncpy(pkt_dev->dst_max, buf, len);
 			pkt_dev->daddr_max = in_aton(pkt_dev->dst_max);
 			pkt_dev->cur_daddr = pkt_dev->daddr_max;
 		}
@@ -1394,7 +1396,7 @@ static ssize_t pktgen_if_write(struct file *file,
 		buf[len] = 0;
 		if (strcmp(buf, pkt_dev->src_min) != 0) {
 			memset(pkt_dev->src_min, 0, sizeof(pkt_dev->src_min));
-			strcpy(pkt_dev->src_min, buf);
+			strncpy(pkt_dev->src_min, buf, len);
 			pkt_dev->saddr_min = in_aton(pkt_dev->src_min);
 			pkt_dev->cur_saddr = pkt_dev->saddr_min;
 		}
@@ -1414,7 +1416,7 @@ static ssize_t pktgen_if_write(struct file *file,
 		buf[len] = 0;
 		if (strcmp(buf, pkt_dev->src_max) != 0) {
 			memset(pkt_dev->src_max, 0, sizeof(pkt_dev->src_max));
-			strcpy(pkt_dev->src_max, buf);
+			strncpy(pkt_dev->src_max, buf, len);
 			pkt_dev->saddr_max = in_aton(pkt_dev->src_max);
 			pkt_dev->cur_saddr = pkt_dev->saddr_max;
 		}
@@ -2253,7 +2255,7 @@ static void get_ipsec_sa(struct pktgen_dev *pkt_dev, int flow)
 			x = xfrm_state_lookup_byspi(pn->net, htonl(pkt_dev->spi), AF_INET);
 		} else {
 			/* slow path: we dont already have xfrm_state */
-			x = xfrm_stateonly_find(pn->net, DUMMY_MARK, 0,
+			x = xfrm_stateonly_find(pn->net, DUMMY_MARK,
 						(xfrm_address_t *)&pkt_dev->cur_daddr,
 						(xfrm_address_t *)&pkt_dev->cur_saddr,
 						AF_INET,
@@ -3601,8 +3603,7 @@ static int pktgen_add_device(struct pktgen_thread *t, const char *ifname)
 		return -ENOMEM;
 
 	strcpy(pkt_dev->odevname, ifname);
-	pkt_dev->flows = vzalloc_node(array_size(MAX_CFLOWS,
-						 sizeof(struct flow_state)),
+	pkt_dev->flows = vzalloc_node(MAX_CFLOWS * sizeof(struct flow_state),
 				      node);
 	if (pkt_dev->flows == NULL) {
 		kfree(pkt_dev);

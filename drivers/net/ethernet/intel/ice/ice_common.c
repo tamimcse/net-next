@@ -45,9 +45,6 @@ static enum ice_status ice_set_mac_type(struct ice_hw *hw)
 /**
  * ice_clear_pf_cfg - Clear PF configuration
  * @hw: pointer to the hardware structure
- *
- * Clears any existing PF configuration (VSIs, VSI lists, switch rules, port
- * configuration, flow director filters, etc.).
  */
 enum ice_status ice_clear_pf_cfg(struct ice_hw *hw)
 {
@@ -1486,7 +1483,7 @@ enum ice_status ice_get_link_status(struct ice_port_info *pi, bool *link_up)
 	struct ice_phy_info *phy_info;
 	enum ice_status status = 0;
 
-	if (!pi || !link_up)
+	if (!pi)
 		return ICE_ERR_PARAM;
 
 	phy_info = &pi->phy;
@@ -1622,23 +1619,20 @@ __ice_aq_get_set_rss_lut(struct ice_hw *hw, u16 vsi_id, u8 lut_type, u8 *lut,
 	}
 
 	/* LUT size is only valid for Global and PF table types */
-	switch (lut_size) {
-	case ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_128:
-		break;
-	case ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_512:
+	if (lut_size == ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_128) {
+		flags |= (ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_128_FLAG <<
+			  ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_S) &
+			 ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_M;
+	} else if (lut_size == ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_512) {
 		flags |= (ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_512_FLAG <<
 			  ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_S) &
 			 ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_M;
-		break;
-	case ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_2K:
-		if (lut_type == ICE_AQC_GSET_RSS_LUT_TABLE_TYPE_PF) {
-			flags |= (ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_2K_FLAG <<
-				  ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_S) &
-				 ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_M;
-			break;
-		}
-		/* fall-through */
-	default:
+	} else if ((lut_size == ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_2K) &&
+		   (lut_type == ICE_AQC_GSET_RSS_LUT_TABLE_TYPE_PF)) {
+		flags |= (ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_2K_FLAG <<
+			  ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_S) &
+			 ICE_AQC_GSET_RSS_LUT_TABLE_SIZE_M;
+	} else {
 		status = ICE_ERR_PARAM;
 		goto ice_aq_get_set_rss_lut_exit;
 	}

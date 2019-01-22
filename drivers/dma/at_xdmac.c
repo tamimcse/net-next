@@ -1833,7 +1833,8 @@ static void at_xdmac_free_chan_resources(struct dma_chan *chan)
 #ifdef CONFIG_PM
 static int atmel_xdmac_prepare(struct device *dev)
 {
-	struct at_xdmac		*atxdmac = dev_get_drvdata(dev);
+	struct platform_device	*pdev = to_platform_device(dev);
+	struct at_xdmac		*atxdmac = platform_get_drvdata(pdev);
 	struct dma_chan		*chan, *_chan;
 
 	list_for_each_entry_safe(chan, _chan, &atxdmac->dma.channels, device_node) {
@@ -1852,7 +1853,8 @@ static int atmel_xdmac_prepare(struct device *dev)
 #ifdef CONFIG_PM_SLEEP
 static int atmel_xdmac_suspend(struct device *dev)
 {
-	struct at_xdmac		*atxdmac = dev_get_drvdata(dev);
+	struct platform_device	*pdev = to_platform_device(dev);
+	struct at_xdmac		*atxdmac = platform_get_drvdata(pdev);
 	struct dma_chan		*chan, *_chan;
 
 	list_for_each_entry_safe(chan, _chan, &atxdmac->dma.channels, device_node) {
@@ -1876,7 +1878,8 @@ static int atmel_xdmac_suspend(struct device *dev)
 
 static int atmel_xdmac_resume(struct device *dev)
 {
-	struct at_xdmac		*atxdmac = dev_get_drvdata(dev);
+	struct platform_device	*pdev = to_platform_device(dev);
+	struct at_xdmac		*atxdmac = platform_get_drvdata(pdev);
 	struct at_xdmac_chan	*atchan;
 	struct dma_chan		*chan, *_chan;
 	int			i;

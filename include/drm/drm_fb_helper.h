@@ -32,7 +32,6 @@
 
 struct drm_fb_helper;
 
-#include <drm/drm_client.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_device.h>
 #include <linux/kgdb.h>
@@ -155,20 +154,6 @@ struct drm_fb_helper_connector {
  * operations.
  */
 struct drm_fb_helper {
-	/**
-	 * @client:
-	 *
-	 * DRM client used by the generic fbdev emulation.
-	 */
-	struct drm_client_dev client;
-
-	/**
-	 * @buffer:
-	 *
-	 * Framebuffer used by the generic fbdev emulation.
-	 */
-	struct drm_client_buffer *buffer;
-
 	struct drm_framebuffer *fb;
 	struct drm_device *dev;
 	int crtc_count;
@@ -248,12 +233,6 @@ struct drm_fb_helper {
 	 */
 	int preferred_bpp;
 };
-
-static inline struct drm_fb_helper *
-drm_fb_helper_from_client(struct drm_client_dev *client)
-{
-	return container_of(client, struct drm_fb_helper, client);
-}
 
 /**
  * define DRM_FB_HELPER_DEFAULT_OPS - helper define for drm drivers
@@ -351,10 +330,6 @@ void drm_fb_helper_fbdev_teardown(struct drm_device *dev);
 
 void drm_fb_helper_lastclose(struct drm_device *dev);
 void drm_fb_helper_output_poll_changed(struct drm_device *dev);
-
-int drm_fb_helper_generic_probe(struct drm_fb_helper *fb_helper,
-				struct drm_fb_helper_surface_size *sizes);
-int drm_fbdev_generic_setup(struct drm_device *dev, unsigned int preferred_bpp);
 #else
 static inline void drm_fb_helper_prepare(struct drm_device *dev,
 					struct drm_fb_helper *helper,
@@ -587,19 +562,6 @@ static inline void drm_fb_helper_lastclose(struct drm_device *dev)
 
 static inline void drm_fb_helper_output_poll_changed(struct drm_device *dev)
 {
-}
-
-static inline int
-drm_fb_helper_generic_probe(struct drm_fb_helper *fb_helper,
-			    struct drm_fb_helper_surface_size *sizes)
-{
-	return 0;
-}
-
-static inline int
-drm_fbdev_generic_setup(struct drm_device *dev, unsigned int preferred_bpp)
-{
-	return 0;
 }
 
 #endif

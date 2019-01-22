@@ -1509,7 +1509,7 @@ static int vpfe_streamon(struct file *file, void *priv,
 unlock_out:
 	mutex_unlock(&vpfe_dev->lock);
 streamoff:
-	videobuf_streamoff(&vpfe_dev->buffer_queue);
+	ret = videobuf_streamoff(&vpfe_dev->buffer_queue);
 	return ret;
 }
 

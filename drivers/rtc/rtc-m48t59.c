@@ -47,7 +47,8 @@ struct m48t59_private {
 static void
 m48t59_mem_writeb(struct device *dev, u32 ofs, u8 val)
 {
-	struct m48t59_private *m48t59 = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct m48t59_private *m48t59 = platform_get_drvdata(pdev);
 
 	writeb(val, m48t59->ioaddr+ofs);
 }
@@ -55,7 +56,8 @@ m48t59_mem_writeb(struct device *dev, u32 ofs, u8 val)
 static u8
 m48t59_mem_readb(struct device *dev, u32 ofs)
 {
-	struct m48t59_private *m48t59 = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct m48t59_private *m48t59 = platform_get_drvdata(pdev);
 
 	return readb(m48t59->ioaddr+ofs);
 }
@@ -65,8 +67,9 @@ m48t59_mem_readb(struct device *dev, u32 ofs)
  */
 static int m48t59_rtc_read_time(struct device *dev, struct rtc_time *tm)
 {
-	struct m48t59_plat_data *pdata = dev_get_platdata(dev);
-	struct m48t59_private *m48t59 = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct m48t59_plat_data *pdata = dev_get_platdata(&pdev->dev);
+	struct m48t59_private *m48t59 = platform_get_drvdata(pdev);
 	unsigned long flags;
 	u8 val;
 
@@ -107,8 +110,9 @@ static int m48t59_rtc_read_time(struct device *dev, struct rtc_time *tm)
 
 static int m48t59_rtc_set_time(struct device *dev, struct rtc_time *tm)
 {
-	struct m48t59_plat_data *pdata = dev_get_platdata(dev);
-	struct m48t59_private *m48t59 = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct m48t59_plat_data *pdata = dev_get_platdata(&pdev->dev);
+	struct m48t59_private *m48t59 = platform_get_drvdata(pdev);
 	unsigned long flags;
 	u8 val = 0;
 	int year = tm->tm_year;
@@ -153,8 +157,9 @@ static int m48t59_rtc_set_time(struct device *dev, struct rtc_time *tm)
  */
 static int m48t59_rtc_readalarm(struct device *dev, struct rtc_wkalrm *alrm)
 {
-	struct m48t59_plat_data *pdata = dev_get_platdata(dev);
-	struct m48t59_private *m48t59 = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct m48t59_plat_data *pdata = dev_get_platdata(&pdev->dev);
+	struct m48t59_private *m48t59 = platform_get_drvdata(pdev);
 	struct rtc_time *tm = &alrm->time;
 	unsigned long flags;
 	u8 val;
@@ -199,8 +204,9 @@ static int m48t59_rtc_readalarm(struct device *dev, struct rtc_wkalrm *alrm)
  */
 static int m48t59_rtc_setalarm(struct device *dev, struct rtc_wkalrm *alrm)
 {
-	struct m48t59_plat_data *pdata = dev_get_platdata(dev);
-	struct m48t59_private *m48t59 = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct m48t59_plat_data *pdata = dev_get_platdata(&pdev->dev);
+	struct m48t59_private *m48t59 = platform_get_drvdata(pdev);
 	struct rtc_time *tm = &alrm->time;
 	u8 mday, hour, min, sec;
 	unsigned long flags;
@@ -259,8 +265,9 @@ static int m48t59_rtc_setalarm(struct device *dev, struct rtc_wkalrm *alrm)
  */
 static int m48t59_rtc_alarm_irq_enable(struct device *dev, unsigned int enabled)
 {
-	struct m48t59_plat_data *pdata = dev_get_platdata(dev);
-	struct m48t59_private *m48t59 = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct m48t59_plat_data *pdata = dev_get_platdata(&pdev->dev);
+	struct m48t59_private *m48t59 = platform_get_drvdata(pdev);
 	unsigned long flags;
 
 	spin_lock_irqsave(&m48t59->lock, flags);
@@ -275,8 +282,9 @@ static int m48t59_rtc_alarm_irq_enable(struct device *dev, unsigned int enabled)
 
 static int m48t59_rtc_proc(struct device *dev, struct seq_file *seq)
 {
-	struct m48t59_plat_data *pdata = dev_get_platdata(dev);
-	struct m48t59_private *m48t59 = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct m48t59_plat_data *pdata = dev_get_platdata(&pdev->dev);
+	struct m48t59_private *m48t59 = platform_get_drvdata(pdev);
 	unsigned long flags;
 	u8 val;
 
@@ -295,8 +303,9 @@ static int m48t59_rtc_proc(struct device *dev, struct seq_file *seq)
 static irqreturn_t m48t59_rtc_interrupt(int irq, void *dev_id)
 {
 	struct device *dev = (struct device *)dev_id;
-	struct m48t59_plat_data *pdata = dev_get_platdata(dev);
-	struct m48t59_private *m48t59 = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct m48t59_plat_data *pdata = dev_get_platdata(&pdev->dev);
+	struct m48t59_private *m48t59 = platform_get_drvdata(pdev);
 	u8 event;
 
 	spin_lock(&m48t59->lock);
@@ -373,6 +382,7 @@ static int m48t59_rtc_probe(struct platform_device *pdev)
 	struct m48t59_private *m48t59 = NULL;
 	struct resource *res;
 	int ret = -ENOMEM;
+	char *name;
 	const struct rtc_class_ops *ops;
 	struct nvmem_config nvmem_cfg = {
 		.name = "m48t59-",
@@ -447,14 +457,17 @@ static int m48t59_rtc_probe(struct platform_device *pdev)
 	}
 	switch (pdata->type) {
 	case M48T59RTC_TYPE_M48T59:
+		name = "m48t59";
 		ops = &m48t59_rtc_ops;
 		pdata->offset = 0x1ff0;
 		break;
 	case M48T59RTC_TYPE_M48T02:
+		name = "m48t02";
 		ops = &m48t02_rtc_ops;
 		pdata->offset = 0x7f0;
 		break;
 	case M48T59RTC_TYPE_M48T08:
+		name = "m48t08";
 		ops = &m48t02_rtc_ops;
 		pdata->offset = 0x1ff0;
 		break;

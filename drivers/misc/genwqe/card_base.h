@@ -497,7 +497,7 @@ int  genwqe_user_vunmap(struct genwqe_dev *cd, struct dma_mapping *m);
 static inline bool dma_mapping_used(struct dma_mapping *m)
 {
 	if (!m)
-		return false;
+		return 0;
 	return m->size != 0;
 }
 

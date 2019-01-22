@@ -88,9 +88,6 @@ static int rcar_lvds_connector_atomic_check(struct drm_connector *connector,
 	const struct drm_display_mode *panel_mode;
 	struct drm_crtc_state *crtc_state;
 
-	if (!state->crtc)
-		return 0;
-
 	if (list_empty(&connector->modes)) {
 		dev_dbg(lvds->dev, "connector: empty modes list\n");
 		return -EINVAL;
@@ -353,7 +350,7 @@ static int rcar_lvds_attach(struct drm_bridge *bridge)
 
 	drm_connector_helper_add(connector, &rcar_lvds_conn_helper_funcs);
 
-	ret = drm_connector_attach_encoder(connector, encoder);
+	ret = drm_mode_connector_attach_encoder(connector, encoder);
 	if (ret < 0)
 		return ret;
 
@@ -434,8 +431,8 @@ static int rcar_lvds_parse_dt(struct rcar_lvds *lvds)
 			ret = -EPROBE_DEFER;
 	} else {
 		lvds->panel = of_drm_find_panel(remote);
-		if (IS_ERR(lvds->panel))
-			ret = PTR_ERR(lvds->panel);
+		if (!lvds->panel)
+			ret = -EPROBE_DEFER;
 	}
 
 done:

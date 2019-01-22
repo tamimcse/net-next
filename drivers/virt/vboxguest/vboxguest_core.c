@@ -69,7 +69,7 @@ static void vbg_guest_mappings_init(struct vbg_dev *gdev)
 	/* Add 4M so that we can align the vmap to 4MiB as the host requires. */
 	size = PAGE_ALIGN(req->hypervisor_size) + SZ_4M;
 
-	pages = kmalloc_array(size >> PAGE_SHIFT, sizeof(*pages), GFP_KERNEL);
+	pages = kmalloc(sizeof(*pages) * (size >> PAGE_SHIFT), GFP_KERNEL);
 	if (!pages)
 		goto out;
 
@@ -262,9 +262,8 @@ static int vbg_balloon_inflate(struct vbg_dev *gdev, u32 chunk_idx)
 	struct page **pages;
 	int i, rc, ret;
 
-	pages = kmalloc_array(VMMDEV_MEMORY_BALLOON_CHUNK_PAGES,
-			      sizeof(*pages),
-			      GFP_KERNEL | __GFP_NOWARN);
+	pages = kmalloc(sizeof(*pages) * VMMDEV_MEMORY_BALLOON_CHUNK_PAGES,
+			GFP_KERNEL | __GFP_NOWARN);
 	if (!pages)
 		return -ENOMEM;
 

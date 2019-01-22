@@ -1,8 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2000-2005 Silicon Graphics, Inc.
  * Copyright (c) 2013 Red Hat, Inc.
  * All Rights Reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it would be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write the Free Software Foundation,
+ * Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 #include "xfs.h"
 #include "xfs_fs.h"
@@ -72,8 +84,7 @@ xfs_dir3_leaf_check(
 	if (!fa)
 		return;
 	xfs_corruption_error(__func__, XFS_ERRLEVEL_LOW, dp->i_mount,
-			bp->b_addr, BBTOB(bp->b_length), __FILE__, __LINE__,
-			fa);
+			bp->b_addr, __FILE__, __LINE__, fa);
 	ASSERT(0);
 }
 #else
@@ -1012,7 +1023,7 @@ xfs_dir2_leafn_rebalance(
 	int			oldstale;	/* old count of stale leaves */
 #endif
 	int			oldsum;		/* old total leaf count */
-	int			swap_blocks;	/* swapped leaf blocks */
+	int			swap;		/* swapped leaf blocks */
 	struct xfs_dir2_leaf_entry *ents1;
 	struct xfs_dir2_leaf_entry *ents2;
 	struct xfs_dir3_icleaf_hdr hdr1;
@@ -1023,10 +1034,13 @@ xfs_dir2_leafn_rebalance(
 	/*
 	 * If the block order is wrong, swap the arguments.
 	 */
-	swap_blocks = xfs_dir2_leafn_order(dp, blk1->bp, blk2->bp);
-	if (swap_blocks)
-		swap(blk1, blk2);
+	if ((swap = xfs_dir2_leafn_order(dp, blk1->bp, blk2->bp))) {
+		xfs_da_state_blk_t	*tmp;	/* temp for block swap */
 
+		tmp = blk1;
+		blk1 = blk2;
+		blk2 = tmp;
+	}
 	leaf1 = blk1->bp->b_addr;
 	leaf2 = blk2->bp->b_addr;
 	dp->d_ops->leaf_hdr_from_disk(&hdr1, leaf1);
@@ -1090,11 +1104,11 @@ xfs_dir2_leafn_rebalance(
 	 * Mark whether we're inserting into the old or new leaf.
 	 */
 	if (hdr1.count < hdr2.count)
-		state->inleaf = swap_blocks;
+		state->inleaf = swap;
 	else if (hdr1.count > hdr2.count)
-		state->inleaf = !swap_blocks;
+		state->inleaf = !swap;
 	else
-		state->inleaf = swap_blocks ^ (blk1->index <= hdr1.count);
+		state->inleaf = swap ^ (blk1->index <= hdr1.count);
 	/*
 	 * Adjust the expected index for insertion.
 	 */

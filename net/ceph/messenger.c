@@ -168,6 +168,12 @@ static char tag_keepalive2 = CEPH_MSGR_TAG_KEEPALIVE2;
 static struct lock_class_key socket_class;
 #endif
 
+/*
+ * When skipping (ignoring) a block of input we read it into a "skip
+ * buffer," which is this many bytes in size.
+ */
+#define SKIP_BUF_SIZE	1024
+
 static void queue_con(struct ceph_connection *con);
 static void cancel_con(struct ceph_connection *con);
 static void ceph_con_workfn(struct work_struct *);
@@ -514,17 +520,11 @@ static int ceph_tcp_connect(struct ceph_connection *con)
 	return 0;
 }
 
-/*
- * If @buf is NULL, discard up to @len bytes.
- */
 static int ceph_tcp_recvmsg(struct socket *sock, void *buf, size_t len)
 {
 	struct kvec iov = {buf, len};
 	struct msghdr msg = { .msg_flags = MSG_DONTWAIT | MSG_NOSIGNAL };
 	int r;
-
-	if (!buf)
-		msg.msg_flags |= MSG_TRUNC;
 
 	iov_iter_kvec(&msg.msg_iter, READ | ITER_KVEC, &iov, 1, len);
 	r = sock_recvmsg(sock, &msg, msg.msg_flags);
@@ -1417,11 +1417,11 @@ static void prepare_write_keepalive(struct ceph_connection *con)
 	dout("prepare_write_keepalive %p\n", con);
 	con_out_kvec_reset(con);
 	if (con->peer_features & CEPH_FEATURE_MSGR_KEEPALIVE2) {
-		struct timespec64 now;
+		struct timespec now;
 
-		ktime_get_real_ts64(&now);
+		ktime_get_real_ts(&now);
 		con_out_kvec_add(con, sizeof(tag_keepalive2), &tag_keepalive2);
-		ceph_encode_timespec64(&con->out_temp_keepalive2, &now);
+		ceph_encode_timespec(&con->out_temp_keepalive2, &now);
 		con_out_kvec_add(con, sizeof(con->out_temp_keepalive2),
 				 &con->out_temp_keepalive2);
 	} else {
@@ -1434,26 +1434,24 @@ static void prepare_write_keepalive(struct ceph_connection *con)
  * Connection negotiation.
  */
 
-static int get_connect_authorizer(struct ceph_connection *con)
+static struct ceph_auth_handshake *get_connect_authorizer(struct ceph_connection *con,
+						int *auth_proto)
 {
 	struct ceph_auth_handshake *auth;
-	int auth_proto;
 
 	if (!con->ops->get_authorizer) {
-		con->auth = NULL;
 		con->out_connect.authorizer_protocol = CEPH_AUTH_UNKNOWN;
 		con->out_connect.authorizer_len = 0;
-		return 0;
+		return NULL;
 	}
 
-	auth = con->ops->get_authorizer(con, &auth_proto, con->auth_retry);
+	auth = con->ops->get_authorizer(con, auth_proto, con->auth_retry);
 	if (IS_ERR(auth))
-		return PTR_ERR(auth);
+		return auth;
 
-	con->auth = auth;
-	con->out_connect.authorizer_protocol = cpu_to_le32(auth_proto);
-	con->out_connect.authorizer_len = cpu_to_le32(auth->authorizer_buf_len);
-	return 0;
+	con->auth_reply_buf = auth->authorizer_reply_buf;
+	con->auth_reply_buf_len = auth->authorizer_reply_buf_len;
+	return auth;
 }
 
 /*
@@ -1469,22 +1467,12 @@ static void prepare_write_banner(struct ceph_connection *con)
 	con_flag_set(con, CON_FLAG_WRITE_PENDING);
 }
 
-static void __prepare_write_connect(struct ceph_connection *con)
-{
-	con_out_kvec_add(con, sizeof(con->out_connect), &con->out_connect);
-	if (con->auth)
-		con_out_kvec_add(con, con->auth->authorizer_buf_len,
-				 con->auth->authorizer_buf);
-
-	con->out_more = 0;
-	con_flag_set(con, CON_FLAG_WRITE_PENDING);
-}
-
 static int prepare_write_connect(struct ceph_connection *con)
 {
 	unsigned int global_seq = get_global_seq(con->msgr, 0);
 	int proto;
-	int ret;
+	int auth_proto;
+	struct ceph_auth_handshake *auth;
 
 	switch (con->peer_name.type) {
 	case CEPH_ENTITY_TYPE_MON:
@@ -1511,11 +1499,24 @@ static int prepare_write_connect(struct ceph_connection *con)
 	con->out_connect.protocol_version = cpu_to_le32(proto);
 	con->out_connect.flags = 0;
 
-	ret = get_connect_authorizer(con);
-	if (ret)
-		return ret;
+	auth_proto = CEPH_AUTH_UNKNOWN;
+	auth = get_connect_authorizer(con, &auth_proto);
+	if (IS_ERR(auth))
+		return PTR_ERR(auth);
 
-	__prepare_write_connect(con);
+	con->out_connect.authorizer_protocol = cpu_to_le32(auth_proto);
+	con->out_connect.authorizer_len = auth ?
+		cpu_to_le32(auth->authorizer_buf_len) : 0;
+
+	con_out_kvec_add(con, sizeof (con->out_connect),
+					&con->out_connect);
+	if (auth && auth->authorizer_buf_len)
+		con_out_kvec_add(con, auth->authorizer_buf_len,
+					auth->authorizer_buf);
+
+	con->out_more = 0;
+	con_flag_set(con, CON_FLAG_WRITE_PENDING);
+
 	return 0;
 }
 
@@ -1780,21 +1781,11 @@ static int read_partial_connect(struct ceph_connection *con)
 	if (ret <= 0)
 		goto out;
 
-	if (con->auth) {
-		size = le32_to_cpu(con->in_reply.authorizer_len);
-		if (size > con->auth->authorizer_reply_buf_len) {
-			pr_err("authorizer reply too big: %d > %zu\n", size,
-			       con->auth->authorizer_reply_buf_len);
-			ret = -EINVAL;
-			goto out;
-		}
-
-		end += size;
-		ret = read_partial(con, end, size,
-				   con->auth->authorizer_reply_buf);
-		if (ret <= 0)
-			goto out;
-	}
+	size = le32_to_cpu(con->in_reply.authorizer_len);
+	end += size;
+	ret = read_partial(con, end, size, con->auth_reply_buf);
+	if (ret <= 0)
+		goto out;
 
 	dout("read_partial_connect %p tag %d, con_seq = %u, g_seq = %u\n",
 	     con, (int)con->in_reply.tag,
@@ -1802,6 +1793,7 @@ static int read_partial_connect(struct ceph_connection *con)
 	     le32_to_cpu(con->in_reply.global_seq));
 out:
 	return ret;
+
 }
 
 /*
@@ -2084,27 +2076,12 @@ static int process_connect(struct ceph_connection *con)
 
 	dout("process_connect on %p tag %d\n", con, (int)con->in_tag);
 
-	if (con->auth) {
+	if (con->auth_reply_buf) {
 		/*
 		 * Any connection that defines ->get_authorizer()
-		 * should also define ->add_authorizer_challenge() and
-		 * ->verify_authorizer_reply().
-		 *
+		 * should also define ->verify_authorizer_reply().
 		 * See get_connect_authorizer().
 		 */
-		if (con->in_reply.tag == CEPH_MSGR_TAG_CHALLENGE_AUTHORIZER) {
-			ret = con->ops->add_authorizer_challenge(
-				    con, con->auth->authorizer_reply_buf,
-				    le32_to_cpu(con->in_reply.authorizer_len));
-			if (ret < 0)
-				return ret;
-
-			con_out_kvec_reset(con);
-			__prepare_write_connect(con);
-			prepare_read_connect(con);
-			return 0;
-		}
-
 		ret = con->ops->verify_authorizer_reply(con);
 		if (ret < 0) {
 			con->error_msg = "bad authorize reply";
@@ -2578,7 +2555,7 @@ static int read_keepalive_ack(struct ceph_connection *con)
 	int ret = read_partial(con, size, size, &ceph_ts);
 	if (ret <= 0)
 		return ret;
-	ceph_decode_timespec64(&con->last_keepalive_ack, &ceph_ts);
+	ceph_decode_timespec(&con->last_keepalive_ack, &ceph_ts);
 	prepare_read_tag(con);
 	return 1;
 }
@@ -2597,6 +2574,9 @@ static int try_write(struct ceph_connection *con)
 	    con->state != CON_STATE_NEGOTIATING &&
 	    con->state != CON_STATE_OPEN)
 		return 0;
+
+more:
+	dout("try_write out_kvec_bytes %d\n", con->out_kvec_bytes);
 
 	/* open the socket first? */
 	if (con->state == CON_STATE_PREOPEN) {
@@ -2618,8 +2598,7 @@ static int try_write(struct ceph_connection *con)
 		}
 	}
 
-more:
-	dout("try_write out_kvec_bytes %d\n", con->out_kvec_bytes);
+more_kvec:
 	BUG_ON(!con->sock);
 
 	/* kvec data queued? */
@@ -2644,7 +2623,7 @@ more:
 
 		ret = write_partial_message_data(con);
 		if (ret == 1)
-			goto more;  /* we need to send the footer, too! */
+			goto more_kvec;  /* we need to send the footer, too! */
 		if (ret == 0)
 			goto out;
 		if (ret < 0) {
@@ -2679,6 +2658,8 @@ out:
 	dout("try_write done on %p ret %d\n", con, ret);
 	return ret;
 }
+
+
 
 /*
  * Read what we can from the socket.
@@ -2740,11 +2721,16 @@ more:
 	if (con->in_base_pos < 0) {
 		/*
 		 * skipping + discarding content.
+		 *
+		 * FIXME: there must be a better way to do this!
 		 */
-		ret = ceph_tcp_recvmsg(con->sock, NULL, -con->in_base_pos);
+		static char buf[SKIP_BUF_SIZE];
+		int skip = min((int) sizeof (buf), -con->in_base_pos);
+
+		dout("skipping %d / %d bytes\n", skip, -con->in_base_pos);
+		ret = ceph_tcp_recvmsg(con->sock, buf, skip);
 		if (ret <= 0)
 			goto out;
-		dout("skipped %d / %d bytes\n", ret, -con->in_base_pos);
 		con->in_base_pos += ret;
 		if (con->in_base_pos)
 			goto more;
@@ -3246,12 +3232,12 @@ bool ceph_con_keepalive_expired(struct ceph_connection *con,
 {
 	if (interval > 0 &&
 	    (con->peer_features & CEPH_FEATURE_MSGR_KEEPALIVE2)) {
-		struct timespec64 now;
-		struct timespec64 ts;
-		ktime_get_real_ts64(&now);
-		jiffies_to_timespec64(interval, &ts);
-		ts = timespec64_add(con->last_keepalive_ack, ts);
-		return timespec64_compare(&now, &ts) >= 0;
+		struct timespec now;
+		struct timespec ts;
+		ktime_get_real_ts(&now);
+		jiffies_to_timespec(interval, &ts);
+		ts = timespec_add(con->last_keepalive_ack, ts);
+		return timespec_compare(&now, &ts) >= 0;
 	}
 	return false;
 }

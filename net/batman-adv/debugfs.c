@@ -19,7 +19,6 @@
 #include "debugfs.h"
 #include "main.h"
 
-#include <linux/dcache.h>
 #include <linux/debugfs.h>
 #include <linux/err.h>
 #include <linux/errno.h>
@@ -118,7 +117,7 @@ static int batadv_bla_backbone_table_open(struct inode *inode,
 
 #ifdef CONFIG_BATMAN_ADV_DAT
 /**
- * batadv_dat_cache_open() - Prepare file handler for reads from dat_cache
+ * batadv_dat_cache_open() - Prepare file handler for reads from dat_chache
  * @inode: inode which was opened
  * @file: file handle to be initialized
  *
@@ -345,25 +344,6 @@ out:
 }
 
 /**
- * batadv_debugfs_rename_hardif() - Fix debugfs path for renamed hardif
- * @hard_iface: hard interface which was renamed
- */
-void batadv_debugfs_rename_hardif(struct batadv_hard_iface *hard_iface)
-{
-	const char *name = hard_iface->net_dev->name;
-	struct dentry *dir;
-	struct dentry *d;
-
-	dir = hard_iface->debug_dir;
-	if (!dir)
-		return;
-
-	d = debugfs_rename(dir->d_parent, dir, dir->d_parent, name);
-	if (!d)
-		pr_err("Can't rename debugfs dir to %s\n", name);
-}
-
-/**
  * batadv_debugfs_del_hardif() - delete the base directory for a hard interface
  *  in debugfs.
  * @hard_iface: hard interface which is deleted.
@@ -431,26 +411,6 @@ rem_attr:
 	bat_priv->debug_dir = NULL;
 out:
 	return -ENOMEM;
-}
-
-/**
- * batadv_debugfs_rename_meshif() - Fix debugfs path for renamed softif
- * @dev: net_device which was renamed
- */
-void batadv_debugfs_rename_meshif(struct net_device *dev)
-{
-	struct batadv_priv *bat_priv = netdev_priv(dev);
-	const char *name = dev->name;
-	struct dentry *dir;
-	struct dentry *d;
-
-	dir = bat_priv->debug_dir;
-	if (!dir)
-		return;
-
-	d = debugfs_rename(dir->d_parent, dir, dir->d_parent, name);
-	if (!d)
-		pr_err("Can't rename debugfs dir to %s\n", name);
 }
 
 /**

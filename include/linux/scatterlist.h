@@ -9,6 +9,9 @@
 #include <asm/io.h>
 
 struct scatterlist {
+#ifdef CONFIG_DEBUG_SG
+	unsigned long	sg_magic;
+#endif
 	unsigned long	page_link;
 	unsigned int	offset;
 	unsigned int	length;
@@ -61,6 +64,7 @@ struct sg_table {
  *
  */
 
+#define SG_MAGIC	0x87654321
 #define SG_CHAIN	0x01UL
 #define SG_END		0x02UL
 
@@ -94,6 +98,7 @@ static inline void sg_assign_page(struct scatterlist *sg, struct page *page)
 	 */
 	BUG_ON((unsigned long) page & (SG_CHAIN | SG_END));
 #ifdef CONFIG_DEBUG_SG
+	BUG_ON(sg->sg_magic != SG_MAGIC);
 	BUG_ON(sg_is_chain(sg));
 #endif
 	sg->page_link = page_link | (unsigned long) page;
@@ -124,6 +129,7 @@ static inline void sg_set_page(struct scatterlist *sg, struct page *page,
 static inline struct page *sg_page(struct scatterlist *sg)
 {
 #ifdef CONFIG_DEBUG_SG
+	BUG_ON(sg->sg_magic != SG_MAGIC);
 	BUG_ON(sg_is_chain(sg));
 #endif
 	return (struct page *)((sg)->page_link & ~(SG_CHAIN | SG_END));
@@ -189,6 +195,9 @@ static inline void sg_chain(struct scatterlist *prv, unsigned int prv_nents,
  **/
 static inline void sg_mark_end(struct scatterlist *sg)
 {
+#ifdef CONFIG_DEBUG_SG
+	BUG_ON(sg->sg_magic != SG_MAGIC);
+#endif
 	/*
 	 * Set termination bit, clear potential chain bit
 	 */
@@ -206,6 +215,9 @@ static inline void sg_mark_end(struct scatterlist *sg)
  **/
 static inline void sg_unmark_end(struct scatterlist *sg)
 {
+#ifdef CONFIG_DEBUG_SG
+	BUG_ON(sg->sg_magic != SG_MAGIC);
+#endif
 	sg->page_link &= ~SG_END;
 }
 
@@ -248,6 +260,12 @@ static inline void *sg_virt(struct scatterlist *sg)
 static inline void sg_init_marker(struct scatterlist *sgl,
 				  unsigned int nents)
 {
+#ifdef CONFIG_DEBUG_SG
+	unsigned int i;
+
+	for (i = 0; i < nents; i++)
+		sgl[i].sg_magic = SG_MAGIC;
+#endif
 	sg_mark_end(&sgl[nents - 1]);
 }
 

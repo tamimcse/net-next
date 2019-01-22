@@ -401,7 +401,6 @@ static int altera_cvp_probe(struct pci_dev *pdev,
 			    const struct pci_device_id *dev_id)
 {
 	struct altera_cvp_conf *conf;
-	struct fpga_manager *mgr;
 	u16 cmd, val;
 	int ret;
 
@@ -453,26 +452,16 @@ static int altera_cvp_probe(struct pci_dev *pdev,
 	snprintf(conf->mgr_name, sizeof(conf->mgr_name), "%s @%s",
 		 ALTERA_CVP_MGR_NAME, pci_name(pdev));
 
-	mgr = fpga_mgr_create(&pdev->dev, conf->mgr_name,
-			      &altera_cvp_ops, conf);
-	if (!mgr) {
-		ret = -ENOMEM;
+	ret = fpga_mgr_register(&pdev->dev, conf->mgr_name,
+				&altera_cvp_ops, conf);
+	if (ret)
 		goto err_unmap;
-	}
-
-	pci_set_drvdata(pdev, mgr);
-
-	ret = fpga_mgr_register(mgr);
-	if (ret) {
-		fpga_mgr_free(mgr);
-		goto err_unmap;
-	}
 
 	ret = driver_create_file(&altera_cvp_driver.driver,
 				 &driver_attr_chkcfg);
 	if (ret) {
 		dev_err(&pdev->dev, "Can't create sysfs chkcfg file\n");
-		fpga_mgr_unregister(mgr);
+		fpga_mgr_unregister(&pdev->dev);
 		goto err_unmap;
 	}
 
@@ -494,7 +483,7 @@ static void altera_cvp_remove(struct pci_dev *pdev)
 	u16 cmd;
 
 	driver_remove_file(&altera_cvp_driver.driver, &driver_attr_chkcfg);
-	fpga_mgr_unregister(mgr);
+	fpga_mgr_unregister(&pdev->dev);
 	pci_iounmap(pdev, conf->map);
 	pci_release_region(pdev, CVP_BAR);
 	pci_read_config_word(pdev, PCI_COMMAND, &cmd);

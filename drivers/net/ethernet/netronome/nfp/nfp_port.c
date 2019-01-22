@@ -181,11 +181,7 @@ nfp_port_get_phys_port_name(struct net_device *netdev, char *name, size_t len)
 				     eth_port->label_subport);
 		break;
 	case NFP_PORT_PF_PORT:
-		if (!port->pf_split)
-			n = snprintf(name, len, "pf%d", port->pf_id);
-		else
-			n = snprintf(name, len, "pf%ds%d", port->pf_id,
-				     port->pf_split_id);
+		n = snprintf(name, len, "pf%d", port->pf_id);
 		break;
 	case NFP_PORT_VF_PORT:
 		n = snprintf(name, len, "pf%dvf%d", port->pf_id, port->vf_id);
@@ -221,8 +217,6 @@ int nfp_port_configure(struct net_device *netdev, bool configed)
 	port = nfp_port_from_netdev(netdev);
 	eth_port = __nfp_port_get_eth_port(port);
 	if (!eth_port)
-		return 0;
-	if (port->eth_forced)
 		return 0;
 
 	err = nfp_eth_set_configured(port->app->cpp, eth_port->index, configed);

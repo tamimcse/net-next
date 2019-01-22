@@ -279,6 +279,8 @@ static int do_read_bitmap(struct feat_fd *ff, unsigned long **pset, u64 *psize)
 	if (!set)
 		return -ENOMEM;
 
+	bitmap_zero(set, size);
+
 	p = (u64 *) set;
 
 	for (i = 0; (u64) i < BITS_TO_U64(size); i++) {
@@ -1283,6 +1285,7 @@ static int memory_node__read(struct memory_node *n, unsigned long idx)
 		return -ENOMEM;
 	}
 
+	bitmap_zero(n->set, size);
 	n->node = idx;
 	n->size = size;
 
@@ -1456,24 +1459,8 @@ static void print_cmdline(struct feat_fd *ff, FILE *fp)
 
 	fprintf(fp, "# cmdline : ");
 
-	for (i = 0; i < nr; i++) {
-		char *argv_i = strdup(ff->ph->env.cmdline_argv[i]);
-		if (!argv_i) {
-			fprintf(fp, "%s ", ff->ph->env.cmdline_argv[i]);
-		} else {
-			char *mem = argv_i;
-			do {
-				char *quote = strchr(argv_i, '\'');
-				if (!quote)
-					break;
-				*quote++ = '\0';
-				fprintf(fp, "%s\\\'", argv_i);
-				argv_i = quote;
-			} while (1);
-			fprintf(fp, "%s ", argv_i);
-			free(mem);
-		}
-	}
+	for (i = 0; i < nr; i++)
+		fprintf(fp, "%s ", ff->ph->env.cmdline_argv[i]);
 	fputc('\n', fp);
 }
 
@@ -2126,7 +2113,6 @@ static int process_cpu_topology(struct feat_fd *ff, void *data __maybe_unused)
 	int cpu_nr = ff->ph->env.nr_cpus_avail;
 	u64 size = 0;
 	struct perf_header *ph = ff->ph;
-	bool do_core_id_test = true;
 
 	ph->env.cpu = calloc(cpu_nr, sizeof(*ph->env.cpu));
 	if (!ph->env.cpu)
@@ -2181,13 +2167,6 @@ static int process_cpu_topology(struct feat_fd *ff, void *data __maybe_unused)
 		return 0;
 	}
 
-	/* On s390 the socket_id number is not related to the numbers of cpus.
-	 * The socket_id number might be higher than the numbers of cpus.
-	 * This depends on the configuration.
-	 */
-	if (ph->env.arch && !strncmp(ph->env.arch, "s390", 4))
-		do_core_id_test = false;
-
 	for (i = 0; i < (u32)cpu_nr; i++) {
 		if (do_read_u32(ff, &nr))
 			goto free_cpu;
@@ -2197,7 +2176,7 @@ static int process_cpu_topology(struct feat_fd *ff, void *data __maybe_unused)
 		if (do_read_u32(ff, &nr))
 			goto free_cpu;
 
-		if (do_core_id_test && nr != (u32)-1 && nr > (u32)cpu_nr) {
+		if (nr != (u32)-1 && nr > (u32)cpu_nr) {
 			pr_debug("socket_id number is too big."
 				 "You may need to upgrade the perf tool.\n");
 			goto free_cpu;
@@ -2584,7 +2563,7 @@ static const struct feature_ops feat_ops[HEADER_LAST_FEATURE] = {
 	FEAT_OPR(NUMA_TOPOLOGY,	numa_topology,	true),
 	FEAT_OPN(BRANCH_STACK,	branch_stack,	false),
 	FEAT_OPR(PMU_MAPPINGS,	pmu_mappings,	false),
-	FEAT_OPR(GROUP_DESC,	group_desc,	false),
+	FEAT_OPN(GROUP_DESC,	group_desc,	false),
 	FEAT_OPN(AUXTRACE,	auxtrace,	false),
 	FEAT_OPN(STAT,		stat,		false),
 	FEAT_OPN(CACHE,		cache,		true),
@@ -3204,7 +3183,7 @@ static int read_attr(int fd, struct perf_header *ph,
 }
 
 static int perf_evsel__prepare_tracepoint_event(struct perf_evsel *evsel,
-						struct tep_handle *pevent)
+						struct pevent *pevent)
 {
 	struct event_format *event;
 	char bf[128];
@@ -3218,7 +3197,7 @@ static int perf_evsel__prepare_tracepoint_event(struct perf_evsel *evsel,
 		return -1;
 	}
 
-	event = tep_find_event(pevent, evsel->attr.config);
+	event = pevent_find_event(pevent, evsel->attr.config);
 	if (event == NULL) {
 		pr_debug("cannot find event format for %d\n", (int)evsel->attr.config);
 		return -1;
@@ -3236,7 +3215,7 @@ static int perf_evsel__prepare_tracepoint_event(struct perf_evsel *evsel,
 }
 
 static int perf_evlist__prepare_tracepoint_events(struct perf_evlist *evlist,
-						  struct tep_handle *pevent)
+						  struct pevent *pevent)
 {
 	struct perf_evsel *pos;
 
@@ -3332,6 +3311,8 @@ int perf_session__read_header(struct perf_session *session)
 
 		lseek(fd, tmp, SEEK_SET);
 	}
+
+	symbol_conf.nr_events = nr_attrs;
 
 	perf_header__process_sections(header, fd, &session->tevent,
 				      perf_file_section__process);
@@ -3461,7 +3442,7 @@ int perf_event__process_feature(struct perf_tool *tool,
 		pr_warning("invalid record type %d in pipe-mode\n", type);
 		return 0;
 	}
-	if (feat == HEADER_RESERVED || feat >= HEADER_LAST_FEATURE) {
+	if (feat == HEADER_RESERVED || feat > HEADER_LAST_FEATURE) {
 		pr_warning("invalid record type %d in pipe-mode\n", type);
 		return -1;
 	}
@@ -3757,6 +3738,8 @@ int perf_event__process_attr(struct perf_tool *tool __maybe_unused,
 	for (i = 0; i < n_ids; i++) {
 		perf_evlist__id_add(evlist, evsel, 0, i, event->attr.id[i]);
 	}
+
+	symbol_conf.nr_events = evlist->nr_entries;
 
 	return 0;
 }

@@ -39,18 +39,14 @@ static int uverbs_free_mr(struct ib_uobject *uobject,
 	return ib_dereg_mr((struct ib_mr *)uobject->object);
 }
 
-static int UVERBS_HANDLER(UVERBS_METHOD_DM_MR_REG)(
-	struct ib_uverbs_file *file, struct uverbs_attr_bundle *attrs)
+static int UVERBS_HANDLER(UVERBS_METHOD_DM_MR_REG)(struct ib_device *ib_dev,
+						   struct ib_uverbs_file *file,
+						   struct uverbs_attr_bundle *attrs)
 {
 	struct ib_dm_mr_attr attr = {};
-	struct ib_uobject *uobj =
-		uverbs_attr_get_uobject(attrs, UVERBS_ATTR_REG_DM_MR_HANDLE);
-	struct ib_dm *dm =
-		uverbs_attr_get_obj(attrs, UVERBS_ATTR_REG_DM_MR_DM_HANDLE);
-	struct ib_pd *pd =
-		uverbs_attr_get_obj(attrs, UVERBS_ATTR_REG_DM_MR_PD_HANDLE);
-	struct ib_device *ib_dev = pd->device;
-
+	struct ib_uobject *uobj;
+	struct ib_dm *dm;
+	struct ib_pd *pd;
 	struct ib_mr *mr;
 	int ret;
 
@@ -66,9 +62,8 @@ static int UVERBS_HANDLER(UVERBS_METHOD_DM_MR_REG)(
 	if (ret)
 		return ret;
 
-	ret = uverbs_get_flags32(&attr.access_flags, attrs,
-				 UVERBS_ATTR_REG_DM_MR_ACCESS_FLAGS,
-				 IB_ACCESS_SUPPORTED);
+	ret = uverbs_copy_from(&attr.access_flags, attrs,
+			       UVERBS_ATTR_REG_DM_MR_ACCESS_FLAGS);
 	if (ret)
 		return ret;
 
@@ -78,6 +73,12 @@ static int UVERBS_HANDLER(UVERBS_METHOD_DM_MR_REG)(
 	ret = ib_check_mr_access(attr.access_flags);
 	if (ret)
 		return ret;
+
+	pd = uverbs_attr_get_obj(attrs, UVERBS_ATTR_REG_DM_MR_PD_HANDLE);
+
+	dm = uverbs_attr_get_obj(attrs, UVERBS_ATTR_REG_DM_MR_DM_HANDLE);
+
+	uobj = uverbs_attr_get(attrs, UVERBS_ATTR_REG_DM_MR_HANDLE)->obj_attr.uobject;
 
 	if (attr.offset > dm->length || attr.length > dm->length ||
 	    attr.length > dm->length - attr.offset)
@@ -114,36 +115,33 @@ err_dereg:
 	return ret;
 }
 
-DECLARE_UVERBS_NAMED_METHOD(
-	UVERBS_METHOD_DM_MR_REG,
-	UVERBS_ATTR_IDR(UVERBS_ATTR_REG_DM_MR_HANDLE,
-			UVERBS_OBJECT_MR,
-			UVERBS_ACCESS_NEW,
-			UA_MANDATORY),
-	UVERBS_ATTR_PTR_IN(UVERBS_ATTR_REG_DM_MR_OFFSET,
-			   UVERBS_ATTR_TYPE(u64),
-			   UA_MANDATORY),
-	UVERBS_ATTR_PTR_IN(UVERBS_ATTR_REG_DM_MR_LENGTH,
-			   UVERBS_ATTR_TYPE(u64),
-			   UA_MANDATORY),
-	UVERBS_ATTR_IDR(UVERBS_ATTR_REG_DM_MR_PD_HANDLE,
-			UVERBS_OBJECT_PD,
-			UVERBS_ACCESS_READ,
-			UA_MANDATORY),
-	UVERBS_ATTR_FLAGS_IN(UVERBS_ATTR_REG_DM_MR_ACCESS_FLAGS,
-			     enum ib_access_flags),
-	UVERBS_ATTR_IDR(UVERBS_ATTR_REG_DM_MR_DM_HANDLE,
-			UVERBS_OBJECT_DM,
-			UVERBS_ACCESS_READ,
-			UA_MANDATORY),
-	UVERBS_ATTR_PTR_OUT(UVERBS_ATTR_REG_DM_MR_RESP_LKEY,
+static DECLARE_UVERBS_NAMED_METHOD(UVERBS_METHOD_DM_MR_REG,
+	&UVERBS_ATTR_IDR(UVERBS_ATTR_REG_DM_MR_HANDLE, UVERBS_OBJECT_MR,
+			 UVERBS_ACCESS_NEW,
+			 UA_FLAGS(UVERBS_ATTR_SPEC_F_MANDATORY)),
+	&UVERBS_ATTR_PTR_IN(UVERBS_ATTR_REG_DM_MR_OFFSET,
+			    UVERBS_ATTR_TYPE(u64),
+			    UA_FLAGS(UVERBS_ATTR_SPEC_F_MANDATORY)),
+	&UVERBS_ATTR_PTR_IN(UVERBS_ATTR_REG_DM_MR_LENGTH,
+			    UVERBS_ATTR_TYPE(u64),
+			    UA_FLAGS(UVERBS_ATTR_SPEC_F_MANDATORY)),
+	&UVERBS_ATTR_IDR(UVERBS_ATTR_REG_DM_MR_PD_HANDLE, UVERBS_OBJECT_PD,
+			 UVERBS_ACCESS_READ,
+			 UA_FLAGS(UVERBS_ATTR_SPEC_F_MANDATORY)),
+	&UVERBS_ATTR_PTR_IN(UVERBS_ATTR_REG_DM_MR_ACCESS_FLAGS,
 			    UVERBS_ATTR_TYPE(u32),
-			    UA_MANDATORY),
-	UVERBS_ATTR_PTR_OUT(UVERBS_ATTR_REG_DM_MR_RESP_RKEY,
-			    UVERBS_ATTR_TYPE(u32),
-			    UA_MANDATORY));
+			    UA_FLAGS(UVERBS_ATTR_SPEC_F_MANDATORY)),
+	&UVERBS_ATTR_IDR(UVERBS_ATTR_REG_DM_MR_DM_HANDLE, UVERBS_OBJECT_DM,
+			 UVERBS_ACCESS_READ,
+			 UA_FLAGS(UVERBS_ATTR_SPEC_F_MANDATORY)),
+	&UVERBS_ATTR_PTR_OUT(UVERBS_ATTR_REG_DM_MR_RESP_LKEY,
+			     UVERBS_ATTR_TYPE(u32),
+			     UA_FLAGS(UVERBS_ATTR_SPEC_F_MANDATORY)),
+	&UVERBS_ATTR_PTR_OUT(UVERBS_ATTR_REG_DM_MR_RESP_RKEY,
+			     UVERBS_ATTR_TYPE(u32),
+			     UA_FLAGS(UVERBS_ATTR_SPEC_F_MANDATORY)));
 
-DECLARE_UVERBS_NAMED_OBJECT(
-	UVERBS_OBJECT_MR,
-	UVERBS_TYPE_ALLOC_IDR(uverbs_free_mr),
-	&UVERBS_METHOD(UVERBS_METHOD_DM_MR_REG));
+DECLARE_UVERBS_NAMED_OBJECT(UVERBS_OBJECT_MR,
+			    /* 1 is used in order to free the MR after all the MWs */
+			    &UVERBS_TYPE_ALLOC_IDR(1, uverbs_free_mr),
+			    &UVERBS_METHOD(UVERBS_METHOD_DM_MR_REG));

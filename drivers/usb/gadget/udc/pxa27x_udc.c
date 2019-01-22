@@ -205,19 +205,50 @@ DEFINE_SHOW_ATTRIBUTE(eps_dbg);
 
 static void pxa_init_debugfs(struct pxa_udc *udc)
 {
-	struct dentry *root;
+	struct dentry *root, *state, *queues, *eps;
 
 	root = debugfs_create_dir(udc->gadget.name, NULL);
-	udc->debugfs_root = root;
+	if (IS_ERR(root) || !root)
+		goto err_root;
 
-	debugfs_create_file("udcstate", 0400, root, udc, &state_dbg_fops);
-	debugfs_create_file("queues", 0400, root, udc, &queues_dbg_fops);
-	debugfs_create_file("epstate", 0400, root, udc, &eps_dbg_fops);
+	state = debugfs_create_file("udcstate", 0400, root, udc,
+			&state_dbg_fops);
+	if (!state)
+		goto err_state;
+	queues = debugfs_create_file("queues", 0400, root, udc,
+			&queues_dbg_fops);
+	if (!queues)
+		goto err_queues;
+	eps = debugfs_create_file("epstate", 0400, root, udc,
+			&eps_dbg_fops);
+	if (!eps)
+		goto err_eps;
+
+	udc->debugfs_root = root;
+	udc->debugfs_state = state;
+	udc->debugfs_queues = queues;
+	udc->debugfs_eps = eps;
+	return;
+err_eps:
+	debugfs_remove(eps);
+err_queues:
+	debugfs_remove(queues);
+err_state:
+	debugfs_remove(root);
+err_root:
+	dev_err(udc->dev, "debugfs is not available\n");
 }
 
 static void pxa_cleanup_debugfs(struct pxa_udc *udc)
 {
-	debugfs_remove_recursive(udc->debugfs_root);
+	debugfs_remove(udc->debugfs_eps);
+	debugfs_remove(udc->debugfs_queues);
+	debugfs_remove(udc->debugfs_state);
+	debugfs_remove(udc->debugfs_root);
+	udc->debugfs_eps = NULL;
+	udc->debugfs_queues = NULL;
+	udc->debugfs_state = NULL;
+	udc->debugfs_root = NULL;
 }
 
 #else

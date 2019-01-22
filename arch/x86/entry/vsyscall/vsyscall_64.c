@@ -107,7 +107,7 @@ static bool write_ok_or_segv(unsigned long ptr, size_t size)
 		thread->cr2		= ptr;
 		thread->trap_nr		= X86_TRAP_PF;
 
-		clear_siginfo(&info);
+		memset(&info, 0, sizeof(info));
 		info.si_signo		= SIGSEGV;
 		info.si_errno		= 0;
 		info.si_code		= SEGV_MAPERR;
@@ -201,7 +201,7 @@ bool emulate_vsyscall(struct pt_regs *regs, unsigned long address)
 
 	/*
 	 * Handle seccomp.  regs->ip must be the original value.
-	 * See seccomp_send_sigsys and Documentation/userspace-api/seccomp_filter.rst.
+	 * See seccomp_send_sigsys and Documentation/prctl/seccomp_filter.txt.
 	 *
 	 * We could optimize the seccomp disabled case, but performance
 	 * here doesn't matter.

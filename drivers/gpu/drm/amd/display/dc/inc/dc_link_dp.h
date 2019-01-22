@@ -33,10 +33,9 @@ struct dc_link;
 struct dc_stream_state;
 struct dc_link_settings;
 
-bool dp_verify_link_cap(
+bool dp_hbr_verify_link_cap(
 	struct dc_link *link,
-	struct dc_link_settings *known_limit_link_setting,
-	int *fail_count);
+	struct dc_link_settings *known_limit_link_setting);
 
 bool dp_validate_mode_timing(
 	struct dc_link *link,

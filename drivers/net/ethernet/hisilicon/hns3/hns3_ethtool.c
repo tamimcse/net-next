@@ -1,5 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0+
-// Copyright (c) 2016-2017 Hisilicon Limited.
+/*
+ * Copyright (c) 2016~2017 Hisilicon Limited.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ */
 
 #include <linux/etherdevice.h>
 #include <linux/string.h>
@@ -53,7 +59,7 @@ static const struct hns3_stats hns3_rxq_stats[] = {
 
 #define HNS3_TQP_STATS_COUNT (HNS3_TXQ_STATS_COUNT + HNS3_RXQ_STATS_COUNT)
 
-#define HNS3_SELF_TEST_TYPE_NUM		2
+#define HNS3_SELF_TEST_TPYE_NUM		1
 #define HNS3_NIC_LB_TEST_PKT_NUM	1
 #define HNS3_NIC_LB_TEST_RING_ID	0
 #define HNS3_NIC_LB_TEST_PACKET_SIZE	128
@@ -68,7 +74,7 @@ struct hns3_link_mode_mapping {
 	u32 ethtool_link_mode;
 };
 
-static int hns3_lp_setup(struct net_device *ndev, enum hnae3_loop loop, bool en)
+static int hns3_lp_setup(struct net_device *ndev, enum hnae3_loop loop)
 {
 	struct hnae3_handle *h = hns3_get_handle(ndev);
 	int ret;
@@ -78,9 +84,12 @@ static int hns3_lp_setup(struct net_device *ndev, enum hnae3_loop loop, bool en)
 		return -EOPNOTSUPP;
 
 	switch (loop) {
-	case HNAE3_MAC_INTER_LOOP_SERDES:
 	case HNAE3_MAC_INTER_LOOP_MAC:
-		ret = h->ae_algo->ops->set_loopback(h, loop, en);
+		ret = h->ae_algo->ops->set_loopback(h, loop, true);
+		break;
+	case HNAE3_MAC_LOOP_NONE:
+		ret = h->ae_algo->ops->set_loopback(h,
+			HNAE3_MAC_INTER_LOOP_MAC, false);
 		break;
 	default:
 		ret = -ENOTSUPP;
@@ -90,7 +99,10 @@ static int hns3_lp_setup(struct net_device *ndev, enum hnae3_loop loop, bool en)
 	if (ret)
 		return ret;
 
-	h->ae_algo->ops->set_promisc_mode(h, en, en);
+	if (loop == HNAE3_MAC_LOOP_NONE)
+		h->ae_algo->ops->set_promisc_mode(h, ndev->flags & IFF_PROMISC);
+	else
+		h->ae_algo->ops->set_promisc_mode(h, 1);
 
 	return ret;
 }
@@ -103,10 +115,6 @@ static int hns3_lp_up(struct net_device *ndev, enum hnae3_loop loop_mode)
 	if (!h->ae_algo->ops->start)
 		return -EOPNOTSUPP;
 
-	ret = hns3_nic_reset_all_ring(h);
-	if (ret)
-		return ret;
-
 	ret = h->ae_algo->ops->start(h);
 	if (ret) {
 		netdev_err(ndev,
@@ -114,13 +122,13 @@ static int hns3_lp_up(struct net_device *ndev, enum hnae3_loop loop_mode)
 		return ret;
 	}
 
-	ret = hns3_lp_setup(ndev, loop_mode, true);
+	ret = hns3_lp_setup(ndev, loop_mode);
 	usleep_range(10000, 20000);
 
 	return ret;
 }
 
-static int hns3_lp_down(struct net_device *ndev, enum hnae3_loop loop_mode)
+static int hns3_lp_down(struct net_device *ndev)
 {
 	struct hnae3_handle *h = hns3_get_handle(ndev);
 	int ret;
@@ -128,7 +136,7 @@ static int hns3_lp_down(struct net_device *ndev, enum hnae3_loop loop_mode)
 	if (!h->ae_algo->ops->stop)
 		return -EOPNOTSUPP;
 
-	ret = hns3_lp_setup(ndev, loop_mode, false);
+	ret = hns3_lp_setup(ndev, HNAE3_MAC_LOOP_NONE);
 	if (ret) {
 		netdev_err(ndev, "lb_setup return error: %d\n", ret);
 		return ret;
@@ -196,9 +204,7 @@ static u32 hns3_lb_check_rx_ring(struct hns3_nic_priv *priv, u32 budget)
 		rx_group = &ring->tqp_vector->rx_group;
 		pre_rx_pkt = rx_group->total_packets;
 
-		preempt_disable();
 		hns3_clean_rx_ring(ring, budget, hns3_lb_check_skb_data);
-		preempt_enable();
 
 		rcv_good_pkt_total += (rx_group->total_packets - pre_rx_pkt);
 		rx_group->total_packets = pre_rx_pkt;
@@ -288,7 +294,7 @@ static void hns3_self_test(struct net_device *ndev,
 {
 	struct hns3_nic_priv *priv = netdev_priv(ndev);
 	struct hnae3_handle *h = priv->ae_handle;
-	int st_param[HNS3_SELF_TEST_TYPE_NUM][2];
+	int st_param[HNS3_SELF_TEST_TPYE_NUM][2];
 	bool if_running = netif_running(ndev);
 #if IS_ENABLED(CONFIG_VLAN_8021Q)
 	bool dis_vlan_filter;
@@ -304,10 +310,6 @@ static void hns3_self_test(struct net_device *ndev,
 	st_param[HNAE3_MAC_INTER_LOOP_MAC][1] =
 			h->flags & HNAE3_SUPPORT_MAC_LOOPBACK;
 
-	st_param[HNAE3_MAC_INTER_LOOP_SERDES][0] = HNAE3_MAC_INTER_LOOP_SERDES;
-	st_param[HNAE3_MAC_INTER_LOOP_SERDES][1] =
-			h->flags & HNAE3_SUPPORT_SERDES_LOOPBACK;
-
 	if (if_running)
 		dev_close(ndev);
 
@@ -321,7 +323,7 @@ static void hns3_self_test(struct net_device *ndev,
 
 	set_bit(HNS3_NIC_STATE_TESTING, &priv->state);
 
-	for (i = 0; i < HNS3_SELF_TEST_TYPE_NUM; i++) {
+	for (i = 0; i < HNS3_SELF_TEST_TPYE_NUM; i++) {
 		enum hnae3_loop loop_type = (enum hnae3_loop)st_param[i][0];
 
 		if (!st_param[i][1])
@@ -330,7 +332,7 @@ static void hns3_self_test(struct net_device *ndev,
 		data[test_index] = hns3_lp_up(ndev, loop_type);
 		if (!data[test_index]) {
 			data[test_index] = hns3_lp_run_test(ndev, loop_type);
-			hns3_lp_down(ndev, loop_type);
+			hns3_lp_down(ndev);
 		}
 
 		if (data[test_index])

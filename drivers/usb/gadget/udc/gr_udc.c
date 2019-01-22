@@ -209,12 +209,15 @@ static void gr_dfs_create(struct gr_udc *dev)
 	const char *name = "gr_udc_state";
 
 	dev->dfs_root = debugfs_create_dir(dev_name(dev->dev), NULL);
-	debugfs_create_file(name, 0444, dev->dfs_root, dev, &gr_dfs_fops);
+	dev->dfs_state = debugfs_create_file(name, 0444, dev->dfs_root, dev,
+					     &gr_dfs_fops);
 }
 
 static void gr_dfs_delete(struct gr_udc *dev)
 {
-	debugfs_remove_recursive(dev->dfs_root);
+	/* Handles NULL and ERR pointers internally */
+	debugfs_remove(dev->dfs_state);
+	debugfs_remove(dev->dfs_root);
 }
 
 #else /* !CONFIG_USB_GADGET_DEBUG_FS */

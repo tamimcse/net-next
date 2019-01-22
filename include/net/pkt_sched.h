@@ -72,8 +72,6 @@ struct qdisc_watchdog {
 	struct Qdisc	*qdisc;
 };
 
-void qdisc_watchdog_init_clockid(struct qdisc_watchdog *wd, struct Qdisc *qdisc,
-				 clockid_t clockid);
 void qdisc_watchdog_init(struct qdisc_watchdog *wd, struct Qdisc *qdisc);
 void qdisc_watchdog_schedule_ns(struct qdisc_watchdog *wd, u64 expires);
 
@@ -153,11 +151,6 @@ struct tc_cbs_qopt_offload {
 	s32 locredit;
 	s32 idleslope;
 	s32 sendslope;
-};
-
-struct tc_etf_qopt_offload {
-	u8 enable;
-	s32 queue;
 };
 
 #endif

@@ -17,13 +17,17 @@ struct bsg_ops {
 
 struct bsg_class_device {
 	struct device *class_dev;
+	struct device *parent;
 	int minor;
 	struct request_queue *queue;
+	struct kref ref;
 	const struct bsg_ops *ops;
+	void (*release)(struct device *);
 };
 
 int bsg_register_queue(struct request_queue *q, struct device *parent,
-		const char *name, const struct bsg_ops *ops);
+		const char *name, const struct bsg_ops *ops,
+		void (*release)(struct device *));
 int bsg_scsi_register_queue(struct request_queue *q, struct device *parent);
 void bsg_unregister_queue(struct request_queue *q);
 #else

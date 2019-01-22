@@ -38,6 +38,7 @@
 #include <linux/kmsg_dump.h>
 #include <linux/syslog.h>
 #include <linux/cpu.h>
+#include <linux/notifier.h>
 #include <linux/rculist.h>
 #include <linux/poll.h>
 #include <linux/irq_work.h>
@@ -64,9 +65,6 @@ int console_printk[4] = {
 	CONSOLE_LOGLEVEL_MIN,		/* minimum_console_loglevel */
 	CONSOLE_LOGLEVEL_DEFAULT,	/* default_console_loglevel */
 };
-
-atomic_t ignore_console_lock_warning __read_mostly = ATOMIC_INIT(0);
-EXPORT_SYMBOL(ignore_console_lock_warning);
 
 /*
  * Low level drivers may need that to know if they can schedule in
@@ -351,6 +349,7 @@ static int console_msg_format = MSG_FORMAT_DEFAULT;
  */
 
 enum log_flags {
+	LOG_NOCONS	= 1,	/* already flushed, do not print to console */
 	LOG_NEWLINE	= 2,	/* text ended with a newline */
 	LOG_PREFIX	= 4,	/* text started with a prefix */
 	LOG_CONT	= 8,	/* text is a fragment of a continuation line */
@@ -1353,68 +1352,71 @@ static int syslog_print_all(char __user *buf, int size, bool clear)
 {
 	char *text;
 	int len = 0;
-	u64 next_seq;
-	u64 seq;
-	u32 idx;
 
 	text = kmalloc(LOG_LINE_MAX + PREFIX_MAX, GFP_KERNEL);
 	if (!text)
 		return -ENOMEM;
 
 	logbuf_lock_irq();
-	/*
-	 * Find first record that fits, including all following records,
-	 * into the user-provided buffer for this dump.
-	 */
-	seq = clear_seq;
-	idx = clear_idx;
-	while (seq < log_next_seq) {
-		struct printk_log *msg = log_from_idx(idx);
+	if (buf) {
+		u64 next_seq;
+		u64 seq;
+		u32 idx;
 
-		len += msg_print_text(msg, true, NULL, 0);
-		idx = log_next(idx);
-		seq++;
-	}
+		/*
+		 * Find first record that fits, including all following records,
+		 * into the user-provided buffer for this dump.
+		 */
+		seq = clear_seq;
+		idx = clear_idx;
+		while (seq < log_next_seq) {
+			struct printk_log *msg = log_from_idx(idx);
 
-	/* move first record forward until length fits into the buffer */
-	seq = clear_seq;
-	idx = clear_idx;
-	while (len > size && seq < log_next_seq) {
-		struct printk_log *msg = log_from_idx(idx);
-
-		len -= msg_print_text(msg, true, NULL, 0);
-		idx = log_next(idx);
-		seq++;
-	}
-
-	/* last message fitting into this dump */
-	next_seq = log_next_seq;
-
-	len = 0;
-	while (len >= 0 && seq < next_seq) {
-		struct printk_log *msg = log_from_idx(idx);
-		int textlen;
-
-		textlen = msg_print_text(msg, true, text,
-					 LOG_LINE_MAX + PREFIX_MAX);
-		if (textlen < 0) {
-			len = textlen;
-			break;
+			len += msg_print_text(msg, true, NULL, 0);
+			idx = log_next(idx);
+			seq++;
 		}
-		idx = log_next(idx);
-		seq++;
 
-		logbuf_unlock_irq();
-		if (copy_to_user(buf + len, text, textlen))
-			len = -EFAULT;
-		else
-			len += textlen;
-		logbuf_lock_irq();
+		/* move first record forward until length fits into the buffer */
+		seq = clear_seq;
+		idx = clear_idx;
+		while (len > size && seq < log_next_seq) {
+			struct printk_log *msg = log_from_idx(idx);
 
-		if (seq < log_first_seq) {
-			/* messages are gone, move to next one */
-			seq = log_first_seq;
-			idx = log_first_idx;
+			len -= msg_print_text(msg, true, NULL, 0);
+			idx = log_next(idx);
+			seq++;
+		}
+
+		/* last message fitting into this dump */
+		next_seq = log_next_seq;
+
+		len = 0;
+		while (len >= 0 && seq < next_seq) {
+			struct printk_log *msg = log_from_idx(idx);
+			int textlen;
+
+			textlen = msg_print_text(msg, true, text,
+						 LOG_LINE_MAX + PREFIX_MAX);
+			if (textlen < 0) {
+				len = textlen;
+				break;
+			}
+			idx = log_next(idx);
+			seq++;
+
+			logbuf_unlock_irq();
+			if (copy_to_user(buf + len, text, textlen))
+				len = -EFAULT;
+			else
+				len += textlen;
+			logbuf_lock_irq();
+
+			if (seq < log_first_seq) {
+				/* messages are gone, move to next one */
+				seq = log_first_seq;
+				idx = log_first_idx;
+			}
 		}
 	}
 
@@ -1426,14 +1428,6 @@ static int syslog_print_all(char __user *buf, int size, bool clear)
 
 	kfree(text);
 	return len;
-}
-
-static void syslog_clear(void)
-{
-	logbuf_lock_irq();
-	clear_seq = log_next_seq;
-	clear_idx = log_next_idx;
-	logbuf_unlock_irq();
 }
 
 int do_syslog(int type, char __user *buf, int len, int source)
@@ -1480,7 +1474,7 @@ int do_syslog(int type, char __user *buf, int len, int source)
 		break;
 	/* Clear ring buffer */
 	case SYSLOG_ACTION_CLEAR:
-		syslog_clear();
+		syslog_print_all(NULL, 0, true);
 		break;
 	/* Disable logging to console */
 	case SYSLOG_ACTION_CONSOLE_OFF:
@@ -1830,16 +1824,28 @@ static size_t log_output(int facility, int level, enum log_flags lflags, const c
 	return log_store(facility, level, lflags, 0, dict, dictlen, text, text_len);
 }
 
-/* Must be called under logbuf_lock. */
-int vprintk_store(int facility, int level,
-		  const char *dict, size_t dictlen,
-		  const char *fmt, va_list args)
+asmlinkage int vprintk_emit(int facility, int level,
+			    const char *dict, size_t dictlen,
+			    const char *fmt, va_list args)
 {
 	static char textbuf[LOG_LINE_MAX];
 	char *text = textbuf;
 	size_t text_len;
 	enum log_flags lflags = 0;
+	unsigned long flags;
+	int printed_len;
+	bool in_sched = false;
 
+	if (level == LOGLEVEL_SCHED) {
+		level = LOGLEVEL_DEFAULT;
+		in_sched = true;
+	}
+
+	boot_delay_msec(level);
+	printk_delay();
+
+	/* This stops the holder of console_sem just where we want him */
+	logbuf_lock_irqsave(flags);
 	/*
 	 * The printf needs to come first; we need the syslog
 	 * prefix which might be passed-in as a parameter.
@@ -1880,29 +1886,8 @@ int vprintk_store(int facility, int level,
 	if (dict)
 		lflags |= LOG_PREFIX|LOG_NEWLINE;
 
-	return log_output(facility, level, lflags,
-			  dict, dictlen, text, text_len);
-}
+	printed_len = log_output(facility, level, lflags, dict, dictlen, text, text_len);
 
-asmlinkage int vprintk_emit(int facility, int level,
-			    const char *dict, size_t dictlen,
-			    const char *fmt, va_list args)
-{
-	int printed_len;
-	bool in_sched = false;
-	unsigned long flags;
-
-	if (level == LOGLEVEL_SCHED) {
-		level = LOGLEVEL_DEFAULT;
-		in_sched = true;
-	}
-
-	boot_delay_msec(level);
-	printk_delay();
-
-	/* This stops the holder of console_sem just where we want him */
-	logbuf_lock_irqsave(flags);
-	printed_len = vprintk_store(facility, level, dict, dictlen, fmt, args);
 	logbuf_unlock_irqrestore(flags);
 
 	/* If called from the scheduler, we can not call up(). */
@@ -1923,7 +1908,6 @@ asmlinkage int vprintk_emit(int facility, int level,
 		preempt_enable();
 	}
 
-	wake_up_klogd();
 	return printed_len;
 }
 EXPORT_SYMBOL(vprintk_emit);
@@ -2258,7 +2242,6 @@ int is_console_locked(void)
 {
 	return console_locked;
 }
-EXPORT_SYMBOL(is_console_locked);
 
 /*
  * Check if we have any console that is capable of printing while cpu is
@@ -2306,7 +2289,9 @@ void console_unlock(void)
 {
 	static char ext_text[CONSOLE_EXT_LOG_MAX];
 	static char text[LOG_LINE_MAX + PREFIX_MAX];
+	static u64 seen_seq;
 	unsigned long flags;
+	bool wake_klogd = false;
 	bool do_cond_resched, retry;
 
 	if (console_suspended) {
@@ -2350,6 +2335,11 @@ again:
 
 		printk_safe_enter_irqsave(flags);
 		raw_spin_lock(&logbuf_lock);
+		if (seen_seq != log_next_seq) {
+			wake_klogd = true;
+			seen_seq = log_next_seq;
+		}
+
 		if (console_seq < log_first_seq) {
 			len = sprintf(text, "** %u printk messages dropped **\n",
 				      (unsigned)(log_first_seq - console_seq));
@@ -2407,7 +2397,7 @@ skip:
 
 		if (console_lock_spinning_disable_and_check()) {
 			printk_safe_exit_irqrestore(flags);
-			return;
+			goto out;
 		}
 
 		printk_safe_exit_irqrestore(flags);
@@ -2439,6 +2429,10 @@ skip:
 
 	if (retry && console_trylock())
 		goto again;
+
+out:
+	if (wake_klogd)
+		wake_up_klogd();
 }
 EXPORT_SYMBOL(console_unlock);
 
@@ -2788,8 +2782,7 @@ EXPORT_SYMBOL(unregister_console);
 void __init console_init(void)
 {
 	int ret;
-	initcall_t call;
-	initcall_entry_t *ce;
+	initcall_t *call;
 
 	/* Setup the default TTY line discipline. */
 	n_tty_init();
@@ -2798,14 +2791,13 @@ void __init console_init(void)
 	 * set up the console device so that later boot sequences can
 	 * inform about problems etc..
 	 */
-	ce = __con_initcall_start;
+	call = __con_initcall_start;
 	trace_initcall_level("console");
-	while (ce < __con_initcall_end) {
-		call = initcall_from_entry(ce);
-		trace_initcall_start(call);
-		ret = call();
-		trace_initcall_finish(call, ret);
-		ce++;
+	while (call < __con_initcall_end) {
+		trace_initcall_start((*call));
+		ret = (*call)();
+		trace_initcall_finish((*call), ret);
+		call++;
 	}
 }
 
@@ -2896,20 +2888,16 @@ void wake_up_klogd(void)
 	preempt_enable();
 }
 
-void defer_console_output(void)
-{
-	preempt_disable();
-	__this_cpu_or(printk_pending, PRINTK_PENDING_OUTPUT);
-	irq_work_queue(this_cpu_ptr(&wake_up_klogd_work));
-	preempt_enable();
-}
-
 int vprintk_deferred(const char *fmt, va_list args)
 {
 	int r;
 
 	r = vprintk_emit(0, LOGLEVEL_SCHED, NULL, 0, fmt, args);
-	defer_console_output();
+
+	preempt_disable();
+	__this_cpu_or(printk_pending, PRINTK_PENDING_OUTPUT);
+	irq_work_queue(this_cpu_ptr(&wake_up_klogd_work));
+	preempt_enable();
 
 	return r;
 }

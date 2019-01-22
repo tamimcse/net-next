@@ -214,6 +214,8 @@ static inline void ptrace_init_task(struct task_struct *child, bool ptrace)
 			task_set_jobctl_pending(child, JOBCTL_TRAP_STOP);
 		else
 			sigaddset(&child->pending.signal, SIGSTOP);
+
+		set_tsk_thread_flag(child, TIF_SIGPENDING);
 	}
 	else
 		child->ptracer_cred = NULL;
@@ -343,6 +345,7 @@ extern void user_single_step_siginfo(struct task_struct *tsk,
 static inline void user_single_step_siginfo(struct task_struct *tsk,
 				struct pt_regs *regs, siginfo_t *info)
 {
+	memset(info, 0, sizeof(*info));
 	info->si_signo = SIGTRAP;
 }
 #endif

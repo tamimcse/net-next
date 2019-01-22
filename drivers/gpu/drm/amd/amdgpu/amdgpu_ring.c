@@ -211,8 +211,7 @@ void amdgpu_ring_priority_get(struct amdgpu_ring *ring,
 	if (!ring->funcs->set_priority)
 		return;
 
-	if (atomic_inc_return(&ring->num_jobs[priority]) <= 0)
-		return;
+	atomic_inc(&ring->num_jobs[priority]);
 
 	mutex_lock(&ring->priority_mutex);
 	if (priority <= ring->priority)
@@ -305,7 +304,7 @@ int amdgpu_ring_init(struct amdgpu_device *adev, struct amdgpu_ring *ring,
 		0xffffffffffffffff : ring->buf_mask;
 	/* Allocate ring buffer */
 	if (ring->ring_obj == NULL) {
-		r = amdgpu_bo_create_kernel(adev, ring->ring_size + ring->funcs->extra_dw, PAGE_SIZE,
+		r = amdgpu_bo_create_kernel(adev, ring->ring_size, PAGE_SIZE,
 					    AMDGPU_GEM_DOMAIN_GTT,
 					    &ring->ring_obj,
 					    &ring->gpu_addr,
@@ -363,7 +362,6 @@ void amdgpu_ring_fini(struct amdgpu_ring *ring)
 
 	dma_fence_put(ring->vmid_wait);
 	ring->vmid_wait = NULL;
-	ring->me = 0;
 
 	ring->adev->rings[ring->idx] = NULL;
 }
@@ -459,26 +457,6 @@ void amdgpu_ring_lru_touch(struct amdgpu_device *adev, struct amdgpu_ring *ring)
 	spin_lock(&adev->ring_lru_list_lock);
 	amdgpu_ring_lru_touch_locked(adev, ring);
 	spin_unlock(&adev->ring_lru_list_lock);
-}
-
-/**
- * amdgpu_ring_emit_reg_write_reg_wait_helper - ring helper
- *
- * @adev: amdgpu_device pointer
- * @reg0: register to write
- * @reg1: register to wait on
- * @ref: reference value to write/wait on
- * @mask: mask to wait on
- *
- * Helper for rings that don't support write and wait in a
- * single oneshot packet.
- */
-void amdgpu_ring_emit_reg_write_reg_wait_helper(struct amdgpu_ring *ring,
-						uint32_t reg0, uint32_t reg1,
-						uint32_t ref, uint32_t mask)
-{
-	amdgpu_ring_emit_wreg(ring, reg0, ref);
-	amdgpu_ring_emit_reg_wait(ring, reg1, mask, mask);
 }
 
 /*

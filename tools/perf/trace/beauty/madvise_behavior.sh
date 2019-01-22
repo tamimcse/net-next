@@ -1,6 +1,6 @@
 #!/bin/sh
 
-[ $# -eq 1 ] && header_dir=$1 || header_dir=tools/include/uapi/asm-generic/
+header_dir=$1
 
 printf "static const char *madvise_advices[] = {\n"
 regex='^[[:space:]]*#[[:space:]]*define[[:space:]]+MADV_([[:alnum:]_]+)[[:space:]]+([[:digit:]]+)[[:space:]]*.*'

@@ -52,20 +52,18 @@
  * Track sum of all purrs across all processors. This is used to further
  * calculate usage values by different applications
  */
-static void cpu_get_purr(void *arg)
-{
-	atomic64_t *sum = arg;
-
-	atomic64_add(mfspr(SPRN_PURR), sum);
-}
-
 static unsigned long get_purr(void)
 {
-	atomic64_t purr = ATOMIC64_INIT(0);
+	unsigned long sum_purr = 0;
+	int cpu;
 
-	on_each_cpu(cpu_get_purr, &purr, 1);
+	for_each_possible_cpu(cpu) {
+		struct cpu_usage *cu;
 
-	return atomic64_read(&purr);
+		cu = &per_cpu(cpu_usage_array, cpu);
+		sum_purr += cu->current_tb;
+	}
+	return sum_purr;
 }
 
 /*

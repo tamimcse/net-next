@@ -33,7 +33,7 @@
 #include <linux/i2c.h>
 #include <linux/interrupt.h>
 #include <linux/wait.h>
-#include <linux/platform_data/i2c-xiic.h>
+#include <linux/i2c-xiic.h>
 #include <linux/io.h>
 #include <linux/slab.h>
 #include <linux/of.h>
@@ -142,6 +142,12 @@ struct xiic_i2c {
 (XIIC_INTR_TX_ERROR_MASK | XIIC_INTR_TX_EMPTY_MASK | XIIC_INTR_TX_HALF_MASK)
 
 #define XIIC_TX_RX_INTERRUPTS (XIIC_INTR_RX_FULL_MASK | XIIC_TX_INTERRUPTS)
+
+/* The following constants are used with the following macros to specify the
+ * operation, a read or write operation.
+ */
+#define XIIC_READ_OPERATION  1
+#define XIIC_WRITE_OPERATION 0
 
 /*
  * Tx Fifo upper bit masks.
@@ -409,7 +415,7 @@ static irqreturn_t xiic_process(int irq, void *dev_id)
 		clr |= XIIC_INTR_RX_FULL_MASK;
 		if (!i2c->rx_msg) {
 			dev_dbg(i2c->adap.dev.parent,
-				"%s unexpected RX IRQ\n", __func__);
+				"%s unexpexted RX IRQ\n", __func__);
 			xiic_clear_rx_fifo(i2c);
 			goto out;
 		}
@@ -464,7 +470,7 @@ static irqreturn_t xiic_process(int irq, void *dev_id)
 
 		if (!i2c->tx_msg) {
 			dev_dbg(i2c->adap.dev.parent,
-				"%s unexpected TX IRQ\n", __func__);
+				"%s unexpexted TX IRQ\n", __func__);
 			goto out;
 		}
 
@@ -532,7 +538,6 @@ static void xiic_start_recv(struct xiic_i2c *i2c)
 {
 	u8 rx_watermark;
 	struct i2c_msg *msg = i2c->rx_msg = i2c->tx_msg;
-	unsigned long flags;
 
 	/* Clear and enable Rx full interrupt. */
 	xiic_irq_clr_en(i2c, XIIC_INTR_RX_FULL_MASK | XIIC_INTR_TX_ERROR_MASK);
@@ -548,18 +553,16 @@ static void xiic_start_recv(struct xiic_i2c *i2c)
 		rx_watermark = IIC_RX_FIFO_DEPTH;
 	xiic_setreg8(i2c, XIIC_RFD_REG_OFFSET, rx_watermark - 1);
 
-	local_irq_save(flags);
 	if (!(msg->flags & I2C_M_NOSTART))
 		/* write the address */
 		xiic_setreg16(i2c, XIIC_DTR_REG_OFFSET,
-			i2c_8bit_addr_from_msg(msg) | XIIC_TX_DYN_START_MASK);
+			(msg->addr << 1) | XIIC_READ_OPERATION |
+			XIIC_TX_DYN_START_MASK);
 
 	xiic_irq_clr_en(i2c, XIIC_INTR_BNB_MASK);
 
 	xiic_setreg16(i2c, XIIC_DTR_REG_OFFSET,
 		msg->len | ((i2c->nmsgs == 1) ? XIIC_TX_DYN_STOP_MASK : 0));
-	local_irq_restore(flags);
-
 	if (i2c->nmsgs == 1)
 		/* very last, enable bus not busy as well */
 		xiic_irq_clr_en(i2c, XIIC_INTR_BNB_MASK);
@@ -582,7 +585,7 @@ static void xiic_start_send(struct xiic_i2c *i2c)
 
 	if (!(msg->flags & I2C_M_NOSTART)) {
 		/* write the address */
-		u16 data = i2c_8bit_addr_from_msg(msg) |
+		u16 data = ((msg->addr << 1) & 0xfe) | XIIC_WRITE_OPERATION |
 			XIIC_TX_DYN_START_MASK;
 		if ((i2c->nmsgs == 1) && msg->len == 0)
 			/* no data and last message -> add STOP */

@@ -265,10 +265,8 @@ int __rtc_read_alarm(struct rtc_device *rtc, struct rtc_wkalrm *alarm)
 			return err;
 
 		/* full-function RTCs won't have such missing fields */
-		if (rtc_valid_tm(&alarm->time) == 0) {
-			rtc_add_offset(rtc, &alarm->time);
+		if (rtc_valid_tm(&alarm->time) == 0)
 			return 0;
-		}
 
 		/* get the "after" timestamp, to detect wrapped fields */
 		err = rtc_read_time(rtc, &now);
@@ -411,6 +409,7 @@ static int __rtc_set_alarm(struct rtc_device *rtc, struct rtc_wkalrm *alarm)
 	if (err)
 		return err;
 
+	rtc_subtract_offset(rtc, &alarm->time);
 	scheduled = rtc_tm_to_time64(&alarm->time);
 
 	/* Make sure we're not setting alarms in the past */
@@ -427,8 +426,6 @@ static int __rtc_set_alarm(struct rtc_device *rtc, struct rtc_wkalrm *alarm)
 	 * over right here, before we set the alarm.
 	 */
 
-	rtc_subtract_offset(rtc, &alarm->time);
-
 	if (!rtc->ops)
 		err = -ENODEV;
 	else if (!rtc->ops->set_alarm)
@@ -443,11 +440,6 @@ static int __rtc_set_alarm(struct rtc_device *rtc, struct rtc_wkalrm *alarm)
 int rtc_set_alarm(struct rtc_device *rtc, struct rtc_wkalrm *alarm)
 {
 	int err;
-
-	if (!rtc->ops)
-		return -ENODEV;
-	else if (!rtc->ops->set_alarm)
-		return -EINVAL;
 
 	err = rtc_valid_tm(&alarm->time);
 	if (err != 0)
@@ -470,6 +462,7 @@ int rtc_set_alarm(struct rtc_device *rtc, struct rtc_wkalrm *alarm)
 
 	mutex_unlock(&rtc->ops_lock);
 
+	rtc_add_offset(rtc, &alarm->time);
 	return err;
 }
 EXPORT_SYMBOL_GPL(rtc_set_alarm);
@@ -607,6 +600,12 @@ void rtc_handle_legacy_irq(struct rtc_device *rtc, int num, int mode)
 	rtc->irq_data = (rtc->irq_data + (num << 8)) | (RTC_IRQF|mode);
 	spin_unlock_irqrestore(&rtc->irq_lock, flags);
 
+	/* call the task func */
+	spin_lock_irqsave(&rtc->irq_task_lock, flags);
+	if (rtc->irq_task)
+		rtc->irq_task->func(rtc->irq_task->private_data);
+	spin_unlock_irqrestore(&rtc->irq_task_lock, flags);
+
 	wake_up_interruptible(&rtc->irq_queue);
 	kill_fasync(&rtc->async_queue, SIGIO, POLL_IN);
 }
@@ -715,6 +714,39 @@ void rtc_class_close(struct rtc_device *rtc)
 }
 EXPORT_SYMBOL_GPL(rtc_class_close);
 
+int rtc_irq_register(struct rtc_device *rtc, struct rtc_task *task)
+{
+	int retval = -EBUSY;
+
+	if (task == NULL || task->func == NULL)
+		return -EINVAL;
+
+	/* Cannot register while the char dev is in use */
+	if (test_and_set_bit_lock(RTC_DEV_BUSY, &rtc->flags))
+		return -EBUSY;
+
+	spin_lock_irq(&rtc->irq_task_lock);
+	if (rtc->irq_task == NULL) {
+		rtc->irq_task = task;
+		retval = 0;
+	}
+	spin_unlock_irq(&rtc->irq_task_lock);
+
+	clear_bit_unlock(RTC_DEV_BUSY, &rtc->flags);
+
+	return retval;
+}
+EXPORT_SYMBOL_GPL(rtc_irq_register);
+
+void rtc_irq_unregister(struct rtc_device *rtc, struct rtc_task *task)
+{
+	spin_lock_irq(&rtc->irq_task_lock);
+	if (rtc->irq_task == task)
+		rtc->irq_task = NULL;
+	spin_unlock_irq(&rtc->irq_task_lock);
+}
+EXPORT_SYMBOL_GPL(rtc_irq_unregister);
+
 static int rtc_update_hrtimer(struct rtc_device *rtc, int enabled)
 {
 	/*
@@ -746,45 +778,71 @@ static int rtc_update_hrtimer(struct rtc_device *rtc, int enabled)
  * Context: any
  *
  * Note that rtc_irq_set_freq() should previously have been used to
- * specify the desired frequency of periodic IRQ.
+ * specify the desired frequency of periodic IRQ task->func() callbacks.
  */
-int rtc_irq_set_state(struct rtc_device *rtc, int enabled)
+int rtc_irq_set_state(struct rtc_device *rtc, struct rtc_task *task, int enabled)
 {
 	int err = 0;
+	unsigned long flags;
 
-	while (rtc_update_hrtimer(rtc, enabled) < 0)
-		cpu_relax();
-
-	rtc->pie_enabled = enabled;
+retry:
+	spin_lock_irqsave(&rtc->irq_task_lock, flags);
+	if (rtc->irq_task != NULL && task == NULL)
+		err = -EBUSY;
+	else if (rtc->irq_task != task)
+		err = -EACCES;
+	else {
+		if (rtc_update_hrtimer(rtc, enabled) < 0) {
+			spin_unlock_irqrestore(&rtc->irq_task_lock, flags);
+			cpu_relax();
+			goto retry;
+		}
+		rtc->pie_enabled = enabled;
+	}
+	spin_unlock_irqrestore(&rtc->irq_task_lock, flags);
 
 	trace_rtc_irq_set_state(enabled, err);
 	return err;
 }
+EXPORT_SYMBOL_GPL(rtc_irq_set_state);
 
 /**
  * rtc_irq_set_freq - set 2^N Hz periodic IRQ frequency for IRQ
  * @rtc: the rtc device
  * @task: currently registered with rtc_irq_register()
- * @freq: positive frequency
+ * @freq: positive frequency with which task->func() will be called
  * Context: any
  *
  * Note that rtc_irq_set_state() is used to enable or disable the
  * periodic IRQs.
  */
-int rtc_irq_set_freq(struct rtc_device *rtc, int freq)
+int rtc_irq_set_freq(struct rtc_device *rtc, struct rtc_task *task, int freq)
 {
 	int err = 0;
+	unsigned long flags;
 
 	if (freq <= 0 || freq > RTC_MAX_FREQ)
 		return -EINVAL;
-
-	rtc->irq_freq = freq;
-	while (rtc->pie_enabled && rtc_update_hrtimer(rtc, 1) < 0)
-		cpu_relax();
+retry:
+	spin_lock_irqsave(&rtc->irq_task_lock, flags);
+	if (rtc->irq_task != NULL && task == NULL)
+		err = -EBUSY;
+	else if (rtc->irq_task != task)
+		err = -EACCES;
+	else {
+		rtc->irq_freq = freq;
+		if (rtc->pie_enabled && rtc_update_hrtimer(rtc, 1) < 0) {
+			spin_unlock_irqrestore(&rtc->irq_task_lock, flags);
+			cpu_relax();
+			goto retry;
+		}
+	}
+	spin_unlock_irqrestore(&rtc->irq_task_lock, flags);
 
 	trace_rtc_irq_set_freq(freq, err);
 	return err;
 }
+EXPORT_SYMBOL_GPL(rtc_irq_set_freq);
 
 /**
  * rtc_timer_enqueue - Adds a rtc_timer to the rtc_device timerqueue
@@ -914,8 +972,8 @@ again:
 		timerqueue_del(&rtc->timerqueue, &timer->node);
 		trace_rtc_timer_dequeue(timer);
 		timer->enabled = 0;
-		if (timer->func)
-			timer->func(timer->private_data);
+		if (timer->task.func)
+			timer->task.func(timer->task.private_data);
 
 		trace_rtc_timer_fired(timer);
 		/* Re-add/fwd periodic timers */
@@ -970,8 +1028,8 @@ void rtc_timer_init(struct rtc_timer *timer, void (*f)(void *p), void *data)
 {
 	timerqueue_init(&timer->node);
 	timer->enabled = 0;
-	timer->func = f;
-	timer->private_data = data;
+	timer->task.func = f;
+	timer->task.private_data = data;
 }
 
 /* rtc_timer_start - Sets an rtc_timer to fire in the future

@@ -476,6 +476,8 @@ il3945_tx_skb(struct il_priv *il,
 	int txq_id = skb_get_queue_mapping(skb);
 	u16 len, idx, hdr_len;
 	u16 firstlen, secondlen;
+	u8 id;
+	u8 unicast;
 	u8 sta_id;
 	u8 tid = 0;
 	__le16 fc;
@@ -493,6 +495,9 @@ il3945_tx_skb(struct il_priv *il,
 		IL_ERR("ERROR: No TX rate available.\n");
 		goto drop_unlock;
 	}
+
+	unicast = !is_multicast_ether_addr(hdr->addr1);
+	id = 0;
 
 	fc = hdr->frame_control;
 
@@ -952,8 +957,10 @@ il3945_rx_queue_restock(struct il_priv *il)
 	struct list_head *element;
 	struct il_rx_buf *rxb;
 	unsigned long flags;
+	int write;
 
 	spin_lock_irqsave(&rxq->lock, flags);
+	write = rxq->write & ~0x7;
 	while (il_rx_queue_space(rxq) > 0 && rxq->free_count) {
 		/* Get next free Rx buffer, remove from free list */
 		element = rxq->rx_free.next;
@@ -2718,6 +2725,7 @@ void
 il3945_post_associate(struct il_priv *il)
 {
 	int rc = 0;
+	struct ieee80211_conf *conf = NULL;
 
 	if (!il->vif || !il->is_open)
 		return;
@@ -2729,6 +2737,8 @@ il3945_post_associate(struct il_priv *il)
 		return;
 
 	il_scan_cancel_timeout(il, 200);
+
+	conf = &il->hw->conf;
 
 	il->staging.filter_flags &= ~RXON_FILTER_ASSOC_MSK;
 	il3945_commit_rxon(il);

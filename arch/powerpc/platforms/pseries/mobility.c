@@ -17,7 +17,6 @@
 #include <linux/device.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
-#include <linux/stringify.h>
 
 #include <asm/machdep.h>
 #include <asm/rtas.h>

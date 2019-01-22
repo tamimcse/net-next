@@ -165,7 +165,6 @@ static __be32 *
 encode_fattr3(struct svc_rqst *rqstp, __be32 *p, struct svc_fh *fhp,
 	      struct kstat *stat)
 {
-	struct timespec ts;
 	*p++ = htonl(nfs3_ftypes[(stat->mode & S_IFMT) >> 12]);
 	*p++ = htonl((u32) (stat->mode & S_IALLUGO));
 	*p++ = htonl((u32) stat->nlink);
@@ -181,12 +180,9 @@ encode_fattr3(struct svc_rqst *rqstp, __be32 *p, struct svc_fh *fhp,
 	*p++ = htonl((u32) MINOR(stat->rdev));
 	p = encode_fsid(p, fhp);
 	p = xdr_encode_hyper(p, stat->ino);
-	ts = timespec64_to_timespec(stat->atime);
-	p = encode_time3(p, &ts);
-	ts = timespec64_to_timespec(stat->mtime);
-	p = encode_time3(p, &ts);
-	ts = timespec64_to_timespec(stat->ctime);
-	p = encode_time3(p, &ts);
+	p = encode_time3(p, &stat->atime);
+	p = encode_time3(p, &stat->mtime);
+	p = encode_time3(p, &stat->ctime);
 
 	return p;
 }
@@ -275,8 +271,8 @@ void fill_pre_wcc(struct svc_fh *fhp)
 		stat.size  = inode->i_size;
 	}
 
-	fhp->fh_pre_mtime = timespec64_to_timespec(stat.mtime);
-	fhp->fh_pre_ctime = timespec64_to_timespec(stat.ctime);
+	fhp->fh_pre_mtime = stat.mtime;
+	fhp->fh_pre_ctime = stat.ctime;
 	fhp->fh_pre_size  = stat.size;
 	fhp->fh_pre_change = nfsd4_change_attribute(&stat, inode);
 	fhp->fh_pre_saved = true;

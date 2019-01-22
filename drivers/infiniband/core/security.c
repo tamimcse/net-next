@@ -30,6 +30,8 @@
  * SOFTWARE.
  */
 
+#ifdef CONFIG_SECURITY_INFINIBAND
+
 #include <linux/security.h>
 #include <linux/completion.h>
 #include <linux/list.h>
@@ -749,3 +751,5 @@ int ib_mad_enforce_security(struct ib_mad_agent_private *map, u16 pkey_index)
 				       pkey_index,
 				       map->agent.security);
 }
+
+#endif /* CONFIG_SECURITY_INFINIBAND */

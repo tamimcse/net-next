@@ -2794,7 +2794,6 @@ int efx_farch_filter_table_probe(struct efx_nic *efx)
 	if (!state)
 		return -ENOMEM;
 	efx->filter_state = state;
-	init_rwsem(&state->lock);
 
 	table = &state->table[EFX_FARCH_FILTER_TABLE_RX_IP];
 	table->id = EFX_FARCH_FILTER_TABLE_RX_IP;
@@ -2827,8 +2826,7 @@ int efx_farch_filter_table_probe(struct efx_nic *efx)
 					     GFP_KERNEL);
 		if (!table->used_bitmap)
 			goto fail;
-		table->spec = vzalloc(array_size(sizeof(*table->spec),
-						 table->size));
+		table->spec = vzalloc(table->size * sizeof(*table->spec));
 		if (!table->spec)
 			goto fail;
 	}

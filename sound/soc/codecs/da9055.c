@@ -1041,9 +1041,9 @@ static bool da9055_volatile_register(struct device *dev,
 	case DA9055_HP_R_GAIN_STATUS:
 	case DA9055_LINE_GAIN_STATUS:
 	case DA9055_ALC_CIC_OP_LVL_DATA:
-		return true;
+		return 1;
 	default:
-		return false;
+		return 0;
 	}
 }
 

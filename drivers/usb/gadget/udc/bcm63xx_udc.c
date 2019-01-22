@@ -288,6 +288,8 @@ struct bcm63xx_req {
  * @ep0_reply: Pending reply from gadget driver.
  * @ep0_request: Outstanding ep0 request.
  * @debugfs_root: debugfs directory: /sys/kernel/debug/<DRV_MODULE_NAME>.
+ * @debugfs_usbd: debugfs file "usbd" for controller state.
+ * @debugfs_iudma: debugfs file "usbd" for IUDMA state.
  */
 struct bcm63xx_udc {
 	spinlock_t			lock;
@@ -328,6 +330,8 @@ struct bcm63xx_udc {
 	struct usb_request		*ep0_request;
 
 	struct dentry			*debugfs_root;
+	struct dentry			*debugfs_usbd;
+	struct dentry			*debugfs_iudma;
 };
 
 static const struct usb_ep_ops bcm63xx_udc_ep_ops;
@@ -2243,16 +2247,34 @@ DEFINE_SHOW_ATTRIBUTE(bcm63xx_iudma_dbg);
  */
 static void bcm63xx_udc_init_debugfs(struct bcm63xx_udc *udc)
 {
-	struct dentry *root;
+	struct dentry *root, *usbd, *iudma;
 
 	if (!IS_ENABLED(CONFIG_USB_GADGET_DEBUG_FS))
 		return;
 
 	root = debugfs_create_dir(udc->gadget.name, NULL);
-	udc->debugfs_root = root;
+	if (IS_ERR(root) || !root)
+		goto err_root;
 
-	debugfs_create_file("usbd", 0400, root, udc, &bcm63xx_usbd_dbg_fops);
-	debugfs_create_file("iudma", 0400, root, udc, &bcm63xx_iudma_dbg_fops);
+	usbd = debugfs_create_file("usbd", 0400, root, udc,
+			&bcm63xx_usbd_dbg_fops);
+	if (!usbd)
+		goto err_usbd;
+	iudma = debugfs_create_file("iudma", 0400, root, udc,
+			&bcm63xx_iudma_dbg_fops);
+	if (!iudma)
+		goto err_iudma;
+
+	udc->debugfs_root = root;
+	udc->debugfs_usbd = usbd;
+	udc->debugfs_iudma = iudma;
+	return;
+err_iudma:
+	debugfs_remove(usbd);
+err_usbd:
+	debugfs_remove(root);
+err_root:
+	dev_err(udc->dev, "debugfs is not available\n");
 }
 
 /**
@@ -2263,7 +2285,12 @@ static void bcm63xx_udc_init_debugfs(struct bcm63xx_udc *udc)
  */
 static void bcm63xx_udc_cleanup_debugfs(struct bcm63xx_udc *udc)
 {
-	debugfs_remove_recursive(udc->debugfs_root);
+	debugfs_remove(udc->debugfs_iudma);
+	debugfs_remove(udc->debugfs_usbd);
+	debugfs_remove(udc->debugfs_root);
+	udc->debugfs_iudma = NULL;
+	udc->debugfs_usbd = NULL;
+	udc->debugfs_root = NULL;
 }
 
 /***********************************************************************

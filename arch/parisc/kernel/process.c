@@ -302,7 +302,7 @@ get_wchan(struct task_struct *p)
 		ip = info.ip;
 		if (!in_sched_functions(ip))
 			return ip;
-	} while (count++ < MAX_UNWIND_ENTRIES);
+	} while (count++ < 16);
 	return 0;
 }
 

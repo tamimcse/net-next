@@ -58,7 +58,7 @@
 		};
 
 		idle-states {
-			entry-method = "psci";
+			entry-method = "arm,psci";
 
 			CPU_SLEEP_0: cpu-sleep-0 {
 				compatible = "arm,idle-state";

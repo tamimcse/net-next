@@ -684,8 +684,7 @@ int tipc_nl_monitor_get_threshold(struct net *net)
 	return tn->mon_threshold;
 }
 
-static int __tipc_nl_add_monitor_peer(struct tipc_peer *peer,
-				      struct tipc_nl_msg *msg)
+int __tipc_nl_add_monitor_peer(struct tipc_peer *peer, struct tipc_nl_msg *msg)
 {
 	struct tipc_mon_domain *dom = peer->domain;
 	struct nlattr *attrs;

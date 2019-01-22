@@ -163,6 +163,9 @@ static u8 ic_domain[64];		/* DNS (not NIS) domain name */
  * Private state.
  */
 
+/* proc_dir_entry for /proc/net/ipconfig */
+static struct proc_dir_entry *ipconfig_dir;
+
 /* Name of user-selected boot device */
 static char user_dev_name[IFNAMSIZ] __initdata = { 0, };
 
@@ -1289,8 +1292,6 @@ static int __init ic_dynamic(void)
 #endif /* IPCONFIG_DYNAMIC */
 
 #ifdef CONFIG_PROC_FS
-/* proc_dir_entry for /proc/net/ipconfig */
-static struct proc_dir_entry *ipconfig_dir;
 
 /* Name servers: */
 static int pnp_seq_show(struct seq_file *seq, void *v)
@@ -1317,6 +1318,18 @@ static int pnp_seq_show(struct seq_file *seq, void *v)
 			   &ic_servaddr);
 	return 0;
 }
+
+static int pnp_seq_open(struct inode *indoe, struct file *file)
+{
+	return single_open(file, pnp_seq_show, NULL);
+}
+
+static const struct file_operations pnp_seq_fops = {
+	.open		= pnp_seq_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
 
 /* Create the /proc/net/ipconfig directory */
 static int __init ipconfig_proc_net_init(void)
@@ -1457,7 +1470,7 @@ static int __init ip_auto_config(void)
 	}
 
 #ifdef CONFIG_PROC_FS
-	proc_create_single("pnp", 0444, init_net.proc_net, pnp_seq_show);
+	proc_create("pnp", 0444, init_net.proc_net, &pnp_seq_fops);
 
 	if (ipconfig_proc_net_init() == 0)
 		ipconfig_proc_net_create("ntp_servers", &ntp_servers_seq_fops);

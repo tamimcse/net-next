@@ -114,7 +114,7 @@ struct socket {
 
 	unsigned long		flags;
 
-	struct socket_wq	*wq;
+	struct socket_wq __rcu	*wq;
 
 	struct file		*file;
 	struct sock		*sk;

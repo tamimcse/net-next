@@ -41,9 +41,9 @@ static DEFINE_PER_CPU(struct rnd_state, nft_prandom_state);
 #include "../bridge/br_private.h"
 #endif
 
-void nft_meta_get_eval(const struct nft_expr *expr,
-		       struct nft_regs *regs,
-		       const struct nft_pktinfo *pkt)
+static void nft_meta_get_eval(const struct nft_expr *expr,
+			      struct nft_regs *regs,
+			      const struct nft_pktinfo *pkt)
 {
 	const struct nft_meta *priv = nft_expr_priv(expr);
 	const struct sk_buff *skb = pkt->skb;
@@ -107,8 +107,7 @@ void nft_meta_get_eval(const struct nft_expr *expr,
 		break;
 	case NFT_META_SKUID:
 		sk = skb_to_full_sk(skb);
-		if (!sk || !sk_fullsock(sk) ||
-		    !net_eq(nft_net(pkt), sock_net(sk)))
+		if (!sk || !sk_fullsock(sk))
 			goto err;
 
 		read_lock_bh(&sk->sk_callback_lock);
@@ -124,8 +123,7 @@ void nft_meta_get_eval(const struct nft_expr *expr,
 		break;
 	case NFT_META_SKGID:
 		sk = skb_to_full_sk(skb);
-		if (!sk || !sk_fullsock(sk) ||
-		    !net_eq(nft_net(pkt), sock_net(sk)))
+		if (!sk || !sk_fullsock(sk))
 			goto err;
 
 		read_lock_bh(&sk->sk_callback_lock);
@@ -216,8 +214,7 @@ void nft_meta_get_eval(const struct nft_expr *expr,
 #ifdef CONFIG_CGROUP_NET_CLASSID
 	case NFT_META_CGROUP:
 		sk = skb_to_full_sk(skb);
-		if (!sk || !sk_fullsock(sk) ||
-		    !net_eq(nft_net(pkt), sock_net(sk)))
+		if (!sk || !sk_fullsock(sk))
 			goto err;
 		*dest = sock_cgroup_classid(&sk->sk_cgrp_data);
 		break;
@@ -262,7 +259,7 @@ static void nft_meta_set_eval(const struct nft_expr *expr,
 	struct sk_buff *skb = pkt->skb;
 	u32 *sreg = &regs->data[meta->sreg];
 	u32 value = *sreg;
-	u8 value8;
+	u8 pkt_type;
 
 	switch (meta->key) {
 	case NFT_META_MARK:
@@ -272,17 +269,15 @@ static void nft_meta_set_eval(const struct nft_expr *expr,
 		skb->priority = value;
 		break;
 	case NFT_META_PKTTYPE:
-		value8 = nft_reg_load8(sreg);
+		pkt_type = nft_reg_load8(sreg);
 
-		if (skb->pkt_type != value8 &&
-		    skb_pkt_type_ok(value8) &&
+		if (skb->pkt_type != pkt_type &&
+		    skb_pkt_type_ok(pkt_type) &&
 		    skb_pkt_type_ok(skb->pkt_type))
-			skb->pkt_type = value8;
+			skb->pkt_type = pkt_type;
 		break;
 	case NFT_META_NFTRACE:
-		value8 = nft_reg_load8(sreg);
-
-		skb->nf_trace = !!value8;
+		skb->nf_trace = !!value;
 		break;
 	default:
 		WARN_ON(1);

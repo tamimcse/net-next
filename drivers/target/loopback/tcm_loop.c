@@ -239,7 +239,10 @@ out:
 	return ret;
 
 release:
-	kmem_cache_free(tcm_loop_cmd_cache, tl_cmd);
+	if (se_cmd)
+		transport_generic_free_cmd(se_cmd, 0);
+	else
+		kmem_cache_free(tcm_loop_cmd_cache, tl_cmd);
 	goto out;
 }
 
@@ -765,7 +768,7 @@ static int tcm_loop_make_nexus(
 	if (!tl_nexus)
 		return -ENOMEM;
 
-	tl_nexus->se_sess = target_setup_session(&tl_tpg->tl_se_tpg, 0, 0,
+	tl_nexus->se_sess = target_alloc_session(&tl_tpg->tl_se_tpg, 0, 0,
 					TARGET_PROT_DIN_PASS | TARGET_PROT_DOUT_PASS,
 					name, tl_nexus, tcm_loop_alloc_sess_cb);
 	if (IS_ERR(tl_nexus->se_sess)) {
@@ -805,7 +808,7 @@ static int tcm_loop_drop_nexus(
 	/*
 	 * Release the SCSI I_T Nexus to the emulated Target Port
 	 */
-	target_remove_session(se_sess);
+	transport_deregister_session(tl_nexus->se_sess);
 	tpg->tl_nexus = NULL;
 	kfree(tl_nexus);
 	return 0;
@@ -980,8 +983,10 @@ static struct configfs_attribute *tcm_loop_tpg_attrs[] = {
 
 /* Start items for tcm_loop_naa_cit */
 
-static struct se_portal_group *tcm_loop_make_naa_tpg(struct se_wwn *wwn,
-						     const char *name)
+static struct se_portal_group *tcm_loop_make_naa_tpg(
+	struct se_wwn *wwn,
+	struct config_group *group,
+	const char *name)
 {
 	struct tcm_loop_hba *tl_hba = container_of(wwn,
 			struct tcm_loop_hba, tl_hba_wwn);

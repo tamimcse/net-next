@@ -11,7 +11,6 @@
 #include <linux/list.h>
 #include <linux/rbtree.h>
 #include <pthread.h>
-#include <asm/bug.h>
 
 struct ins_ops;
 
@@ -22,7 +21,6 @@ struct ins {
 
 struct ins_operands {
 	char	*raw;
-	char	*raw_comment;
 	struct {
 		char	*raw;
 		char	*name;
@@ -63,28 +61,16 @@ bool ins__is_fused(struct arch *arch, const char *ins1, const char *ins2);
 
 #define ANNOTATION__IPC_WIDTH 6
 #define ANNOTATION__CYCLES_WIDTH 6
-#define ANNOTATION__MINMAX_CYCLES_WIDTH 19
 
 struct annotation_options {
 	bool hide_src_code,
 	     use_offset,
 	     jump_arrows,
-	     print_lines,
-	     full_path,
 	     show_linenr,
 	     show_nr_jumps,
 	     show_nr_samples,
-	     show_total_period,
-	     show_minmax_cycle,
-	     show_asm_raw,
-	     annotate_src;
+	     show_total_period;
 	u8   offset_level;
-	int  min_pcnt;
-	int  max_lines;
-	int  context;
-	const char *objdump_path;
-	const char *disassembler_style;
-	unsigned int percent_type;
 };
 
 enum {
@@ -104,16 +90,8 @@ struct sym_hist_entry {
 	u64		period;
 };
 
-enum {
-	PERCENT_HITS_LOCAL,
-	PERCENT_HITS_GLOBAL,
-	PERCENT_PERIOD_LOCAL,
-	PERCENT_PERIOD_GLOBAL,
-	PERCENT_MAX,
-};
-
 struct annotation_data {
-	double			 percent[PERCENT_MAX];
+	double			 percent;
 	double			 percent_sum;
 	struct sym_hist_entry	 he;
 };
@@ -127,14 +105,12 @@ struct annotation_line {
 	int			 jump_sources;
 	float			 ipc;
 	u64			 cycles;
-	u64			 cycles_max;
-	u64			 cycles_min;
 	size_t			 privsize;
 	char			*path;
 	u32			 idx;
 	int			 idx_asm;
-	int			 data_nr;
-	struct annotation_data	 data[0];
+	int			 samples_nr;
+	struct annotation_data	 samples[0];
 };
 
 struct disasm_line {
@@ -144,27 +120,6 @@ struct disasm_line {
 	/* This needs to be at the end. */
 	struct annotation_line	 al;
 };
-
-static inline double annotation_data__percent(struct annotation_data *data,
-					      unsigned int which)
-{
-	return which < PERCENT_MAX ? data->percent[which] : -1;
-}
-
-static inline const char *percent_type_str(unsigned int type)
-{
-	static const char *str[PERCENT_MAX] = {
-		"local hits",
-		"global hits",
-		"local period",
-		"global period",
-	};
-
-	if (WARN_ON(type >= PERCENT_MAX))
-		return "N/A";
-
-	return str[type];
-}
 
 static inline struct disasm_line *disasm_line(struct annotation_line *al)
 {
@@ -201,14 +156,21 @@ struct annotation_write_ops {
 	void (*write_graph)(void *obj, int graph);
 };
 
+double annotation_line__max_percent(struct annotation_line *al, struct annotation *notes);
 void annotation_line__write(struct annotation_line *al, struct annotation *notes,
-			    struct annotation_write_ops *ops,
-			    struct annotation_options *opts);
+			    struct annotation_write_ops *ops);
 
 int __annotation__scnprintf_samples_period(struct annotation *notes,
 					   char *bf, size_t size,
 					   struct perf_evsel *evsel,
 					   bool show_freq);
+
+static inline int annotation__scnprintf_samples_period(struct annotation *notes,
+						       char *bf, size_t size,
+						       struct perf_evsel *evsel)
+{
+	return __annotation__scnprintf_samples_period(notes, bf, size, evsel, true);
+}
 
 int disasm_line__scnprintf(struct disasm_line *dl, char *bf, size_t size, bool raw);
 size_t disasm__fprintf(struct list_head *head, FILE *fp);
@@ -224,8 +186,6 @@ struct cyc_hist {
 	u64	start;
 	u64	cycles;
 	u64	cycles_aggr;
-	u64	cycles_max;
-	u64	cycles_min;
 	u32	num;
 	u32	num_aggr;
 	u8	have_start;
@@ -235,11 +195,7 @@ struct cyc_hist {
 
 /** struct annotated_source - symbols with hits have this attached as in sannotation
  *
- * @histograms: Array of addr hit histograms per event being monitored
- * nr_histograms: This may not be the same as evsel->evlist->nr_entries if
- * 		  we have more than a group in a evlist, where we will want
- * 		  to see each group separately, that is why symbol__annotate2()
- * 		  sets src->nr_histograms to evsel->nr_members.
+ * @histogram: Array of addr hit histograms per event being monitored
  * @lines: If 'print_lines' is specified, per source code line percentages
  * @source: source parsed from a disassembler like objdump -dS
  * @cyc_hist: Average cycles per basic block
@@ -255,7 +211,7 @@ struct annotated_source {
 	int    		   nr_histograms;
 	size_t		   sizeof_sym_hist;
 	struct cyc_hist	   *cycles_hist;
-	struct sym_hist	   *histograms;
+	struct sym_hist	   histograms[0];
 };
 
 struct annotation {
@@ -283,9 +239,6 @@ struct annotation {
 
 static inline int annotation__cycles_width(struct annotation *notes)
 {
-	if (notes->have_cycles && notes->options->show_minmax_cycle)
-		return ANNOTATION__IPC_WIDTH + ANNOTATION__MINMAX_CYCLES_WIDTH;
-
 	return notes->have_cycles ? ANNOTATION__IPC_WIDTH + ANNOTATION__CYCLES_WIDTH : 0;
 }
 
@@ -305,14 +258,10 @@ void annotation__mark_jump_targets(struct annotation *notes, struct symbol *sym)
 void annotation__update_column_widths(struct annotation *notes);
 void annotation__init_column_widths(struct annotation *notes, struct symbol *sym);
 
-static inline struct sym_hist *annotated_source__histogram(struct annotated_source *src, int idx)
-{
-	return ((void *)src->histograms) + (src->sizeof_sym_hist * idx);
-}
-
 static inline struct sym_hist *annotation__histogram(struct annotation *notes, int idx)
 {
-	return annotated_source__histogram(notes->src, idx);
+	return (((void *)&notes->src->histograms) +
+	 	(notes->src->sizeof_sym_hist * idx));
 }
 
 static inline struct annotation *symbol__annotation(struct symbol *sym)
@@ -321,21 +270,20 @@ static inline struct annotation *symbol__annotation(struct symbol *sym)
 }
 
 int addr_map_symbol__inc_samples(struct addr_map_symbol *ams, struct perf_sample *sample,
-				 struct perf_evsel *evsel);
+				 int evidx);
 
 int addr_map_symbol__account_cycles(struct addr_map_symbol *ams,
 				    struct addr_map_symbol *start,
 				    unsigned cycles);
 
 int hist_entry__inc_addr_samples(struct hist_entry *he, struct perf_sample *sample,
-				 struct perf_evsel *evsel, u64 addr);
+				 int evidx, u64 addr);
 
-struct annotated_source *symbol__hists(struct symbol *sym, int nr_hists);
+int symbol__alloc_hist(struct symbol *sym);
 void symbol__annotate_zero_histograms(struct symbol *sym);
 
 int symbol__annotate(struct symbol *sym, struct map *map,
 		     struct perf_evsel *evsel, size_t privsize,
-		     struct annotation_options *options,
 		     struct arch **parch);
 int symbol__annotate2(struct symbol *sym, struct map *map,
 		      struct perf_evsel *evsel,
@@ -363,41 +311,42 @@ int symbol__strerror_disassemble(struct symbol *sym, struct map *map,
 				 int errnum, char *buf, size_t buflen);
 
 int symbol__annotate_printf(struct symbol *sym, struct map *map,
-			    struct perf_evsel *evsel,
-			    struct annotation_options *options);
+			    struct perf_evsel *evsel, bool full_paths,
+			    int min_pcnt, int max_lines, int context);
+int symbol__annotate_fprintf2(struct symbol *sym, FILE *fp);
 void symbol__annotate_zero_histogram(struct symbol *sym, int evidx);
 void symbol__annotate_decay_histogram(struct symbol *sym, int evidx);
 void annotated_source__purge(struct annotated_source *as);
 
-int map_symbol__annotation_dump(struct map_symbol *ms, struct perf_evsel *evsel,
-				struct annotation_options *opts);
+int map_symbol__annotation_dump(struct map_symbol *ms, struct perf_evsel *evsel);
 
 bool ui__has_annotation(void);
 
 int symbol__tty_annotate(struct symbol *sym, struct map *map,
-			 struct perf_evsel *evsel, struct annotation_options *opts);
+			 struct perf_evsel *evsel, bool print_lines,
+			 bool full_paths, int min_pcnt, int max_lines);
 
 int symbol__tty_annotate2(struct symbol *sym, struct map *map,
-			  struct perf_evsel *evsel, struct annotation_options *opts);
+			  struct perf_evsel *evsel, bool print_lines,
+			  bool full_paths);
 
 #ifdef HAVE_SLANG_SUPPORT
 int symbol__tui_annotate(struct symbol *sym, struct map *map,
 			 struct perf_evsel *evsel,
-			 struct hist_browser_timer *hbt,
-			 struct annotation_options *opts);
+			 struct hist_browser_timer *hbt);
 #else
 static inline int symbol__tui_annotate(struct symbol *sym __maybe_unused,
 				struct map *map __maybe_unused,
 				struct perf_evsel *evsel  __maybe_unused,
-				struct hist_browser_timer *hbt __maybe_unused,
-				struct annotation_options *opts __maybe_unused)
+				struct hist_browser_timer *hbt
+				__maybe_unused)
 {
 	return 0;
 }
 #endif
 
+extern const char	*disassembler_style;
+
 void annotation_config__init(void);
 
-int annotate_parse_percent_type(const struct option *opt, const char *_str,
-				int unset);
 #endif	/* __PERF_ANNOTATE_H */

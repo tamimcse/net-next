@@ -86,10 +86,8 @@
 
 #define XPAD_PKT_LEN 64
 
-/*
- * xbox d-pads should map to buttons, as is required for DDR pads
- * but we map them to axes when possible to simplify things
- */
+/* xbox d-pads should map to buttons, as is required for DDR pads
+   but we map them to axes when possible to simplify things */
 #define MAP_DPAD_TO_BUTTONS		(1 << 0)
 #define MAP_TRIGGERS_TO_BUTTONS		(1 << 1)
 #define MAP_STICKS_TO_NULL		(1 << 2)
@@ -125,7 +123,6 @@ static const struct xpad_device {
 	u8 mapping;
 	u8 xtype;
 } xpad_device[] = {
-	{ 0x0079, 0x18d4, "GPD Win 2 X-Box Controller", 0, XTYPE_XBOX360 },
 	{ 0x044f, 0x0f00, "Thrustmaster Wheel", 0, XTYPE_XBOX },
 	{ 0x044f, 0x0f03, "Thrustmaster Wheel", 0, XTYPE_XBOX },
 	{ 0x044f, 0x0f07, "Thrustmaster, Inc. Controller", 0, XTYPE_XBOX },
@@ -390,15 +387,15 @@ static const signed short xpad_abs_triggers[] = {
  * match against vendor id as well. Wired Xbox 360 devices have protocol 1,
  * wireless controllers have protocol 129.
  */
-#define XPAD_XBOX360_VENDOR_PROTOCOL(vend, pr) \
+#define XPAD_XBOX360_VENDOR_PROTOCOL(vend,pr) \
 	.match_flags = USB_DEVICE_ID_MATCH_VENDOR | USB_DEVICE_ID_MATCH_INT_INFO, \
 	.idVendor = (vend), \
 	.bInterfaceClass = USB_CLASS_VENDOR_SPEC, \
 	.bInterfaceSubClass = 93, \
 	.bInterfaceProtocol = (pr)
 #define XPAD_XBOX360_VENDOR(vend) \
-	{ XPAD_XBOX360_VENDOR_PROTOCOL((vend), 1) }, \
-	{ XPAD_XBOX360_VENDOR_PROTOCOL((vend), 129) }
+	{ XPAD_XBOX360_VENDOR_PROTOCOL(vend,1) }, \
+	{ XPAD_XBOX360_VENDOR_PROTOCOL(vend,129) }
 
 /* The Xbox One controller uses subclass 71 and protocol 208. */
 #define XPAD_XBOXONE_VENDOR_PROTOCOL(vend, pr) \
@@ -408,11 +405,10 @@ static const signed short xpad_abs_triggers[] = {
 	.bInterfaceSubClass = 71, \
 	.bInterfaceProtocol = (pr)
 #define XPAD_XBOXONE_VENDOR(vend) \
-	{ XPAD_XBOXONE_VENDOR_PROTOCOL((vend), 208) }
+	{ XPAD_XBOXONE_VENDOR_PROTOCOL(vend, 208) }
 
 static const struct usb_device_id xpad_table[] = {
 	{ USB_INTERFACE_INFO('X', 'B', 0) },	/* X-Box USB-IF not approved class */
-	XPAD_XBOX360_VENDOR(0x0079),		/* GPD Win 2 Controller */
 	XPAD_XBOX360_VENDOR(0x044f),		/* Thrustmaster X-Box 360 controllers */
 	XPAD_XBOX360_VENDOR(0x045e),		/* Microsoft X-Box 360 controllers */
 	XPAD_XBOXONE_VENDOR(0x045e),		/* Microsoft X-Box One controllers */
@@ -1577,6 +1573,7 @@ static void xpad_close(struct input_dev *dev)
 static void xpad_set_up_abs(struct input_dev *input_dev, signed short abs)
 {
 	struct usb_xpad *xpad = input_get_drvdata(input_dev);
+	set_bit(abs, input_dev->absbit);
 
 	switch (abs) {
 	case ABS_X:
@@ -1595,9 +1592,6 @@ static void xpad_set_up_abs(struct input_dev *input_dev, signed short abs)
 	case ABS_HAT0X:
 	case ABS_HAT0Y:	/* the d-pad (only if dpad is mapped to axes */
 		input_set_abs_params(input_dev, abs, -1, 1, 0, 0);
-		break;
-	default:
-		input_set_abs_params(input_dev, abs, 0, 0, 0, 0);
 		break;
 	}
 }
@@ -1639,7 +1633,10 @@ static int xpad_init_input(struct usb_xpad *xpad)
 		input_dev->close = xpad_close;
 	}
 
+	__set_bit(EV_KEY, input_dev->evbit);
+
 	if (!(xpad->mapping & MAP_STICKS_TO_NULL)) {
+		__set_bit(EV_ABS, input_dev->evbit);
 		/* set up axes */
 		for (i = 0; xpad_abs[i] >= 0; i++)
 			xpad_set_up_abs(input_dev, xpad_abs[i]);
@@ -1647,22 +1644,21 @@ static int xpad_init_input(struct usb_xpad *xpad)
 
 	/* set up standard buttons */
 	for (i = 0; xpad_common_btn[i] >= 0; i++)
-		input_set_capability(input_dev, EV_KEY, xpad_common_btn[i]);
+		__set_bit(xpad_common_btn[i], input_dev->keybit);
 
 	/* set up model-specific ones */
 	if (xpad->xtype == XTYPE_XBOX360 || xpad->xtype == XTYPE_XBOX360W ||
 	    xpad->xtype == XTYPE_XBOXONE) {
 		for (i = 0; xpad360_btn[i] >= 0; i++)
-			input_set_capability(input_dev, EV_KEY, xpad360_btn[i]);
+			__set_bit(xpad360_btn[i], input_dev->keybit);
 	} else {
 		for (i = 0; xpad_btn[i] >= 0; i++)
-			input_set_capability(input_dev, EV_KEY, xpad_btn[i]);
+			__set_bit(xpad_btn[i], input_dev->keybit);
 	}
 
 	if (xpad->mapping & MAP_DPAD_TO_BUTTONS) {
 		for (i = 0; xpad_btn_pad[i] >= 0; i++)
-			input_set_capability(input_dev, EV_KEY,
-					     xpad_btn_pad[i]);
+			__set_bit(xpad_btn_pad[i], input_dev->keybit);
 	}
 
 	/*
@@ -1679,8 +1675,7 @@ static int xpad_init_input(struct usb_xpad *xpad)
 
 	if (xpad->mapping & MAP_TRIGGERS_TO_BUTTONS) {
 		for (i = 0; xpad_btn_triggers[i] >= 0; i++)
-			input_set_capability(input_dev, EV_KEY,
-					     xpad_btn_triggers[i]);
+			__set_bit(xpad_btn_triggers[i], input_dev->keybit);
 	} else {
 		for (i = 0; xpad_abs_triggers[i] >= 0; i++)
 			xpad_set_up_abs(input_dev, xpad_abs_triggers[i]);

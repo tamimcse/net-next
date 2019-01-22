@@ -373,6 +373,8 @@ static int st33zp24_send(struct tpm_chip *chip, unsigned char *buf,
 	int ret;
 	u8 data;
 
+	if (!chip)
+		return -EBUSY;
 	if (len < TPM_HEADER_SIZE)
 		return -EBUSY;
 

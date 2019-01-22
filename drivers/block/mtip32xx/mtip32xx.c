@@ -118,6 +118,7 @@ static struct dentry *dfs_device_status;
 
 static u32 cpu_use[NR_CPUS];
 
+static DEFINE_SPINLOCK(rssd_index_lock);
 static DEFINE_IDA(rssd_index_ida);
 
 static int mtip_block_initialize(struct driver_data *dd);
@@ -2284,7 +2285,7 @@ static ssize_t mtip_hw_show_status(struct device *dev,
 	return size;
 }
 
-static DEVICE_ATTR(status, 0444, mtip_hw_show_status, NULL);
+static DEVICE_ATTR(status, S_IRUGO, mtip_hw_show_status, NULL);
 
 /* debugsfs entries */
 
@@ -2565,16 +2566,18 @@ static int mtip_hw_debugfs_init(struct driver_data *dd)
 		return -1;
 	}
 
-	debugfs_create_file("flags", 0444, dd->dfs_node, dd, &mtip_flags_fops);
-	debugfs_create_file("registers", 0444, dd->dfs_node, dd,
-			    &mtip_regs_fops);
+	debugfs_create_file("flags", S_IRUGO, dd->dfs_node, dd,
+							&mtip_flags_fops);
+	debugfs_create_file("registers", S_IRUGO, dd->dfs_node, dd,
+							&mtip_regs_fops);
 
 	return 0;
 }
 
 static void mtip_hw_debugfs_exit(struct driver_data *dd)
 {
-	debugfs_remove_recursive(dd->dfs_node);
+	if (dd->dfs_node)
+		debugfs_remove_recursive(dd->dfs_node);
 }
 
 /*
@@ -2723,10 +2726,14 @@ static void mtip_softirq_done_fn(struct request *rq)
 	blk_mq_end_request(rq, cmd->status);
 }
 
-static void mtip_abort_cmd(struct request *req, void *data, bool reserved)
+static void mtip_abort_cmd(struct request *req, void *data,
+							bool reserved)
 {
 	struct mtip_cmd *cmd = blk_mq_rq_to_pdu(req);
 	struct driver_data *dd = data;
+
+	if (!blk_mq_request_started(req))
+		return;
 
 	dbg_printk(MTIP_DRV_NAME " Aborting request, tag = %d\n", req->tag);
 
@@ -2735,9 +2742,13 @@ static void mtip_abort_cmd(struct request *req, void *data, bool reserved)
 	mtip_softirq_done_fn(req);
 }
 
-static void mtip_queue_cmd(struct request *req, void *data, bool reserved)
+static void mtip_queue_cmd(struct request *req, void *data,
+							bool reserved)
 {
 	struct driver_data *dd = data;
+
+	if (!blk_mq_request_started(req))
+		return;
 
 	set_bit(req->tag, dd->port->cmds_to_issue);
 	blk_abort_request(req);
@@ -3709,8 +3720,7 @@ static enum blk_eh_timer_return mtip_cmd_timeout(struct request *req,
 		struct mtip_cmd *cmd = blk_mq_rq_to_pdu(req);
 
 		cmd->status = BLK_STS_TIMEOUT;
-		blk_mq_complete_request(req);
-		return BLK_EH_DONE;
+		return BLK_EH_HANDLED;
 	}
 
 	if (test_bit(req->tag, dd->port->cmds_to_issue))
@@ -3766,10 +3776,20 @@ static int mtip_block_initialize(struct driver_data *dd)
 		goto alloc_disk_error;
 	}
 
-	rv = ida_alloc(&rssd_index_ida, GFP_KERNEL);
-	if (rv < 0)
+	/* Generate the disk name, implemented same as in sd.c */
+	do {
+		if (!ida_pre_get(&rssd_index_ida, GFP_KERNEL)) {
+			rv = -ENOMEM;
+			goto ida_get_error;
+		}
+
+		spin_lock(&rssd_index_lock);
+		rv = ida_get_new(&rssd_index_ida, &index);
+		spin_unlock(&rssd_index_lock);
+	} while (rv == -EAGAIN);
+
+	if (rv)
 		goto ida_get_error;
-	index = rv;
 
 	rv = rssd_disk_name_format("rssd",
 				index,
@@ -3842,6 +3862,7 @@ skip_create_disk:
 	blk_queue_max_hw_sectors(dd->queue, 0xffff);
 	blk_queue_max_segment_size(dd->queue, 0x400000);
 	blk_queue_io_min(dd->queue, 4096);
+	blk_queue_bounce_limit(dd->queue, dd->pdev->dma_mask);
 
 	/* Signal trim support */
 	if (dd->trim_supp == true) {
@@ -3911,7 +3932,9 @@ block_queue_alloc_init_error:
 block_queue_alloc_tag_error:
 	mtip_hw_debugfs_exit(dd);
 disk_index_error:
-	ida_free(&rssd_index_ida, index);
+	spin_lock(&rssd_index_lock);
+	ida_remove(&rssd_index_ida, index);
+	spin_unlock(&rssd_index_lock);
 
 ida_get_error:
 	put_disk(dd->disk);
@@ -3999,7 +4022,9 @@ static int mtip_block_remove(struct driver_data *dd)
 	}
 	dd->disk  = NULL;
 
-	ida_free(&rssd_index_ida, dd->index);
+	spin_lock(&rssd_index_lock);
+	ida_remove(&rssd_index_ida, dd->index);
+	spin_unlock(&rssd_index_lock);
 
 	/* De-initialize the protocol layer. */
 	mtip_hw_exit(dd);
@@ -4039,7 +4064,9 @@ static int mtip_block_shutdown(struct driver_data *dd)
 		dd->queue = NULL;
 	}
 
-	ida_free(&rssd_index_ida, dd->index);
+	spin_lock(&rssd_index_lock);
+	ida_remove(&rssd_index_ida, dd->index);
+	spin_unlock(&rssd_index_lock);
 	return 0;
 }
 
@@ -4246,7 +4273,7 @@ static int mtip_pci_probe(struct pci_dev *pdev,
 	if (!dd->isr_workq) {
 		dev_warn(&pdev->dev, "Can't create wq %d\n", dd->instance);
 		rv = -ENOMEM;
-		goto setmask_err;
+		goto block_initialize_err;
 	}
 
 	memset(cpu_list, 0, sizeof(cpu_list));
@@ -4587,7 +4614,7 @@ static int __init mtip_init(void)
 	}
 	if (dfs_parent) {
 		dfs_device_status = debugfs_create_file("device_status",
-					0444, dfs_parent, NULL,
+					S_IRUGO, dfs_parent, NULL,
 					&mtip_device_status_fops);
 		if (IS_ERR_OR_NULL(dfs_device_status)) {
 			pr_err("Error creating device_status node\n");

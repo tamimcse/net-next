@@ -14,7 +14,6 @@
 #ifndef _LINUX_CONSOLE_H_
 #define _LINUX_CONSOLE_H_ 1
 
-#include <linux/atomic.h>
 #include <linux/types.h>
 
 struct vc_data;
@@ -22,7 +21,6 @@ struct console_font_op;
 struct console_font;
 struct module;
 struct tty_struct;
-struct notifier_block;
 
 /*
  * this is what the terminal answers to a ESC-Z or csi0c query.
@@ -202,14 +200,11 @@ void vcs_make_sysfs(int index);
 void vcs_remove_sysfs(int index);
 
 /* Some debug stub to catch some of the obvious races in the VT code */
-#define WARN_CONSOLE_UNLOCKED()						\
-	WARN_ON(!atomic_read(&ignore_console_lock_warning) &&		\
-		!is_console_locked() && !oops_in_progress)
-/*
- * Increment ignore_console_lock_warning if you need to quiet
- * WARN_CONSOLE_UNLOCKED() for debugging purposes.
- */
-extern atomic_t ignore_console_lock_warning;
+#if 1
+#define WARN_CONSOLE_UNLOCKED()	WARN_ON(!is_console_locked() && !oops_in_progress)
+#else
+#define WARN_CONSOLE_UNLOCKED()
+#endif
 
 /* VESA Blanking Levels */
 #define VESA_NO_BLANKING        0
@@ -224,9 +219,5 @@ static inline bool vgacon_text_force(void) { return false; }
 #endif
 
 extern void console_init(void);
-
-/* For deferred console takeover */
-void dummycon_register_output_notifier(struct notifier_block *nb);
-void dummycon_unregister_output_notifier(struct notifier_block *nb);
 
 #endif /* _LINUX_CONSOLE_H */

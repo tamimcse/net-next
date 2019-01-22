@@ -9,7 +9,7 @@
  *                 scatter/gather formats.
  * Creation Date:  June 21, 2006
  *
- *  mpi2.h Version:  02.00.50
+ * mpi2.h Version:  02.00.48
  *
  * NOTE: Names (typedefs, defines, etc.) beginning with an MPI25 or Mpi25
  *       prefix are for use only on MPI v2.5 products, and must not be used
@@ -114,8 +114,6 @@
  * 09-02-16  02.00.46  Bumped MPI2_HEADER_VERSION_UNIT.
  * 11-23-16  02.00.47  Bumped MPI2_HEADER_VERSION_UNIT.
  * 02-03-17  02.00.48  Bumped MPI2_HEADER_VERSION_UNIT.
- * 06-13-17  02.00.49  Bumped MPI2_HEADER_VERSION_UNIT.
- * 09-29-17  02.00.50  Bumped MPI2_HEADER_VERSION_UNIT.
  * --------------------------------------------------------------------------
  */
 
@@ -154,9 +152,8 @@
 					MPI26_VERSION_MINOR)
 #define MPI2_VERSION_02_06		    (0x0206)
 
-
-/* Unit and Dev versioning for this MPI header set */
-#define MPI2_HEADER_VERSION_UNIT            (0x32)
+/*Unit and Dev versioning for this MPI header set */
+#define MPI2_HEADER_VERSION_UNIT            (0x30)
 #define MPI2_HEADER_VERSION_DEV             (0x00)
 #define MPI2_HEADER_VERSION_UNIT_MASK       (0xFF00)
 #define MPI2_HEADER_VERSION_UNIT_SHIFT      (8)

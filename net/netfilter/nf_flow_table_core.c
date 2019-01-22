@@ -107,12 +107,11 @@ static void flow_offload_fixup_tcp(struct ip_ct_tcp *tcp)
 	tcp->seen[1].td_maxwin = 0;
 }
 
-#define NF_FLOWTABLE_TCP_PICKUP_TIMEOUT	(120 * HZ)
-#define NF_FLOWTABLE_UDP_PICKUP_TIMEOUT	(30 * HZ)
-
 static void flow_offload_fixup_ct_state(struct nf_conn *ct)
 {
 	const struct nf_conntrack_l4proto *l4proto;
+	struct net *net = nf_ct_net(ct);
+	unsigned int *timeouts;
 	unsigned int timeout;
 	int l4num;
 
@@ -124,10 +123,14 @@ static void flow_offload_fixup_ct_state(struct nf_conn *ct)
 	if (!l4proto)
 		return;
 
+	timeouts = l4proto->get_timeouts(net);
+	if (!timeouts)
+		return;
+
 	if (l4num == IPPROTO_TCP)
-		timeout = NF_FLOWTABLE_TCP_PICKUP_TIMEOUT;
+		timeout = timeouts[TCP_CONNTRACK_ESTABLISHED];
 	else if (l4num == IPPROTO_UDP)
-		timeout = NF_FLOWTABLE_UDP_PICKUP_TIMEOUT;
+		timeout = timeouts[UDP_CT_REPLIED];
 	else
 		return;
 

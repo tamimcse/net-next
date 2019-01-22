@@ -1591,7 +1591,7 @@ int radeon_suspend_kms(struct drm_device *dev, bool suspend,
 	/* unpin the front buffers and cursors */
 	list_for_each_entry(crtc, &dev->mode_config.crtc_list, head) {
 		struct radeon_crtc *radeon_crtc = to_radeon_crtc(crtc);
-		struct drm_framebuffer *fb = crtc->primary->fb;
+		struct radeon_framebuffer *rfb = to_radeon_framebuffer(crtc->primary->fb);
 		struct radeon_bo *robj;
 
 		if (radeon_crtc->cursor_bo) {
@@ -1603,10 +1603,10 @@ int radeon_suspend_kms(struct drm_device *dev, bool suspend,
 			}
 		}
 
-		if (fb == NULL || fb->obj[0] == NULL) {
+		if (rfb == NULL || rfb->obj == NULL) {
 			continue;
 		}
-		robj = gem_to_radeon_bo(fb->obj[0]);
+		robj = gem_to_radeon_bo(rfb->obj);
 		/* don't unpin kernel fb objects */
 		if (!radeon_fbdev_robj_is_fb(rdev, robj)) {
 			r = radeon_bo_reserve(robj, false);

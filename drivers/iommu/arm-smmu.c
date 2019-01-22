@@ -1562,6 +1562,7 @@ static struct iommu_ops arm_smmu_ops = {
 	.attach_dev		= arm_smmu_attach_dev,
 	.map			= arm_smmu_map,
 	.unmap			= arm_smmu_unmap,
+	.map_sg			= default_iommu_map_sg,
 	.flush_iotlb_all	= arm_smmu_iotlb_sync,
 	.iotlb_sync		= arm_smmu_iotlb_sync,
 	.iova_to_phys		= arm_smmu_iova_to_phys,
@@ -2081,7 +2082,7 @@ static int arm_smmu_device_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
-	smmu->irqs = devm_kcalloc(dev, num_irqs, sizeof(*smmu->irqs),
+	smmu->irqs = devm_kzalloc(dev, sizeof(*smmu->irqs) * num_irqs,
 				  GFP_KERNEL);
 	if (!smmu->irqs) {
 		dev_err(dev, "failed to allocate %d irqs\n", num_irqs);
@@ -2102,16 +2103,12 @@ static int arm_smmu_device_probe(struct platform_device *pdev)
 	if (err)
 		return err;
 
-	if (smmu->version == ARM_SMMU_V2) {
-		if (smmu->num_context_banks > smmu->num_context_irqs) {
-			dev_err(dev,
-			      "found only %d context irq(s) but %d required\n",
-			      smmu->num_context_irqs, smmu->num_context_banks);
-			return -ENODEV;
-		}
-
-		/* Ignore superfluous interrupts */
-		smmu->num_context_irqs = smmu->num_context_banks;
+	if (smmu->version == ARM_SMMU_V2 &&
+	    smmu->num_context_banks != smmu->num_context_irqs) {
+		dev_err(dev,
+			"found only %d context interrupt(s) but %d required\n",
+			smmu->num_context_irqs, smmu->num_context_banks);
+		return -ENODEV;
 	}
 
 	for (i = 0; i < smmu->num_global_irqs; ++i) {
@@ -2213,6 +2210,13 @@ static struct platform_driver arm_smmu_driver = {
 	.shutdown = arm_smmu_device_shutdown,
 };
 module_platform_driver(arm_smmu_driver);
+
+IOMMU_OF_DECLARE(arm_smmuv1, "arm,smmu-v1");
+IOMMU_OF_DECLARE(arm_smmuv2, "arm,smmu-v2");
+IOMMU_OF_DECLARE(arm_mmu400, "arm,mmu-400");
+IOMMU_OF_DECLARE(arm_mmu401, "arm,mmu-401");
+IOMMU_OF_DECLARE(arm_mmu500, "arm,mmu-500");
+IOMMU_OF_DECLARE(cavium_smmuv2, "cavium,smmu-v2");
 
 MODULE_DESCRIPTION("IOMMU API for ARM architected SMMU implementations");
 MODULE_AUTHOR("Will Deacon <will.deacon@arm.com>");

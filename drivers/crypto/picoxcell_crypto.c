@@ -1169,7 +1169,8 @@ static void spacc_spacc_complete(unsigned long data)
 #ifdef CONFIG_PM
 static int spacc_suspend(struct device *dev)
 {
-	struct spacc_engine *engine = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct spacc_engine *engine = platform_get_drvdata(pdev);
 
 	/*
 	 * We only support standby mode. All we have to do is gate the clock to
@@ -1183,7 +1184,8 @@ static int spacc_suspend(struct device *dev)
 
 static int spacc_resume(struct device *dev)
 {
-	struct spacc_engine *engine = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct spacc_engine *engine = platform_get_drvdata(pdev);
 
 	return clk_enable(engine->clk);
 }

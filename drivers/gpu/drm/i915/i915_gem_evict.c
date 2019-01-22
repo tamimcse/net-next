@@ -69,8 +69,7 @@ static int ggtt_flush(struct drm_i915_private *i915)
 
 	err = i915_gem_wait_for_idle(i915,
 				     I915_WAIT_INTERRUPTIBLE |
-				     I915_WAIT_LOCKED,
-				     MAX_SCHEDULE_TIMEOUT);
+				     I915_WAIT_LOCKED);
 	if (err)
 		return err;
 

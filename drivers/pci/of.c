@@ -244,15 +244,16 @@ EXPORT_SYMBOL_GPL(of_pci_check_probe_only);
 
 #if defined(CONFIG_OF_ADDRESS)
 /**
- * devm_of_pci_get_host_bridge_resources() - Resource-managed parsing of PCI
- *                                           host bridge resources from DT
- * @dev: host bridge device
+ * of_pci_get_host_bridge_resources - Parse PCI host bridge resources from DT
+ * @dev: device node of the host bridge having the range property
  * @busno: bus number associated with the bridge root bus
  * @bus_max: maximum number of buses for this bridge
  * @resources: list where the range of resources will be added after DT parsing
  * @io_base: pointer to a variable that will contain on return the physical
  * address for the start of the I/O range. Can be NULL if the caller doesn't
  * expect I/O ranges to be present in the device tree.
+ *
+ * It is the caller's job to free the @resources list.
  *
  * This function will parse the "ranges" property of a PCI host bridge device
  * node and setup the resource mapping based on its content. It is expected
@@ -261,12 +262,12 @@ EXPORT_SYMBOL_GPL(of_pci_check_probe_only);
  * It returns zero if the range parsing has been successful or a standard error
  * value if it failed.
  */
-int devm_of_pci_get_host_bridge_resources(struct device *dev,
+int of_pci_get_host_bridge_resources(struct device_node *dev,
 			unsigned char busno, unsigned char bus_max,
 			struct list_head *resources, resource_size_t *io_base)
 {
-	struct device_node *dev_node = dev->of_node;
-	struct resource *res, tmp_res;
+	struct resource_entry *window;
+	struct resource *res;
 	struct resource *bus_range;
 	struct of_pci_range range;
 	struct of_pci_range_parser parser;
@@ -276,19 +277,19 @@ int devm_of_pci_get_host_bridge_resources(struct device *dev,
 	if (io_base)
 		*io_base = (resource_size_t)OF_BAD_ADDR;
 
-	bus_range = devm_kzalloc(dev, sizeof(*bus_range), GFP_KERNEL);
+	bus_range = kzalloc(sizeof(*bus_range), GFP_KERNEL);
 	if (!bus_range)
 		return -ENOMEM;
 
-	dev_info(dev, "host bridge %pOF ranges:\n", dev_node);
+	pr_info("host bridge %pOF ranges:\n", dev);
 
-	err = of_pci_parse_bus_range(dev_node, bus_range);
+	err = of_pci_parse_bus_range(dev, bus_range);
 	if (err) {
 		bus_range->start = busno;
 		bus_range->end = bus_max;
 		bus_range->flags = IORESOURCE_BUS;
-		dev_info(dev, "  No bus range found for %pOF, using %pR\n",
-			 dev_node, bus_range);
+		pr_info("  No bus range found for %pOF, using %pR\n",
+			dev, bus_range);
 	} else {
 		if (bus_range->end > bus_range->start + bus_max)
 			bus_range->end = bus_range->start + bus_max;
@@ -296,11 +297,11 @@ int devm_of_pci_get_host_bridge_resources(struct device *dev,
 	pci_add_resource(resources, bus_range);
 
 	/* Check for ranges property */
-	err = of_pci_range_parser_init(&parser, dev_node);
+	err = of_pci_range_parser_init(&parser, dev);
 	if (err)
-		goto failed;
+		goto parse_failed;
 
-	dev_dbg(dev, "Parsing ranges property...\n");
+	pr_debug("Parsing ranges property...\n");
 	for_each_of_pci_range(&parser, &range) {
 		/* Read next ranges element */
 		if ((range.flags & IORESOURCE_TYPE_BITS) == IORESOURCE_IO)
@@ -309,9 +310,9 @@ int devm_of_pci_get_host_bridge_resources(struct device *dev,
 			snprintf(range_type, 4, "MEM");
 		else
 			snprintf(range_type, 4, "err");
-		dev_info(dev, "  %s %#010llx..%#010llx -> %#010llx\n",
-			 range_type, range.cpu_addr,
-			 range.cpu_addr + range.size - 1, range.pci_addr);
+		pr_info("  %s %#010llx..%#010llx -> %#010llx\n", range_type,
+			range.cpu_addr, range.cpu_addr + range.size - 1,
+			range.pci_addr);
 
 		/*
 		 * If we failed translation or got a zero-sized region
@@ -320,26 +321,28 @@ int devm_of_pci_get_host_bridge_resources(struct device *dev,
 		if (range.cpu_addr == OF_BAD_ADDR || range.size == 0)
 			continue;
 
-		err = of_pci_range_to_resource(&range, dev_node, &tmp_res);
-		if (err)
-			continue;
-
-		res = devm_kmemdup(dev, &tmp_res, sizeof(tmp_res), GFP_KERNEL);
+		res = kzalloc(sizeof(struct resource), GFP_KERNEL);
 		if (!res) {
 			err = -ENOMEM;
-			goto failed;
+			goto parse_failed;
+		}
+
+		err = of_pci_range_to_resource(&range, dev, res);
+		if (err) {
+			kfree(res);
+			continue;
 		}
 
 		if (resource_type(res) == IORESOURCE_IO) {
 			if (!io_base) {
-				dev_err(dev, "I/O range found for %pOF. Please provide an io_base pointer to save CPU base address\n",
-					dev_node);
+				pr_err("I/O range found for %pOF. Please provide an io_base pointer to save CPU base address\n",
+					dev);
 				err = -EINVAL;
-				goto failed;
+				goto conversion_failed;
 			}
 			if (*io_base != (resource_size_t)OF_BAD_ADDR)
-				dev_warn(dev, "More than one I/O resource converted for %pOF. CPU base address for old range lost!\n",
-					 dev_node);
+				pr_warn("More than one I/O resource converted for %pOF. CPU base address for old range lost!\n",
+					dev);
 			*io_base = range.cpu_addr;
 		}
 
@@ -348,11 +351,15 @@ int devm_of_pci_get_host_bridge_resources(struct device *dev,
 
 	return 0;
 
-failed:
+conversion_failed:
+	kfree(res);
+parse_failed:
+	resource_list_for_each_entry(window, resources)
+		kfree(window->res);
 	pci_free_resource_list(resources);
 	return err;
 }
-EXPORT_SYMBOL_GPL(devm_of_pci_get_host_bridge_resources);
+EXPORT_SYMBOL_GPL(of_pci_get_host_bridge_resources);
 #endif /* CONFIG_OF_ADDRESS */
 
 /**
@@ -592,12 +599,12 @@ int pci_parse_request_of_pci_ranges(struct device *dev,
 				    struct resource **bus_range)
 {
 	int err, res_valid = 0;
+	struct device_node *np = dev->of_node;
 	resource_size_t iobase;
 	struct resource_entry *win, *tmp;
 
 	INIT_LIST_HEAD(resources);
-	err = devm_of_pci_get_host_bridge_resources(dev, 0, 0xff, resources,
-						    &iobase);
+	err = of_pci_get_host_bridge_resources(np, 0, 0xff, resources, &iobase);
 	if (err)
 		return err;
 
@@ -610,7 +617,7 @@ int pci_parse_request_of_pci_ranges(struct device *dev,
 
 		switch (resource_type(res)) {
 		case IORESOURCE_IO:
-			err = devm_pci_remap_iospace(dev, res, iobase);
+			err = pci_remap_iospace(res, iobase);
 			if (err) {
 				dev_warn(dev, "error %d: failed to map resource %pR\n",
 					 err, res);

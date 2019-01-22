@@ -458,7 +458,7 @@ static irqreturn_t lpass_dma_interrupt_handler(
 			return IRQ_NONE;
 		}
 		dev_warn(soc_runtime->dev, "xrun warning\n");
-		snd_pcm_stop_xrun(substream);
+		snd_pcm_stop(substream, SNDRV_PCM_STATE_XRUN);
 		ret = IRQ_HANDLED;
 	}
 

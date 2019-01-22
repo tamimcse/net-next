@@ -1,7 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2000-2002,2005 Silicon Graphics, Inc.
  * All Rights Reserved.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it would be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write the Free Software Foundation,
+ * Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 #include "xfs.h"
 #include "xfs_fs.h"
@@ -28,7 +40,7 @@ xfs_trans_buf_item_match(
 	struct xfs_buf_map	*map,
 	int			nmaps)
 {
-	struct xfs_log_item	*lip;
+	struct xfs_log_item_desc *lidp;
 	struct xfs_buf_log_item	*blip;
 	int			len = 0;
 	int			i;
@@ -36,8 +48,8 @@ xfs_trans_buf_item_match(
 	for (i = 0; i < nmaps; i++)
 		len += map[i].bm_len;
 
-	list_for_each_entry(lip, &tp->t_items, li_trans) {
-		blip = (struct xfs_buf_log_item *)lip;
+	list_for_each_entry(lidp, &tp->t_items, lid_trans) {
+		blip = (struct xfs_buf_log_item *)lidp->lid_item;
 		if (blip->bli_item.li_type == XFS_LI_BUF &&
 		    blip->bli_buf->b_target == target &&
 		    XFS_BUF_ADDR(blip->bli_buf) == map[0].bm_bn &&
@@ -88,10 +100,14 @@ _xfs_trans_bjoin(
 	atomic_inc(&bip->bli_refcount);
 
 	/*
-	 * Attach the item to the transaction so we can find it in
-	 * xfs_trans_get_buf() and friends.
+	 * Get a log_item_desc to point at the new item.
 	 */
 	xfs_trans_add_item(tp, &bip->bli_item);
+
+	/*
+	 * Initialize b_fsprivate2 so we can find it with incore_match()
+	 * in xfs_trans_get_buf() and friends above.
+	 */
 	bp->b_transp = tp;
 
 }
@@ -375,7 +391,7 @@ xfs_trans_brelse(
 	 * If the buffer is dirty within this transaction, we can't
 	 * release it until we commit.
 	 */
-	if (test_bit(XFS_LI_DIRTY, &bip->bli_item.li_flags))
+	if (bip->bli_item.li_desc->lid_flags & XFS_LID_DIRTY)
 		return;
 
 	/*
@@ -426,7 +442,7 @@ xfs_trans_brelse(
 		ASSERT(bp->b_pincount == 0);
 ***/
 		ASSERT(atomic_read(&bip->bli_refcount) == 0);
-		ASSERT(!test_bit(XFS_LI_IN_AIL, &bip->bli_item.li_flags));
+		ASSERT(!(bip->bli_item.li_flags & XFS_LI_IN_AIL));
 		ASSERT(!(bip->bli_flags & XFS_BLI_INODE_ALLOC_BUF));
 		xfs_buf_item_relse(bp);
 	}
@@ -526,7 +542,7 @@ xfs_trans_dirty_buf(
 	bip->bli_flags |= XFS_BLI_DIRTY | XFS_BLI_LOGGED;
 
 	tp->t_flags |= XFS_TRANS_DIRTY;
-	set_bit(XFS_LI_DIRTY, &bip->bli_item.li_flags);
+	bip->bli_item.li_desc->lid_flags |= XFS_LID_DIRTY;
 }
 
 /*
@@ -610,7 +626,7 @@ xfs_trans_binval(
 		ASSERT(!(bip->__bli_format.blf_flags & XFS_BLF_INODE_BUF));
 		ASSERT(!(bip->__bli_format.blf_flags & XFS_BLFT_MASK));
 		ASSERT(bip->__bli_format.blf_flags & XFS_BLF_CANCEL);
-		ASSERT(test_bit(XFS_LI_DIRTY, &bip->bli_item.li_flags));
+		ASSERT(bip->bli_item.li_desc->lid_flags & XFS_LID_DIRTY);
 		ASSERT(tp->t_flags & XFS_TRANS_DIRTY);
 		return;
 	}
@@ -626,7 +642,7 @@ xfs_trans_binval(
 		memset(bip->bli_formats[i].blf_data_map, 0,
 		       (bip->bli_formats[i].blf_map_size * sizeof(uint)));
 	}
-	set_bit(XFS_LI_DIRTY, &bip->bli_item.li_flags);
+	bip->bli_item.li_desc->lid_flags |= XFS_LID_DIRTY;
 	tp->t_flags |= XFS_TRANS_DIRTY;
 }
 

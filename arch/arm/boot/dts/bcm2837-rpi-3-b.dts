@@ -20,13 +20,8 @@
 
 	leds {
 		act {
-			gpios = <&expgpio 2 GPIO_ACTIVE_HIGH>;
+			gpios = <&gpio 47 GPIO_ACTIVE_HIGH>;
 		};
-	};
-
-	wifi_pwrseq: wifi-pwrseq {
-		compatible = "mmc-pwrseq-simple";
-		reset-gpios = <&expgpio 1 GPIO_ACTIVE_HIGH>;
 	};
 };
 
@@ -47,16 +42,6 @@
 	};
 };
 
-&pwm {
-	pinctrl-names = "default";
-	pinctrl-0 = <&pwm0_gpio40 &pwm1_gpio41>;
-	status = "okay";
-};
-
-&hdmi {
-	hpd-gpios = <&expgpio 4 GPIO_ACTIVE_LOW>;
-};
-
 /* uart0 communicates with the BT module */
 &uart0 {
 	pinctrl-names = "default";
@@ -66,7 +51,6 @@
 	bluetooth {
 		compatible = "brcm,bcm43438-bt";
 		max-speed = <2000000>;
-		shutdown-gpios = <&expgpio 0 GPIO_ACTIVE_HIGH>;
 	};
 };
 
@@ -79,19 +63,11 @@
 
 /* SDHCI is used to control the SDIO for wireless */
 &sdhci {
-	#address-cells = <1>;
-	#size-cells = <0>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&emmc_gpio34>;
 	status = "okay";
 	bus-width = <4>;
 	non-removable;
-	mmc-pwrseq = <&wifi_pwrseq>;
-
-	brcmf: wifi@1 {
-		reg = <1>;
-		compatible = "brcm,bcm4329-fmac";
-	};
 };
 
 /* SDHOST is used to drive the SD card */

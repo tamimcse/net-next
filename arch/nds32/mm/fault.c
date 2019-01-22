@@ -72,15 +72,15 @@ void do_page_fault(unsigned long entry, unsigned long addr,
 	struct task_struct *tsk;
 	struct mm_struct *mm;
 	struct vm_area_struct *vma;
-	int si_code;
-	vm_fault_t fault;
+	siginfo_t info;
+	int fault;
 	unsigned int mask = VM_READ | VM_WRITE | VM_EXEC;
 	unsigned int flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE;
 
 	error_code = error_code & (ITYPE_mskINST | ITYPE_mskETYPE);
 	tsk = current;
 	mm = tsk->mm;
-	si_code = SEGV_MAPERR;
+	info.si_code = SEGV_MAPERR;
 	/*
 	 * We fault-in kernel-space virtual memory on-demand. The
 	 * 'reference' page table is init_mm.pgd.
@@ -161,7 +161,7 @@ retry:
 	 */
 
 good_area:
-	si_code = SEGV_ACCERR;
+	info.si_code = SEGV_ACCERR;
 
 	/* first do some preliminary protection checks */
 	if (entry == ENTRY_PTE_NOT_PRESENT) {
@@ -266,7 +266,11 @@ bad_area_nosemaphore:
 		tsk->thread.address = addr;
 		tsk->thread.error_code = error_code;
 		tsk->thread.trap_no = entry;
-		force_sig_fault(SIGSEGV, si_code, (void __user *)addr, tsk);
+		info.si_signo = SIGSEGV;
+		info.si_errno = 0;
+		/* info.si_code has been set above */
+		info.si_addr = (void *)addr;
+		force_sig_info(SIGSEGV, &info, tsk);
 		return;
 	}
 
@@ -335,7 +339,11 @@ do_sigbus:
 	tsk->thread.address = addr;
 	tsk->thread.error_code = error_code;
 	tsk->thread.trap_no = entry;
-	force_sig_fault(SIGBUS, BUS_ADRERR, (void __user *)addr, tsk);
+	info.si_signo = SIGBUS;
+	info.si_errno = 0;
+	info.si_code = BUS_ADRERR;
+	info.si_addr = (void *)addr;
+	force_sig_info(SIGBUS, &info, tsk);
 
 	return;
 

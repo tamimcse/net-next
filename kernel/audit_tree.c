@@ -168,8 +168,7 @@ static __cacheline_aligned_in_smp DEFINE_SPINLOCK(hash_lock);
 /* Function to return search key in our hash from inode. */
 static unsigned long inode_to_key(const struct inode *inode)
 {
-	/* Use address pointed to by connector->obj as the key */
-	return (unsigned long)&inode->i_fsnotify_marks;
+	return (unsigned long)inode;
 }
 
 /*
@@ -184,7 +183,7 @@ static unsigned long chunk_to_key(struct audit_chunk *chunk)
 	 */
 	if (WARN_ON_ONCE(!chunk->mark.connector))
 		return 0;
-	return (unsigned long)chunk->mark.connector->obj;
+	return (unsigned long)chunk->mark.connector->inode;
 }
 
 static inline struct list_head *chunk_hash(unsigned long key)
@@ -259,7 +258,7 @@ static void untag_chunk(struct node *p)
 	spin_lock(&entry->lock);
 	/*
 	 * mark_mutex protects mark from getting detached and thus also from
-	 * mark->connector->obj getting NULL.
+	 * mark->connector->inode getting NULL.
 	 */
 	if (chunk->dead || !(entry->flags & FSNOTIFY_MARK_FLAG_ATTACHED)) {
 		spin_unlock(&entry->lock);
@@ -289,8 +288,8 @@ static void untag_chunk(struct node *p)
 	if (!new)
 		goto Fallback;
 
-	if (fsnotify_add_mark_locked(&new->mark, entry->connector->obj,
-				     FSNOTIFY_OBJ_TYPE_INODE, 1)) {
+	if (fsnotify_add_mark_locked(&new->mark, entry->connector->inode,
+				     NULL, 1)) {
 		fsnotify_put_mark(&new->mark);
 		goto Fallback;
 	}
@@ -355,7 +354,7 @@ static int create_chunk(struct inode *inode, struct audit_tree *tree)
 		return -ENOMEM;
 
 	entry = &chunk->mark;
-	if (fsnotify_add_inode_mark(entry, inode, 0)) {
+	if (fsnotify_add_mark(entry, inode, NULL, 0)) {
 		fsnotify_put_mark(entry);
 		return -ENOSPC;
 	}
@@ -424,7 +423,7 @@ static int tag_chunk(struct inode *inode, struct audit_tree *tree)
 	spin_lock(&old_entry->lock);
 	/*
 	 * mark_mutex protects mark from getting detached and thus also from
-	 * mark->connector->obj getting NULL.
+	 * mark->connector->inode getting NULL.
 	 */
 	if (!(old_entry->flags & FSNOTIFY_MARK_FLAG_ATTACHED)) {
 		/* old_entry is being shot, lets just lie */
@@ -435,8 +434,8 @@ static int tag_chunk(struct inode *inode, struct audit_tree *tree)
 		return -ENOENT;
 	}
 
-	if (fsnotify_add_mark_locked(chunk_entry, old_entry->connector->obj,
-				     FSNOTIFY_OBJ_TYPE_INODE, 1)) {
+	if (fsnotify_add_mark_locked(chunk_entry,
+			     old_entry->connector->inode, NULL, 1)) {
 		spin_unlock(&old_entry->lock);
 		mutex_unlock(&old_entry->group->mark_mutex);
 		fsnotify_put_mark(chunk_entry);
@@ -498,8 +497,6 @@ static void audit_tree_log_remove_rule(struct audit_krule *rule)
 {
 	struct audit_buffer *ab;
 
-	if (!audit_enabled)
-		return;
 	ab = audit_log_start(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE);
 	if (unlikely(!ab))
 		return;
@@ -992,6 +989,8 @@ static void evict_chunk(struct audit_chunk *chunk)
 
 static int audit_tree_handle_event(struct fsnotify_group *group,
 				   struct inode *to_tell,
+				   struct fsnotify_mark *inode_mark,
+				   struct fsnotify_mark *vfsmount_mark,
 				   u32 mask, const void *data, int data_type,
 				   const unsigned char *file_name, u32 cookie,
 				   struct fsnotify_iter_info *iter_info)

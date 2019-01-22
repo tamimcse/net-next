@@ -26,8 +26,6 @@
  *
  */
 
-#define pr_fmt(fmt) "rcu: " fmt
-
 #include <linux/export.h>
 #include <linux/mutex.h>
 #include <linux/percpu.h>
@@ -368,38 +366,33 @@ static unsigned long srcu_get_delay(struct srcu_struct *sp)
 	return SRCU_INTERVAL;
 }
 
-/* Helper for cleanup_srcu_struct() and cleanup_srcu_struct_quiesced(). */
-void _cleanup_srcu_struct(struct srcu_struct *sp, bool quiesced)
+/**
+ * cleanup_srcu_struct - deconstruct a sleep-RCU structure
+ * @sp: structure to clean up.
+ *
+ * Must invoke this after you are finished using a given srcu_struct that
+ * was initialized via init_srcu_struct(), else you leak memory.
+ */
+void cleanup_srcu_struct(struct srcu_struct *sp)
 {
 	int cpu;
 
 	if (WARN_ON(!srcu_get_delay(sp)))
-		return; /* Just leak it! */
+		return; /* Leakage unless caller handles error. */
 	if (WARN_ON(srcu_readers_active(sp)))
-		return; /* Just leak it! */
-	if (quiesced) {
-		if (WARN_ON(delayed_work_pending(&sp->work)))
-			return; /* Just leak it! */
-	} else {
-		flush_delayed_work(&sp->work);
-	}
+		return; /* Leakage unless caller handles error. */
+	flush_delayed_work(&sp->work);
 	for_each_possible_cpu(cpu)
-		if (quiesced) {
-			if (WARN_ON(delayed_work_pending(&per_cpu_ptr(sp->sda, cpu)->work)))
-				return; /* Just leak it! */
-		} else {
-			flush_delayed_work(&per_cpu_ptr(sp->sda, cpu)->work);
-		}
+		flush_delayed_work(&per_cpu_ptr(sp->sda, cpu)->work);
 	if (WARN_ON(rcu_seq_state(READ_ONCE(sp->srcu_gp_seq)) != SRCU_STATE_IDLE) ||
 	    WARN_ON(srcu_readers_active(sp))) {
-		pr_info("%s: Active srcu_struct %p state: %d\n",
-			__func__, sp, rcu_seq_state(READ_ONCE(sp->srcu_gp_seq)));
+		pr_info("%s: Active srcu_struct %p state: %d\n", __func__, sp, rcu_seq_state(READ_ONCE(sp->srcu_gp_seq)));
 		return; /* Caller forgot to stop doing call_srcu()? */
 	}
 	free_percpu(sp->sda);
 	sp->sda = NULL;
 }
-EXPORT_SYMBOL_GPL(_cleanup_srcu_struct);
+EXPORT_SYMBOL_GPL(cleanup_srcu_struct);
 
 /*
  * Counts the new reader in the appropriate per-CPU element of the
@@ -644,9 +637,6 @@ static void srcu_funnel_exp_start(struct srcu_struct *sp, struct srcu_node *snp,
  * period s.  Losers must either ensure that their desired grace-period
  * number is recorded on at least their leaf srcu_node structure, or they
  * must take steps to invoke their own callbacks.
- *
- * Note that this function also does the work of srcu_funnel_exp_start(),
- * in some cases by directly invoking it.
  */
 static void srcu_funnel_gp_start(struct srcu_struct *sp, struct srcu_data *sdp,
 				 unsigned long s, bool do_norm)
@@ -829,17 +819,17 @@ static void srcu_leak_callback(struct rcu_head *rhp)
  * more than one CPU, this means that when "func()" is invoked, each CPU
  * is guaranteed to have executed a full memory barrier since the end of
  * its last corresponding SRCU read-side critical section whose beginning
- * preceded the call to call_srcu().  It also means that each CPU executing
+ * preceded the call to call_rcu().  It also means that each CPU executing
  * an SRCU read-side critical section that continues beyond the start of
- * "func()" must have executed a memory barrier after the call_srcu()
+ * "func()" must have executed a memory barrier after the call_rcu()
  * but before the beginning of that SRCU read-side critical section.
  * Note that these guarantees include CPUs that are offline, idle, or
  * executing in user mode, as well as CPUs that are executing in the kernel.
  *
- * Furthermore, if CPU A invoked call_srcu() and CPU B invoked the
+ * Furthermore, if CPU A invoked call_rcu() and CPU B invoked the
  * resulting SRCU callback function "func()", then both CPU A and CPU
  * B are guaranteed to execute a full memory barrier during the time
- * interval between the call to call_srcu() and the invocation of "func()".
+ * interval between the call to call_rcu() and the invocation of "func()".
  * This guarantee applies even if CPU A and CPU B are the same CPU (but
  * again only if the system has more than one CPU).
  *
@@ -1252,12 +1242,13 @@ static void process_srcu(struct work_struct *work)
 
 void srcutorture_get_gp_data(enum rcutorture_type test_type,
 			     struct srcu_struct *sp, int *flags,
-			     unsigned long *gp_seq)
+			     unsigned long *gpnum, unsigned long *completed)
 {
 	if (test_type != SRCU_FLAVOR)
 		return;
 	*flags = 0;
-	*gp_seq = rcu_seq_current(&sp->srcu_gp_seq);
+	*completed = rcu_seq_ctr(sp->srcu_gp_seq);
+	*gpnum = rcu_seq_ctr(sp->srcu_gp_seq_needed);
 }
 EXPORT_SYMBOL_GPL(srcutorture_get_gp_data);
 
@@ -1268,17 +1259,16 @@ void srcu_torture_stats_print(struct srcu_struct *sp, char *tt, char *tf)
 	unsigned long s0 = 0, s1 = 0;
 
 	idx = sp->srcu_idx & 0x1;
-	pr_alert("%s%s Tree SRCU g%ld per-CPU(idx=%d):",
-		 tt, tf, rcu_seq_current(&sp->srcu_gp_seq), idx);
+	pr_alert("%s%s Tree SRCU per-CPU(idx=%d):", tt, tf, idx);
 	for_each_possible_cpu(cpu) {
 		unsigned long l0, l1;
 		unsigned long u0, u1;
 		long c0, c1;
-		struct srcu_data *sdp;
+		struct srcu_data *counts;
 
-		sdp = per_cpu_ptr(sp->sda, cpu);
-		u0 = sdp->srcu_unlock_count[!idx];
-		u1 = sdp->srcu_unlock_count[idx];
+		counts = per_cpu_ptr(sp->sda, cpu);
+		u0 = counts->srcu_unlock_count[!idx];
+		u1 = counts->srcu_unlock_count[idx];
 
 		/*
 		 * Make sure that a lock is always counted if the corresponding
@@ -1286,13 +1276,12 @@ void srcu_torture_stats_print(struct srcu_struct *sp, char *tt, char *tf)
 		 */
 		smp_rmb();
 
-		l0 = sdp->srcu_lock_count[!idx];
-		l1 = sdp->srcu_lock_count[idx];
+		l0 = counts->srcu_lock_count[!idx];
+		l1 = counts->srcu_lock_count[idx];
 
 		c0 = l0 - u0;
 		c1 = l1 - u1;
-		pr_cont(" %d(%ld,%ld %1p)",
-			cpu, c0, c1, rcu_segcblist_head(&sdp->srcu_cblist));
+		pr_cont(" %d(%ld,%ld)", cpu, c0, c1);
 		s0 += c0;
 		s1 += c1;
 	}

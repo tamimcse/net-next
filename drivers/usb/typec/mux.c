@@ -9,7 +9,6 @@
 
 #include <linux/device.h>
 #include <linux/list.h>
-#include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/usb/typec_mux.h>
 
@@ -50,10 +49,8 @@ struct typec_switch *typec_switch_get(struct device *dev)
 	mutex_lock(&switch_lock);
 	sw = device_connection_find_match(dev, "typec-switch", NULL,
 					  typec_switch_match);
-	if (!IS_ERR_OR_NULL(sw)) {
-		WARN_ON(!try_module_get(sw->dev->driver->owner));
+	if (!IS_ERR_OR_NULL(sw))
 		get_device(sw->dev);
-	}
 	mutex_unlock(&switch_lock);
 
 	return sw;
@@ -68,10 +65,8 @@ EXPORT_SYMBOL_GPL(typec_switch_get);
  */
 void typec_switch_put(struct typec_switch *sw)
 {
-	if (!IS_ERR_OR_NULL(sw)) {
-		module_put(sw->dev->driver->owner);
+	if (!IS_ERR_OR_NULL(sw))
 		put_device(sw->dev);
-	}
 }
 EXPORT_SYMBOL_GPL(typec_switch_put);
 
@@ -128,23 +123,21 @@ static void *typec_mux_match(struct device_connection *con, int ep, void *data)
 /**
  * typec_mux_get - Find USB Type-C Multiplexer
  * @dev: The caller device
- * @name: Mux identifier
  *
  * Finds a mux linked to the caller. This function is primarily meant for the
  * Type-C drivers. Returns a reference to the mux on success, NULL if no
  * matching connection was found, or ERR_PTR(-EPROBE_DEFER) when a connection
  * was found but the mux has not been enumerated yet.
  */
-struct typec_mux *typec_mux_get(struct device *dev, const char *name)
+struct typec_mux *typec_mux_get(struct device *dev)
 {
 	struct typec_mux *mux;
 
 	mutex_lock(&mux_lock);
-	mux = device_connection_find_match(dev, name, NULL, typec_mux_match);
-	if (!IS_ERR_OR_NULL(mux)) {
-		WARN_ON(!try_module_get(mux->dev->driver->owner));
+	mux = device_connection_find_match(dev, "typec-mux", NULL,
+					   typec_mux_match);
+	if (!IS_ERR_OR_NULL(mux))
 		get_device(mux->dev);
-	}
 	mutex_unlock(&mux_lock);
 
 	return mux;
@@ -159,10 +152,8 @@ EXPORT_SYMBOL_GPL(typec_mux_get);
  */
 void typec_mux_put(struct typec_mux *mux)
 {
-	if (!IS_ERR_OR_NULL(mux)) {
-		module_put(mux->dev->driver->owner);
+	if (!IS_ERR_OR_NULL(mux))
 		put_device(mux->dev);
-	}
 }
 EXPORT_SYMBOL_GPL(typec_mux_put);
 
@@ -187,7 +178,7 @@ EXPORT_SYMBOL_GPL(typec_mux_register);
 
 /**
  * typec_mux_unregister - Unregister Multiplexer Switch
- * @mux: USB Type-C Connector Multiplexer/DeMultiplexer
+ * @sw: USB Type-C Connector Multiplexer/DeMultiplexer
  *
  * Unregister mux that was registered with typec_mux_register().
  */

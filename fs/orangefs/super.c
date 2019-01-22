@@ -156,10 +156,9 @@ static int orangefs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	sb = dentry->d_sb;
 
 	gossip_debug(GOSSIP_SUPER_DEBUG,
-			"%s: called on sb %p (fs_id is %d)\n",
-			__func__,
-			sb,
-			(int)(ORANGEFS_SB(sb)->fs_id));
+		     "orangefs_statfs: called on sb %p (fs_id is %d)\n",
+		     sb,
+		     (int)(ORANGEFS_SB(sb)->fs_id));
 
 	new_op = op_alloc(ORANGEFS_VFS_OP_STATFS);
 	if (!new_op)
@@ -199,7 +198,7 @@ static int orangefs_statfs(struct dentry *dentry, struct kstatfs *buf)
 
 out_op_release:
 	op_release(new_op);
-	gossip_debug(GOSSIP_SUPER_DEBUG, "%s: returning %d\n", __func__, ret);
+	gossip_debug(GOSSIP_SUPER_DEBUG, "orangefs_statfs: returning %d\n", ret);
 	return ret;
 }
 
@@ -424,8 +423,8 @@ static int orangefs_fill_sb(struct super_block *sb,
 	sb->s_op = &orangefs_s_ops;
 	sb->s_d_op = &orangefs_dentry_operations;
 
-	sb->s_blocksize = PAGE_SIZE;
-	sb->s_blocksize_bits = PAGE_SHIFT;
+	sb->s_blocksize = orangefs_bufmap_size_query();
+	sb->s_blocksize_bits = orangefs_bufmap_shift_query();
 	sb->s_maxbytes = MAX_LFS_FILESIZE;
 
 	root_object.khandle = ORANGEFS_SB(sb)->root_khandle;

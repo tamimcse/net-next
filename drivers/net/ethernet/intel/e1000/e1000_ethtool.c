@@ -435,8 +435,8 @@ static int e1000_get_eeprom(struct net_device *netdev,
 	first_word = eeprom->offset >> 1;
 	last_word = (eeprom->offset + eeprom->len - 1) >> 1;
 
-	eeprom_buff = kmalloc_array(last_word - first_word + 1, sizeof(u16),
-				    GFP_KERNEL);
+	eeprom_buff = kmalloc(sizeof(u16) *
+			(last_word - first_word + 1), GFP_KERNEL);
 	if (!eeprom_buff)
 		return -ENOMEM;
 
@@ -624,14 +624,14 @@ static int e1000_set_ringparam(struct net_device *netdev,
 		adapter->tx_ring = tx_old;
 		e1000_free_all_rx_resources(adapter);
 		e1000_free_all_tx_resources(adapter);
+		kfree(tx_old);
+		kfree(rx_old);
 		adapter->rx_ring = rxdr;
 		adapter->tx_ring = txdr;
 		err = e1000_up(adapter);
 		if (err)
 			goto err_setup;
 	}
-	kfree(tx_old);
-	kfree(rx_old);
 
 	clear_bit(__E1000_RESETTING, &adapter->flags);
 	return 0;
@@ -644,8 +644,7 @@ err_setup_rx:
 err_alloc_rx:
 	kfree(txdr);
 err_alloc_tx:
-	if (netif_running(adapter->netdev))
-		e1000_up(adapter);
+	e1000_up(adapter);
 err_setup:
 	clear_bit(__E1000_RESETTING, &adapter->flags);
 	return err;

@@ -1,14 +1,24 @@
 // SPDX-License-Identifier: GPL-2.0
-/*
- * Copyright (c) 2012 - 2018 Microchip Technology Inc., and its subsidiaries.
- * All rights reserved.
- */
+/* ////////////////////////////////////////////////////////////////////////// */
+/*  */
+/* Copyright (c) Atmel Corporation.  All rights reserved. */
+/*  */
+/* Module Name:  wilc_wlan_cfg.c */
+/*  */
+/*  */
+/* ///////////////////////////////////////////////////////////////////////// */
 
+#include <linux/string.h>
 #include "wilc_wlan_if.h"
 #include "wilc_wlan.h"
 #include "wilc_wlan_cfg.h"
 #include "coreconfigurator.h"
 
+/********************************************
+ *
+ *      Global Data
+ *
+ ********************************************/
 enum cfg_cmd_type {
 	CFG_BYTE_CMD	= 0,
 	CFG_HWORD_CMD	= 1,
@@ -264,17 +274,16 @@ static int wilc_wlan_cfg_set_bin(u8 *frame, u32 offset, u16 id, u8 *b, u32 size)
  *
  ********************************************/
 
-#define GET_WID_TYPE(wid)		(((wid) >> 12) & 0x7)
 static void wilc_wlan_parse_response_frame(u8 *info, int size)
 {
-	u16 wid;
-	u32 len = 0, i = 0;
+	u32 wid, len = 0, i = 0;
 
 	while (size > 0) {
 		i = 0;
 		wid = info[0] | (info[1] << 8);
+		wid = cpu_to_le32(wid);
 
-		switch (GET_WID_TYPE(wid)) {
+		switch ((wid >> 12) & 0x7) {
 		case WID_CHAR:
 			do {
 				if (g_cfg_byte[i].id == WID_NIL)
@@ -295,8 +304,9 @@ static void wilc_wlan_parse_response_frame(u8 *info, int size)
 					break;
 
 				if (g_cfg_hword[i].id == wid) {
-					g_cfg_hword[i].val = (info[4] |
-							      (info[5] << 8));
+					g_cfg_hword[i].val =
+						cpu_to_le16(info[4] |
+							    (info[5] << 8));
 					break;
 				}
 				i++;
@@ -310,10 +320,11 @@ static void wilc_wlan_parse_response_frame(u8 *info, int size)
 					break;
 
 				if (g_cfg_word[i].id == wid) {
-					g_cfg_word[i].val = (info[4] |
-							     (info[5] << 8) |
-							     (info[6] << 16) |
-							     (info[7] << 24));
+					g_cfg_word[i].val =
+						cpu_to_le32(info[4] |
+							    (info[5] << 8) |
+							    (info[6] << 16) |
+							    (info[7] << 24));
 					break;
 				}
 				i++;

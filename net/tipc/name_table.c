@@ -136,12 +136,12 @@ static struct tipc_service *tipc_service_create(u32 type, struct hlist_head *hd)
 }
 
 /**
- * tipc_service_first_range - find first service range in tree matching instance
+ * tipc_service_find_range - find service range matching a service instance
  *
  * Very time-critical, so binary search through range rb tree
  */
-static struct service_range *tipc_service_first_range(struct tipc_service *sc,
-						      u32 instance)
+static struct service_range *tipc_service_find_range(struct tipc_service *sc,
+						     u32 instance)
 {
 	struct rb_node *n = sc->ranges.rb_node;
 	struct service_range *sr;
@@ -156,30 +156,6 @@ static struct service_range *tipc_service_first_range(struct tipc_service *sc,
 			return sr;
 	}
 	return NULL;
-}
-
-/*  tipc_service_find_range - find service range matching publication parameters
- */
-static struct service_range *tipc_service_find_range(struct tipc_service *sc,
-						     u32 lower, u32 upper)
-{
-	struct rb_node *n = sc->ranges.rb_node;
-	struct service_range *sr;
-
-	sr = tipc_service_first_range(sc, lower);
-	if (!sr)
-		return NULL;
-
-	/* Look for exact match */
-	for (n = &sr->tree_node; n; n = rb_next(n)) {
-		sr = container_of(n, struct service_range, tree_node);
-		if (sr->upper == upper)
-			break;
-	}
-	if (!n || sr->lower != lower || sr->upper != upper)
-		return NULL;
-
-	return sr;
 }
 
 static struct service_range *tipc_service_create_range(struct tipc_service *sc,
@@ -262,19 +238,54 @@ err:
 /**
  * tipc_service_remove_publ - remove a publication from a service
  */
-static struct publication *tipc_service_remove_publ(struct service_range *sr,
-						    u32 node, u32 key)
+static struct publication *tipc_service_remove_publ(struct net *net,
+						    struct tipc_service *sc,
+						    u32 lower, u32 upper,
+						    u32 node, u32 key,
+						    struct service_range **rng)
 {
+	struct tipc_subscription *sub, *tmp;
+	struct service_range *sr;
 	struct publication *p;
+	bool found = false;
+	bool last = false;
+	struct rb_node *n;
 
+	sr = tipc_service_find_range(sc, lower);
+	if (!sr)
+		return NULL;
+
+	/* Find exact matching service range */
+	for (n = &sr->tree_node; n; n = rb_next(n)) {
+		sr = container_of(n, struct service_range, tree_node);
+		if (sr->upper == upper)
+			break;
+	}
+	if (!n || sr->lower != lower || sr->upper != upper)
+		return NULL;
+
+	/* Find publication, if it exists */
 	list_for_each_entry(p, &sr->all_publ, all_publ) {
 		if (p->key != key || (node && node != p->node))
 			continue;
-		list_del(&p->all_publ);
-		list_del(&p->local_publ);
-		return p;
+		found = true;
+		break;
 	}
-	return NULL;
+	if (!found)
+		return NULL;
+
+	list_del(&p->all_publ);
+	list_del(&p->local_publ);
+	if (list_empty(&sr->all_publ))
+		last = true;
+
+	/* Notify any waiting subscriptions */
+	list_for_each_entry_safe(sub, tmp, &sc->subscriptions, service_list) {
+		tipc_sub_report_overlap(sub, p->lower, p->upper, TIPC_WITHDRAWN,
+					p->port, p->node, p->scope, last);
+	}
+	*rng = sr;
+	return p;
 }
 
 /**
@@ -365,31 +376,17 @@ struct publication *tipc_nametbl_remove_publ(struct net *net, u32 type,
 					     u32 node, u32 key)
 {
 	struct tipc_service *sc = tipc_service_find(net, type);
-	struct tipc_subscription *sub, *tmp;
 	struct service_range *sr = NULL;
 	struct publication *p = NULL;
-	bool last;
 
 	if (!sc)
 		return NULL;
 
 	spin_lock_bh(&sc->lock);
-	sr = tipc_service_find_range(sc, lower, upper);
-	if (!sr)
-		goto exit;
-	p = tipc_service_remove_publ(sr, node, key);
-	if (!p)
-		goto exit;
-
-	/* Notify any waiting subscriptions */
-	last = list_empty(&sr->all_publ);
-	list_for_each_entry_safe(sub, tmp, &sc->subscriptions, service_list) {
-		tipc_sub_report_overlap(sub, lower, upper, TIPC_WITHDRAWN,
-					p->port, node, p->scope, last);
-	}
+	p = tipc_service_remove_publ(net, sc, lower, upper, node, key, &sr);
 
 	/* Remove service range item if this was its last publication */
-	if (list_empty(&sr->all_publ)) {
+	if (sr && list_empty(&sr->all_publ)) {
 		rb_erase(&sr->tree_node, &sc->ranges);
 		kfree(sr);
 	}
@@ -399,7 +396,6 @@ struct publication *tipc_nametbl_remove_publ(struct net *net, u32 type,
 		hlist_del_init_rcu(&sc->service_list);
 		kfree_rcu(sc, rcu);
 	}
-exit:
 	spin_unlock_bh(&sc->lock);
 	return p;
 }
@@ -441,7 +437,7 @@ u32 tipc_nametbl_translate(struct net *net, u32 type, u32 instance, u32 *dnode)
 		goto not_found;
 
 	spin_lock_bh(&sc->lock);
-	sr = tipc_service_first_range(sc, instance);
+	sr = tipc_service_find_range(sc, instance);
 	if (unlikely(!sr))
 		goto no_match;
 
@@ -488,7 +484,7 @@ bool tipc_nametbl_lookup(struct net *net, u32 type, u32 instance, u32 scope,
 
 	spin_lock_bh(&sc->lock);
 
-	sr = tipc_service_first_range(sc, instance);
+	sr = tipc_service_find_range(sc, instance);
 	if (!sr)
 		goto no_match;
 
@@ -735,7 +731,7 @@ int tipc_nametbl_init(struct net *net)
 	struct name_table *nt;
 	int i;
 
-	nt = kzalloc(sizeof(*nt), GFP_KERNEL);
+	nt = kzalloc(sizeof(*nt), GFP_ATOMIC);
 	if (!nt)
 		return -ENOMEM;
 
@@ -760,7 +756,8 @@ static void tipc_service_delete(struct net *net, struct tipc_service *sc)
 	spin_lock_bh(&sc->lock);
 	rbtree_postorder_for_each_entry_safe(sr, tmpr, &sc->ranges, tree_node) {
 		list_for_each_entry_safe(p, tmp, &sr->all_publ, all_publ) {
-			tipc_service_remove_publ(sr, p->node, p->key);
+			tipc_service_remove_publ(net, sc, p->lower, p->upper,
+						 p->node, p->key, &sr);
 			kfree_rcu(p, rcu);
 		}
 		rb_erase(&sr->tree_node, &sc->ranges);
@@ -980,17 +977,20 @@ int tipc_nl_name_table_dump(struct sk_buff *skb, struct netlink_callback *cb)
 
 struct tipc_dest *tipc_dest_find(struct list_head *l, u32 node, u32 port)
 {
+	u64 value = (u64)node << 32 | port;
 	struct tipc_dest *dst;
 
 	list_for_each_entry(dst, l, list) {
-		if (dst->node == node && dst->port == port)
-			return dst;
+		if (dst->value != value)
+			continue;
+		return dst;
 	}
 	return NULL;
 }
 
 bool tipc_dest_push(struct list_head *l, u32 node, u32 port)
 {
+	u64 value = (u64)node << 32 | port;
 	struct tipc_dest *dst;
 
 	if (tipc_dest_find(l, node, port))
@@ -999,8 +999,7 @@ bool tipc_dest_push(struct list_head *l, u32 node, u32 port)
 	dst = kmalloc(sizeof(*dst), GFP_ATOMIC);
 	if (unlikely(!dst))
 		return false;
-	dst->node = node;
-	dst->port = port;
+	dst->value = value;
 	list_add(&dst->list, l);
 	return true;
 }

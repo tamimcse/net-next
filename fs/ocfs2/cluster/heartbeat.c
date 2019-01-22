@@ -127,13 +127,13 @@ enum o2hb_heartbeat_modes {
 	O2HB_HEARTBEAT_NUM_MODES,
 };
 
-static const char *o2hb_heartbeat_mode_desc[O2HB_HEARTBEAT_NUM_MODES] = {
-	"local",	/* O2HB_HEARTBEAT_LOCAL */
-	"global",	/* O2HB_HEARTBEAT_GLOBAL */
+char *o2hb_heartbeat_mode_desc[O2HB_HEARTBEAT_NUM_MODES] = {
+		"local",	/* O2HB_HEARTBEAT_LOCAL */
+		"global",	/* O2HB_HEARTBEAT_GLOBAL */
 };
 
 unsigned int o2hb_dead_threshold = O2HB_DEFAULT_DEAD_THRESHOLD;
-static unsigned int o2hb_heartbeat_mode = O2HB_HEARTBEAT_LOCAL;
+unsigned int o2hb_heartbeat_mode = O2HB_HEARTBEAT_LOCAL;
 
 /*
  * o2hb_dependent_users tracks the number of registered callbacks that depend
@@ -141,7 +141,7 @@ static unsigned int o2hb_heartbeat_mode = O2HB_HEARTBEAT_LOCAL;
  * However only o2dlm depends on the heartbeat. It does not want the heartbeat
  * to stop while a dlm domain is still active.
  */
-static unsigned int o2hb_dependent_users;
+unsigned int o2hb_dependent_users;
 
 /*
  * In global heartbeat mode, all regions are pinned if there are one or more
@@ -570,7 +570,16 @@ static struct bio *o2hb_setup_one_bio(struct o2hb_region *reg,
 		     current_page, vec_len, vec_start);
 
 		len = bio_add_page(bio, page, vec_len, vec_start);
-		if (len != vec_len) break;
+		if (len != vec_len) {
+			mlog(ML_ERROR, "Adding page[%d] to bio failed, "
+			     "page %p, len %d, vec_len %u, vec_start %u, "
+			     "bi_sector %llu\n", current_page, page, len,
+			     vec_len, vec_start,
+			     (unsigned long long)bio->bi_iter.bi_sector);
+			bio_put(bio);
+			bio = ERR_PTR(-EIO);
+			return bio;
+		}
 
 		cs += vec_len / (PAGE_SIZE/spp);
 		vec_start = 0;
@@ -2486,7 +2495,7 @@ unlock:
 	return ret;
 }
 
-static void o2hb_region_dec_user(const char *region_uuid)
+void o2hb_region_dec_user(const char *region_uuid)
 {
 	spin_lock(&o2hb_live_lock);
 

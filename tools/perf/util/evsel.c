@@ -251,25 +251,13 @@ struct perf_evsel *perf_evsel__new_idx(struct perf_event_attr *attr, int idx)
 {
 	struct perf_evsel *evsel = zalloc(perf_evsel__object.size);
 
-	if (!evsel)
-		return NULL;
-	perf_evsel__init(evsel, attr, idx);
+	if (evsel != NULL)
+		perf_evsel__init(evsel, attr, idx);
 
 	if (perf_evsel__is_bpf_output(evsel)) {
 		evsel->attr.sample_type |= (PERF_SAMPLE_RAW | PERF_SAMPLE_TIME |
 					    PERF_SAMPLE_CPU | PERF_SAMPLE_PERIOD),
 		evsel->attr.sample_period = 1;
-	}
-
-	if (perf_evsel__is_clock(evsel)) {
-		/*
-		 * The evsel->unit points to static alias->unit
-		 * so it's ok to use static string in here.
-		 */
-		static const char *unit = "msec";
-
-		evsel->unit = unit;
-		evsel->scale = 1e-6;
 	}
 
 	return evsel;
@@ -860,12 +848,6 @@ static void apply_config_terms(struct perf_evsel *evsel,
 	}
 }
 
-static bool is_dummy_event(struct perf_evsel *evsel)
-{
-	return (evsel->attr.type == PERF_TYPE_SOFTWARE) &&
-	       (evsel->attr.config == PERF_COUNT_SW_DUMMY);
-}
-
 /*
  * The enable_on_exec/disabled value strategy:
  *
@@ -1104,14 +1086,6 @@ void perf_evsel__config(struct perf_evsel *evsel, struct record_opts *opts,
 		else
 			perf_evsel__reset_sample_bit(evsel, PERIOD);
 	}
-
-	/*
-	 * For initial_delay, a dummy event is added implicitly.
-	 * The software event will trigger -EOPNOTSUPP error out,
-	 * if BRANCH_STACK bit is set.
-	 */
-	if (opts->initial_delay && is_dummy_event(evsel))
-		perf_evsel__reset_sample_bit(evsel, BRANCH_STACK);
 }
 
 static int perf_evsel__alloc_fd(struct perf_evsel *evsel, int ncpus, int nthreads)
@@ -2223,7 +2197,7 @@ int perf_evsel__parse_sample(struct perf_evsel *evsel, union perf_event *event,
 		}
 	}
 
-	if (evsel__has_callchain(evsel)) {
+	if (type & PERF_SAMPLE_CALLCHAIN) {
 		const u64 max_callchain_nr = UINT64_MAX / sizeof(u64);
 
 		OVERFLOW_CHECK_u64(array);
@@ -2684,7 +2658,7 @@ int perf_event__synthesize_sample(union perf_event *event, u64 type,
 
 struct format_field *perf_evsel__field(struct perf_evsel *evsel, const char *name)
 {
-	return tep_find_field(evsel->tp_format, name);
+	return pevent_find_field(evsel->tp_format, name);
 }
 
 void *perf_evsel__rawptr(struct perf_evsel *evsel, struct perf_sample *sample,
@@ -2883,12 +2857,12 @@ int perf_evsel__open_strerror(struct perf_evsel *evsel, struct target *target,
 			 "Hint: Try again after reducing the number of events.\n"
 			 "Hint: Try increasing the limit with 'ulimit -n <limit>'");
 	case ENOMEM:
-		if (evsel__has_callchain(evsel) &&
+		if ((evsel->attr.sample_type & PERF_SAMPLE_CALLCHAIN) != 0 &&
 		    access("/proc/sys/kernel/perf_event_max_stack", F_OK) == 0)
 			return scnprintf(msg, size,
 					 "Not enough memory to setup event with callchain.\n"
 					 "Hint: Try tweaking /proc/sys/kernel/perf_event_max_stack\n"
-					 "Hint: Current value: %d", sysctl__max_stack());
+					 "Hint: Current value: %d", sysctl_perf_event_max_stack);
 		break;
 	case ENODEV:
 		if (target->cpu_list)

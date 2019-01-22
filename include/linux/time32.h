@@ -18,13 +18,24 @@
 /* timespec64 is defined as timespec here */
 static inline struct timespec timespec64_to_timespec(const struct timespec64 ts64)
 {
-	return *(const struct timespec *)&ts64;
+	return ts64;
 }
 
 static inline struct timespec64 timespec_to_timespec64(const struct timespec ts)
 {
-	return *(const struct timespec64 *)&ts;
+	return ts;
 }
+
+# define timespec_equal			timespec64_equal
+# define timespec_compare		timespec64_compare
+# define set_normalized_timespec	set_normalized_timespec64
+# define timespec_add			timespec64_add
+# define timespec_sub			timespec64_sub
+# define timespec_valid			timespec64_valid
+# define timespec_valid_strict		timespec64_valid_strict
+# define timespec_to_ns			timespec64_to_ns
+# define ns_to_timespec			ns_to_timespec64
+# define timespec_add_ns		timespec64_add_ns
 
 #else
 static inline struct timespec timespec64_to_timespec(const struct timespec64 ts64)
@@ -44,7 +55,6 @@ static inline struct timespec64 timespec_to_timespec64(const struct timespec ts)
 	ret.tv_nsec = ts.tv_nsec;
 	return ret;
 }
-#endif
 
 static inline int timespec_equal(const struct timespec *a,
 				 const struct timespec *b)
@@ -149,6 +159,8 @@ static __always_inline void timespec_add_ns(struct timespec *a, u64 ns)
 	a->tv_nsec = ns;
 }
 
+#endif
+
 /**
  * time_to_tm - converts the calendar time to local broken-down time
  *
@@ -206,20 +218,5 @@ static inline s64 timeval_to_ns(const struct timeval *tv)
  */
 extern struct timeval ns_to_timeval(const s64 nsec);
 extern struct __kernel_old_timeval ns_to_kernel_old_timeval(s64 nsec);
-
-/*
- * New aliases for compat time functions. These will be used to replace
- * the compat code so it can be shared between 32-bit and 64-bit builds
- * both of which provide compatibility with old 32-bit tasks.
- */
-#define old_time32_t		compat_time_t
-#define old_timeval32		compat_timeval
-#define old_timespec32		compat_timespec
-#define old_itimerspec32	compat_itimerspec
-#define ns_to_old_timeval32	ns_to_compat_timeval
-#define get_old_itimerspec32	get_compat_itimerspec64
-#define put_old_itimerspec32	put_compat_itimerspec64
-#define get_old_timespec32	compat_get_timespec64
-#define put_old_timespec32	compat_put_timespec64
 
 #endif

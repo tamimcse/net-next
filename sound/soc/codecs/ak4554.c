@@ -1,8 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0
-// ak4554.c
-//
-// Copyright (C) 2013 Renesas Solutions Corp.
-// Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>
+/*
+ * ak4554.c
+ *
+ * Copyright (C) 2013 Renesas Solutions Corp.
+ * Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
 
 #include <linux/module.h>
 #include <sound/soc.h>
@@ -92,6 +97,6 @@ static struct platform_driver ak4554_driver = {
 };
 module_platform_driver(ak4554_driver);
 
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("SoC AK4554 driver");
 MODULE_AUTHOR("Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>");

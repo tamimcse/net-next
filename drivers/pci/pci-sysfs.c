@@ -23,6 +23,7 @@
 #include <linux/fs.h>
 #include <linux/capability.h>
 #include <linux/security.h>
+#include <linux/pci-aspm.h>
 #include <linux/slab.h>
 #include <linux/vgaarb.h>
 #include <linux/pm_runtime.h>
@@ -287,16 +288,13 @@ static ssize_t enable_store(struct device *dev, struct device_attribute *attr,
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
-	device_lock(dev);
-	if (dev->driver)
-		result = -EBUSY;
-	else if (val)
+	if (!val) {
+		if (pci_is_enabled(pdev))
+			pci_disable_device(pdev);
+		else
+			result = -EIO;
+	} else
 		result = pci_enable_device(pdev);
-	else if (pci_is_enabled(pdev))
-		pci_disable_device(pdev);
-	else
-		result = -EIO;
-	device_unlock(dev);
 
 	return result < 0 ? result : count;
 }
@@ -1075,7 +1073,7 @@ void pci_create_legacy_files(struct pci_bus *b)
 {
 	int error;
 
-	b->legacy_io = kcalloc(2, sizeof(struct bin_attribute),
+	b->legacy_io = kzalloc(sizeof(struct bin_attribute) * 2,
 			       GFP_ATOMIC);
 	if (!b->legacy_io)
 		goto kzalloc_err;
@@ -1448,9 +1446,7 @@ static ssize_t reset_store(struct device *dev, struct device_attribute *attr,
 	if (val != 1)
 		return -EINVAL;
 
-	pm_runtime_get_sync(dev);
 	result = pci_reset_function(pdev);
-	pm_runtime_put(dev);
 	if (result < 0)
 		return result;
 
@@ -1747,9 +1743,6 @@ static const struct attribute_group *pci_dev_attr_groups[] = {
 #endif
 	&pci_bridge_attr_group,
 	&pcie_dev_attr_group,
-#ifdef CONFIG_PCIEAER
-	&aer_stats_attr_group,
-#endif
 	NULL,
 };
 

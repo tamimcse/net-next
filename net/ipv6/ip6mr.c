@@ -32,7 +32,6 @@
 #include <linux/seq_file.h>
 #include <linux/init.h>
 #include <linux/compat.h>
-#include <linux/rhashtable.h>
 #include <net/protocol.h>
 #include <linux/skbuff.h>
 #include <net/raw.h>
@@ -229,8 +228,8 @@ static int __net_init ip6mr_rules_init(struct net *net)
 	INIT_LIST_HEAD(&net->ipv6.mr6_tables);
 
 	mrt = ip6mr_new_table(net, RT6_TABLE_DFLT);
-	if (IS_ERR(mrt)) {
-		err = PTR_ERR(mrt);
+	if (!mrt) {
+		err = -ENOMEM;
 		goto err1;
 	}
 
@@ -303,13 +302,8 @@ static int ip6mr_fib_lookup(struct net *net, struct flowi6 *flp6,
 
 static int __net_init ip6mr_rules_init(struct net *net)
 {
-	struct mr_table *mrt;
-
-	mrt = ip6mr_new_table(net, RT6_TABLE_DFLT);
-	if (IS_ERR(mrt))
-		return PTR_ERR(mrt);
-	net->ipv6.mrt6 = mrt;
-	return 0;
+	net->ipv6.mrt6 = ip6mr_new_table(net, RT6_TABLE_DFLT);
+	return net->ipv6.mrt6 ? 0 : -ENOMEM;
 }
 
 static void __net_exit ip6mr_rules_exit(struct net *net)
@@ -446,6 +440,19 @@ static const struct seq_operations ip6mr_vif_seq_ops = {
 	.show  = ip6mr_vif_seq_show,
 };
 
+static int ip6mr_vif_open(struct inode *inode, struct file *file)
+{
+	return seq_open_net(inode, file, &ip6mr_vif_seq_ops,
+			    sizeof(struct mr_vif_iter));
+}
+
+static const struct file_operations ip6mr_vif_fops = {
+	.open    = ip6mr_vif_open,
+	.read    = seq_read,
+	.llseek  = seq_lseek,
+	.release = seq_release_net,
+};
+
 static void *ipmr_mfc_seq_start(struct seq_file *seq, loff_t *pos)
 {
 	struct net *net = seq_file_net(seq);
@@ -505,6 +512,19 @@ static const struct seq_operations ipmr_mfc_seq_ops = {
 	.next  = mr_mfc_seq_next,
 	.stop  = mr_mfc_seq_stop,
 	.show  = ipmr_mfc_seq_show,
+};
+
+static int ipmr_mfc_open(struct inode *inode, struct file *file)
+{
+	return seq_open_net(inode, file, &ipmr_mfc_seq_ops,
+			    sizeof(struct mr_mfc_iter));
+}
+
+static const struct file_operations ip6mr_mfc_fops = {
+	.open    = ipmr_mfc_open,
+	.read    = seq_read,
+	.llseek  = seq_lseek,
+	.release = seq_release_net,
 };
 #endif
 
@@ -1297,11 +1317,9 @@ static int __net_init ip6mr_net_init(struct net *net)
 
 #ifdef CONFIG_PROC_FS
 	err = -ENOMEM;
-	if (!proc_create_net("ip6_mr_vif", 0, net->proc_net, &ip6mr_vif_seq_ops,
-			sizeof(struct mr_vif_iter)))
+	if (!proc_create("ip6_mr_vif", 0, net->proc_net, &ip6mr_vif_fops))
 		goto proc_vif_fail;
-	if (!proc_create_net("ip6_mr_cache", 0, net->proc_net, &ipmr_mfc_seq_ops,
-			sizeof(struct mr_mfc_iter)))
+	if (!proc_create("ip6_mr_cache", 0, net->proc_net, &ip6mr_mfc_fops))
 		goto proc_cache_fail;
 #endif
 
@@ -1740,11 +1758,9 @@ int ip6_mroute_setsockopt(struct sock *sk, int optname, char __user *optval, uns
 
 		rtnl_lock();
 		ret = 0;
-		mrt = ip6mr_new_table(net, v);
-		if (IS_ERR(mrt))
-			ret = PTR_ERR(mrt);
-		else
-			raw6_sk(sk)->ip6mr_table = v;
+		if (!ip6mr_new_table(net, v))
+			ret = -ENOMEM;
+		raw6_sk(sk)->ip6mr_table = v;
 		rtnl_unlock();
 		return ret;
 	}

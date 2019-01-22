@@ -185,17 +185,6 @@ struct nfs_inode {
 	struct inode		vfs_inode;
 };
 
-struct nfs4_copy_state {
-	struct list_head	copies;
-	nfs4_stateid		stateid;
-	struct completion	completion;
-	uint64_t		count;
-	struct nfs_writeverf	verf;
-	int			error;
-	int			flags;
-	struct nfs4_state	*parent_state;
-};
-
 /*
  * Access bit flags
  */

@@ -29,12 +29,16 @@
 
 #include "common.h"
 
-#define MSG_ID_MASK		GENMASK(7, 0)
-#define MSG_TYPE_MASK		GENMASK(9, 8)
-#define MSG_PROTOCOL_ID_MASK	GENMASK(17, 10)
-#define MSG_TOKEN_ID_MASK	GENMASK(27, 18)
-#define MSG_XTRACT_TOKEN(hdr)	FIELD_GET(MSG_TOKEN_ID_MASK, (hdr))
-#define MSG_TOKEN_MAX		(MSG_XTRACT_TOKEN(MSG_TOKEN_ID_MASK) + 1)
+#define MSG_ID_SHIFT		0
+#define MSG_ID_MASK		0xff
+#define MSG_TYPE_SHIFT		8
+#define MSG_TYPE_MASK		0x3
+#define MSG_PROTOCOL_ID_SHIFT	10
+#define MSG_PROTOCOL_ID_MASK	0xff
+#define MSG_TOKEN_ID_SHIFT	18
+#define MSG_TOKEN_ID_MASK	0x3ff
+#define MSG_XTRACT_TOKEN(header)	\
+	(((header) >> MSG_TOKEN_ID_SHIFT) & MSG_TOKEN_ID_MASK)
 
 enum scmi_error_codes {
 	SCMI_SUCCESS = 0,	/* Success */
@@ -51,7 +55,7 @@ enum scmi_error_codes {
 	SCMI_ERR_MAX
 };
 
-/* List of all SCMI devices active in system */
+/* List of all  SCMI devices active in system */
 static LIST_HEAD(scmi_list);
 /* Protection for the entire list */
 static DEFINE_MUTEX(scmi_list_mutex);
@@ -68,6 +72,7 @@ static DEFINE_MUTEX(scmi_list_mutex);
 struct scmi_xfers_info {
 	struct scmi_xfer *xfer_block;
 	unsigned long *xfer_alloc_table;
+	/* protect transfer allocation */
 	spinlock_t xfer_lock;
 };
 
@@ -93,7 +98,6 @@ struct scmi_desc {
  * @payload: Transmit/Receive mailbox channel payload area
  * @dev: Reference to device in the SCMI hierarchy corresponding to this
  *	 channel
- * @handle: Pointer to SCMI entity handle
  */
 struct scmi_chan_info {
 	struct mbox_client cl;
@@ -104,7 +108,7 @@ struct scmi_chan_info {
 };
 
 /**
- * struct scmi_info - Structure representing a SCMI instance
+ * struct scmi_info - Structure representing a  SCMI instance
  *
  * @dev: Device pointer
  * @desc: SoC description for this instance
@@ -113,9 +117,9 @@ struct scmi_chan_info {
  *	implementation version and (sub-)vendor identification.
  * @minfo: Message info
  * @tx_idr: IDR object to map protocol id to channel info pointer
- * @protocols_imp: List of protocols implemented, currently maximum of
+ * @protocols_imp: list of protocols implemented, currently maximum of
  *	MAX_PROTOCOLS_IMP elements allocated by the base protocol
- * @node: List head
+ * @node: list head
  * @users: Number of users of this instance
  */
 struct scmi_info {
@@ -221,7 +225,9 @@ static void scmi_rx_callback(struct mbox_client *cl, void *m)
 
 	xfer_id = MSG_XTRACT_TOKEN(ioread32(&mem->msg_header));
 
-	/* Are we even expecting this? */
+	/*
+	 * Are we even expecting this?
+	 */
 	if (!test_bit(xfer_id, minfo->xfer_alloc_table)) {
 		dev_err(dev, "message for %d is not expected!\n", xfer_id);
 		return;
@@ -246,14 +252,12 @@ static void scmi_rx_callback(struct mbox_client *cl, void *m)
  *
  * @hdr: pointer to header containing all the information on message id,
  *	protocol id and sequence id.
- *
- * Return: 32-bit packed command header to be sent to the platform.
  */
 static inline u32 pack_scmi_header(struct scmi_msg_hdr *hdr)
 {
-	return FIELD_PREP(MSG_ID_MASK, hdr->id) |
-		FIELD_PREP(MSG_TOKEN_ID_MASK, hdr->seq) |
-		FIELD_PREP(MSG_PROTOCOL_ID_MASK, hdr->protocol_id);
+	return ((hdr->id & MSG_ID_MASK) << MSG_ID_SHIFT) |
+	   ((hdr->seq & MSG_TOKEN_ID_MASK) << MSG_TOKEN_ID_SHIFT) |
+	   ((hdr->protocol_id & MSG_PROTOCOL_ID_MASK) << MSG_PROTOCOL_ID_SHIFT);
 }
 
 /**
@@ -282,9 +286,9 @@ static void scmi_tx_prepare(struct mbox_client *cl, void *m)
 }
 
 /**
- * scmi_xfer_get() - Allocate one message
+ * scmi_one_xfer_get() - Allocate one message
  *
- * @handle: Pointer to SCMI entity handle
+ * @handle: SCMI entity handle
  *
  * Helper function which is used by various command functions that are
  * exposed to clients of this driver for allocating a message traffic event.
@@ -295,7 +299,7 @@ static void scmi_tx_prepare(struct mbox_client *cl, void *m)
  *
  * Return: 0 if all went fine, else corresponding error.
  */
-static struct scmi_xfer *scmi_xfer_get(const struct scmi_handle *handle)
+static struct scmi_xfer *scmi_one_xfer_get(const struct scmi_handle *handle)
 {
 	u16 xfer_id;
 	struct scmi_xfer *xfer;
@@ -324,14 +328,14 @@ static struct scmi_xfer *scmi_xfer_get(const struct scmi_handle *handle)
 }
 
 /**
- * scmi_xfer_put() - Release a message
+ * scmi_one_xfer_put() - Release a message
  *
- * @handle: Pointer to SCMI entity handle
- * @xfer: message that was reserved by scmi_xfer_get
+ * @minfo: transfer info pointer
+ * @xfer: message that was reserved by scmi_one_xfer_get
  *
  * This holds a spinlock to maintain integrity of internal data structures.
  */
-void scmi_xfer_put(const struct scmi_handle *handle, struct scmi_xfer *xfer)
+void scmi_one_xfer_put(const struct scmi_handle *handle, struct scmi_xfer *xfer)
 {
 	unsigned long flags;
 	struct scmi_info *info = handle_to_scmi_info(handle);
@@ -374,12 +378,12 @@ static bool scmi_xfer_done_no_timeout(const struct scmi_chan_info *cinfo,
 /**
  * scmi_do_xfer() - Do one transfer
  *
- * @handle: Pointer to SCMI entity handle
+ * @info: Pointer to SCMI entity information
  * @xfer: Transfer to initiate and wait for response
  *
  * Return: -ETIMEDOUT in case of no response, if transmit error,
- *	return corresponding error, else if all goes well,
- *	return 0.
+ *   return corresponding error, else if all goes well,
+ *   return 0.
  */
 int scmi_do_xfer(const struct scmi_handle *handle, struct scmi_xfer *xfer)
 {
@@ -436,22 +440,22 @@ int scmi_do_xfer(const struct scmi_handle *handle, struct scmi_xfer *xfer)
 }
 
 /**
- * scmi_xfer_get_init() - Allocate and initialise one message
+ * scmi_one_xfer_init() - Allocate and initialise one message
  *
- * @handle: Pointer to SCMI entity handle
+ * @handle: SCMI entity handle
  * @msg_id: Message identifier
- * @prot_id: Protocol identifier for the message
+ * @msg_prot_id: Protocol identifier for the message
  * @tx_size: transmit message size
  * @rx_size: receive message size
  * @p: pointer to the allocated and initialised message
  *
- * This function allocates the message using @scmi_xfer_get and
+ * This function allocates the message using @scmi_one_xfer_get and
  * initialise the header.
  *
  * Return: 0 if all went fine with @p pointing to message, else
  *	corresponding error.
  */
-int scmi_xfer_get_init(const struct scmi_handle *handle, u8 msg_id, u8 prot_id,
+int scmi_one_xfer_init(const struct scmi_handle *handle, u8 msg_id, u8 prot_id,
 		       size_t tx_size, size_t rx_size, struct scmi_xfer **p)
 {
 	int ret;
@@ -464,7 +468,7 @@ int scmi_xfer_get_init(const struct scmi_handle *handle, u8 msg_id, u8 prot_id,
 	    tx_size > info->desc->max_msg_size)
 		return -ERANGE;
 
-	xfer = scmi_xfer_get(handle);
+	xfer = scmi_one_xfer_get(handle);
 	if (IS_ERR(xfer)) {
 		ret = PTR_ERR(xfer);
 		dev_err(dev, "failed to get free message slot(%d)\n", ret);
@@ -478,16 +482,13 @@ int scmi_xfer_get_init(const struct scmi_handle *handle, u8 msg_id, u8 prot_id,
 	xfer->hdr.poll_completion = false;
 
 	*p = xfer;
-
 	return 0;
 }
 
 /**
  * scmi_version_get() - command to get the revision of the SCMI entity
  *
- * @handle: Pointer to SCMI entity handle
- * @protocol: Protocol identifier for the message
- * @version: Holds returned version of protocol.
+ * @handle: Handle to SCMI entity information
  *
  * Updates the SCMI information in the internal data structure.
  *
@@ -500,7 +501,7 @@ int scmi_version_get(const struct scmi_handle *handle, u8 protocol,
 	__le32 *rev_info;
 	struct scmi_xfer *t;
 
-	ret = scmi_xfer_get_init(handle, PROTOCOL_VERSION, protocol, 0,
+	ret = scmi_one_xfer_init(handle, PROTOCOL_VERSION, protocol, 0,
 				 sizeof(*version), &t);
 	if (ret)
 		return ret;
@@ -511,7 +512,7 @@ int scmi_version_get(const struct scmi_handle *handle, u8 protocol,
 		*version = le32_to_cpu(*rev_info);
 	}
 
-	scmi_xfer_put(handle, t);
+	scmi_one_xfer_put(handle, t);
 	return ret;
 }
 
@@ -539,12 +540,12 @@ scmi_is_protocol_implemented(const struct scmi_handle *handle, u8 prot_id)
 }
 
 /**
- * scmi_handle_get() - Get the SCMI handle for a device
+ * scmi_handle_get() - Get the  SCMI handle for a device
  *
  * @dev: pointer to device for which we want SCMI handle
  *
  * NOTE: The function does not track individual clients of the framework
- * and is expected to be maintained by caller of SCMI protocol library.
+ * and is expected to be maintained by caller of  SCMI protocol library.
  * scmi_handle_put must be balanced with successful scmi_handle_get
  *
  * Return: pointer to handle if successful, NULL on error
@@ -575,7 +576,7 @@ struct scmi_handle *scmi_handle_get(struct device *dev)
  * @handle: handle acquired by scmi_handle_get
  *
  * NOTE: The function does not track individual clients of the framework
- * and is expected to be maintained by caller of SCMI protocol library.
+ * and is expected to be maintained by caller of  SCMI protocol library.
  * scmi_handle_put must be balanced with successful scmi_handle_get
  *
  * Return: 0 is successfully released
@@ -598,7 +599,7 @@ int scmi_handle_put(const struct scmi_handle *handle)
 }
 
 static const struct scmi_desc scmi_generic_desc = {
-	.max_rx_timeout_ms = 30,	/* We may increase this if required */
+	.max_rx_timeout_ms = 30,	/* we may increase this if required */
 	.max_msg = 20,		/* Limited by MBOX_TX_QUEUE_LEN */
 	.max_msg_size = 128,
 };
@@ -620,9 +621,9 @@ static int scmi_xfer_info_init(struct scmi_info *sinfo)
 	struct scmi_xfers_info *info = &sinfo->minfo;
 
 	/* Pre-allocated messages, no more than what hdr.seq can support */
-	if (WARN_ON(desc->max_msg >= MSG_TOKEN_MAX)) {
-		dev_err(dev, "Maximum message of %d exceeds supported %ld\n",
-			desc->max_msg, MSG_TOKEN_MAX);
+	if (WARN_ON(desc->max_msg >= (MSG_TOKEN_ID_MASK + 1))) {
+		dev_err(dev, "Maximum message of %d exceeds supported %d\n",
+			desc->max_msg, MSG_TOKEN_ID_MASK + 1);
 		return -EINVAL;
 	}
 
@@ -635,6 +636,8 @@ static int scmi_xfer_info_init(struct scmi_info *sinfo)
 					      sizeof(long), GFP_KERNEL);
 	if (!info->xfer_alloc_table)
 		return -ENOMEM;
+
+	bitmap_zero(info->xfer_alloc_table, desc->max_msg);
 
 	/* Pre-initialize the buffer pointer to pre-allocated buffers */
 	for (i = 0, xfer = info->xfer_block; i < desc->max_msg; i++, xfer++) {
@@ -687,12 +690,11 @@ static int scmi_remove(struct platform_device *pdev)
 		list_del(&info->node);
 	mutex_unlock(&scmi_list_mutex);
 
-	if (ret)
-		return ret;
-
-	/* Safe to free channels since no more users */
-	ret = idr_for_each(idr, scmi_mbox_free_channel, idr);
-	idr_destroy(&info->tx_idr);
+	if (!ret) {
+		/* Safe to free channels since no more users */
+		ret = idr_for_each(idr, scmi_mbox_free_channel, idr);
+		idr_destroy(&info->tx_idr);
+	}
 
 	return ret;
 }
@@ -776,7 +778,6 @@ scmi_create_protocol_device(struct device_node *np, struct scmi_info *info,
 	if (scmi_mbox_chan_setup(info, &sdev->dev, prot_id)) {
 		dev_err(&sdev->dev, "failed to setup transport\n");
 		scmi_device_destroy(sdev);
-		return;
 	}
 
 	/* setup handle now as the transport is ready */
@@ -839,8 +840,7 @@ static int scmi_probe(struct platform_device *pdev)
 		if (of_property_read_u32(child, "reg", &prot_id))
 			continue;
 
-		if (!FIELD_FIT(MSG_PROTOCOL_ID_MASK, prot_id))
-			dev_err(dev, "Out of range protocol %d\n", prot_id);
+		prot_id &= MSG_PROTOCOL_ID_MASK;
 
 		if (!scmi_is_protocol_implemented(handle, prot_id)) {
 			dev_err(dev, "SCMI protocol %d not implemented\n",

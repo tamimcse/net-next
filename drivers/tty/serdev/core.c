@@ -13,8 +13,6 @@
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
-#include <linux/pm_domain.h>
-#include <linux/pm_runtime.h>
 #include <linux/serdev.h>
 #include <linux/slab.h>
 
@@ -145,28 +143,11 @@ EXPORT_SYMBOL_GPL(serdev_device_remove);
 int serdev_device_open(struct serdev_device *serdev)
 {
 	struct serdev_controller *ctrl = serdev->ctrl;
-	int ret;
 
 	if (!ctrl || !ctrl->ops->open)
 		return -EINVAL;
 
-	ret = ctrl->ops->open(ctrl);
-	if (ret)
-		return ret;
-
-	ret = pm_runtime_get_sync(&ctrl->dev);
-	if (ret < 0) {
-		pm_runtime_put_noidle(&ctrl->dev);
-		goto err_close;
-	}
-
-	return 0;
-
-err_close:
-	if (ctrl->ops->close)
-		ctrl->ops->close(ctrl);
-
-	return ret;
+	return ctrl->ops->open(ctrl);
 }
 EXPORT_SYMBOL_GPL(serdev_device_open);
 
@@ -176,8 +157,6 @@ void serdev_device_close(struct serdev_device *serdev)
 
 	if (!ctrl || !ctrl->ops->close)
 		return;
-
-	pm_runtime_put(&ctrl->dev);
 
 	ctrl->ops->close(ctrl);
 }
@@ -351,17 +330,8 @@ EXPORT_SYMBOL_GPL(serdev_device_set_tiocm);
 static int serdev_drv_probe(struct device *dev)
 {
 	const struct serdev_device_driver *sdrv = to_serdev_device_driver(dev->driver);
-	int ret;
 
-	ret = dev_pm_domain_attach(dev, true);
-	if (ret)
-		return ret;
-
-	ret = sdrv->probe(to_serdev_device(dev));
-	if (ret)
-		dev_pm_domain_detach(dev, true);
-
-	return ret;
+	return sdrv->probe(to_serdev_device(dev));
 }
 
 static int serdev_drv_remove(struct device *dev)
@@ -369,9 +339,6 @@ static int serdev_drv_remove(struct device *dev)
 	const struct serdev_device_driver *sdrv = to_serdev_device_driver(dev->driver);
 	if (sdrv->remove)
 		sdrv->remove(to_serdev_device(dev));
-
-	dev_pm_domain_detach(dev, true);
-
 	return 0;
 }
 
@@ -448,9 +415,6 @@ struct serdev_controller *serdev_controller_alloc(struct device *parent,
 	serdev_controller_set_drvdata(ctrl, &ctrl[1]);
 
 	dev_set_name(&ctrl->dev, "serial%d", id);
-
-	pm_runtime_no_callbacks(&ctrl->dev);
-	pm_suspend_ignore_children(&ctrl->dev, true);
 
 	dev_dbg(&ctrl->dev, "allocated controller 0x%p id %d\n", ctrl, id);
 	return ctrl;
@@ -583,23 +547,20 @@ int serdev_controller_add(struct serdev_controller *ctrl)
 	if (ret)
 		return ret;
 
-	pm_runtime_enable(&ctrl->dev);
-
 	ret_of = of_serdev_register_devices(ctrl);
 	ret_acpi = acpi_serdev_register_devices(ctrl);
 	if (ret_of && ret_acpi) {
 		dev_dbg(&ctrl->dev, "no devices registered: of:%d acpi:%d\n",
 			ret_of, ret_acpi);
 		ret = -ENODEV;
-		goto err_rpm_disable;
+		goto out_dev_del;
 	}
 
 	dev_dbg(&ctrl->dev, "serdev%d registered: dev:%p\n",
 		ctrl->nr, &ctrl->dev);
 	return 0;
 
-err_rpm_disable:
-	pm_runtime_disable(&ctrl->dev);
+out_dev_del:
 	device_del(&ctrl->dev);
 	return ret;
 };
@@ -630,7 +591,6 @@ void serdev_controller_remove(struct serdev_controller *ctrl)
 
 	dummy = device_for_each_child(&ctrl->dev, NULL,
 				      serdev_remove_device);
-	pm_runtime_disable(&ctrl->dev);
 	device_del(&ctrl->dev);
 }
 EXPORT_SYMBOL_GPL(serdev_controller_remove);
@@ -657,7 +617,6 @@ EXPORT_SYMBOL_GPL(__serdev_device_driver_register);
 static void __exit serdev_exit(void)
 {
 	bus_unregister(&serdev_bus_type);
-	ida_destroy(&ctrl_ida);
 }
 module_exit(serdev_exit);
 

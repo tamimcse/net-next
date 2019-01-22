@@ -83,7 +83,6 @@ enum {
 
 struct smp_dev {
 	/* Secure Connections OOB data */
-	bool			local_oob;
 	u8			local_pk[64];
 	u8			local_rand[16];
 	bool			debug_key;
@@ -599,8 +598,6 @@ int smp_generate_oob(struct hci_dev *hdev, u8 hash[16], u8 rand[16])
 		return err;
 
 	memcpy(rand, smp->local_rand, 16);
-
-	smp->local_oob = true;
 
 	return 0;
 }
@@ -1788,7 +1785,7 @@ static u8 smp_cmd_pairing_req(struct l2cap_conn *conn, struct sk_buff *skb)
 	 * successfully received our local OOB data - therefore set the
 	 * flag to indicate that local OOB is in use.
 	 */
-	if (req->oob_flag == SMP_OOB_PRESENT && SMP_DEV(hdev)->local_oob)
+	if (req->oob_flag == SMP_OOB_PRESENT)
 		set_bit(SMP_FLAG_LOCAL_OOB, &smp->flags);
 
 	/* SMP over BR/EDR requires special treatment */
@@ -1970,7 +1967,7 @@ static u8 smp_cmd_pairing_rsp(struct l2cap_conn *conn, struct sk_buff *skb)
 	 * successfully received our local OOB data - therefore set the
 	 * flag to indicate that local OOB is in use.
 	 */
-	if (rsp->oob_flag == SMP_OOB_PRESENT && SMP_DEV(hdev)->local_oob)
+	if (rsp->oob_flag == SMP_OOB_PRESENT)
 		set_bit(SMP_FLAG_LOCAL_OOB, &smp->flags);
 
 	smp->prsp[0] = SMP_CMD_PAIRING_RSP;
@@ -2700,13 +2697,7 @@ static int smp_cmd_public_key(struct l2cap_conn *conn, struct sk_buff *skb)
 	 * key was set/generated.
 	 */
 	if (test_bit(SMP_FLAG_LOCAL_OOB, &smp->flags)) {
-		struct l2cap_chan *hchan = hdev->smp_data;
-		struct smp_dev *smp_dev;
-
-		if (!hchan || !hchan->data)
-			return SMP_UNSPECIFIED;
-
-		smp_dev = hchan->data;
+		struct smp_dev *smp_dev = chan->data;
 
 		tfm_ecdh = smp_dev->tfm_ecdh;
 	} else {
@@ -3239,7 +3230,6 @@ static struct l2cap_chan *smp_add_cid(struct hci_dev *hdev, u16 cid)
 		return ERR_CAST(tfm_ecdh);
 	}
 
-	smp->local_oob = false;
 	smp->tfm_aes = tfm_aes;
 	smp->tfm_cmac = tfm_cmac;
 	smp->tfm_ecdh = tfm_ecdh;
@@ -3325,12 +3315,16 @@ static ssize_t force_bredr_smp_write(struct file *file,
 				     size_t count, loff_t *ppos)
 {
 	struct hci_dev *hdev = file->private_data;
+	char buf[32];
+	size_t buf_size = min(count, (sizeof(buf)-1));
 	bool enable;
-	int err;
 
-	err = kstrtobool_from_user(user_buf, count, &enable);
-	if (err)
-		return err;
+	if (copy_from_user(buf, user_buf, buf_size))
+		return -EFAULT;
+
+	buf[buf_size] = '\0';
+	if (strtobool(buf, &enable))
+		return -EINVAL;
 
 	if (enable == hci_dev_test_flag(hdev, HCI_FORCE_BREDR_SMP))
 		return -EALREADY;

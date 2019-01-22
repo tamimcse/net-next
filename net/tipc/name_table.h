@@ -133,8 +133,13 @@ void tipc_nametbl_stop(struct net *net);
 
 struct tipc_dest {
 	struct list_head list;
-	u32 port;
-	u32 node;
+	union {
+		struct {
+			u32 port;
+			u32 node;
+		};
+		u64 value;
+	};
 };
 
 struct tipc_dest *tipc_dest_find(struct list_head *l, u32 node, u32 port);

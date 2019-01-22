@@ -38,7 +38,7 @@ static const struct nla_policy nat_policy[TCA_NAT_MAX + 1] = {
 
 static int tcf_nat_init(struct net *net, struct nlattr *nla, struct nlattr *est,
 			struct tc_action **a, int ovr, int bind,
-			bool rtnl_held, struct netlink_ext_ack *extack)
+			struct netlink_ext_ack *extack)
 {
 	struct tc_action_net *tn = net_generic(net, nat_net_id);
 	struct nlattr *tb[TCA_NAT_MAX + 1];
@@ -57,24 +57,18 @@ static int tcf_nat_init(struct net *net, struct nlattr *nla, struct nlattr *est,
 		return -EINVAL;
 	parm = nla_data(tb[TCA_NAT_PARMS]);
 
-	err = tcf_idr_check_alloc(tn, &parm->index, a, bind);
-	if (!err) {
+	if (!tcf_idr_check(tn, parm->index, a, bind)) {
 		ret = tcf_idr_create(tn, parm->index, est, a,
 				     &act_nat_ops, bind, false);
-		if (ret) {
-			tcf_idr_cleanup(tn, parm->index);
+		if (ret)
 			return ret;
-		}
 		ret = ACT_P_CREATED;
-	} else if (err > 0) {
+	} else {
 		if (bind)
 			return 0;
-		if (!ovr) {
-			tcf_idr_release(*a, bind);
+		tcf_idr_release(*a, bind);
+		if (!ovr)
 			return -EEXIST;
-		}
-	} else {
-		return err;
 	}
 	p = to_tcf_nat(*a);
 
@@ -93,8 +87,8 @@ static int tcf_nat_init(struct net *net, struct nlattr *nla, struct nlattr *est,
 	return ret;
 }
 
-static int tcf_nat_act(struct sk_buff *skb, const struct tc_action *a,
-		       struct tcf_result *res)
+static int tcf_nat(struct sk_buff *skb, const struct tc_action *a,
+		   struct tcf_result *res)
 {
 	struct tcf_nat *p = to_tcf_nat(a);
 	struct iphdr *iph;
@@ -263,8 +257,8 @@ static int tcf_nat_dump(struct sk_buff *skb, struct tc_action *a,
 
 		.index    = p->tcf_index,
 		.action   = p->tcf_action,
-		.refcnt   = refcount_read(&p->tcf_refcnt) - ref,
-		.bindcnt  = atomic_read(&p->tcf_bindcnt) - bind,
+		.refcnt   = p->tcf_refcnt - ref,
+		.bindcnt  = p->tcf_bindcnt - bind,
 	};
 	struct tcf_t t;
 
@@ -304,7 +298,7 @@ static struct tc_action_ops act_nat_ops = {
 	.kind		=	"nat",
 	.type		=	TCA_ACT_NAT,
 	.owner		=	THIS_MODULE,
-	.act		=	tcf_nat_act,
+	.act		=	tcf_nat,
 	.dump		=	tcf_nat_dump,
 	.init		=	tcf_nat_init,
 	.walk		=	tcf_nat_walker,

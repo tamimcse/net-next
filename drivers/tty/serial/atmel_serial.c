@@ -1757,6 +1757,7 @@ static int atmel_startup(struct uart_port *port)
 {
 	struct platform_device *pdev = to_platform_device(port->dev);
 	struct atmel_uart_port *atmel_port = to_atmel_uart_port(port);
+	struct tty_struct *tty = port->state->port.tty;
 	int retval;
 
 	/*
@@ -1771,8 +1772,8 @@ static int atmel_startup(struct uart_port *port)
 	 * Allocate the IRQ
 	 */
 	retval = request_irq(port->irq, atmel_interrupt,
-			     IRQF_SHARED | IRQF_COND_SUSPEND,
-			     dev_name(&pdev->dev), port);
+			IRQF_SHARED | IRQF_COND_SUSPEND,
+			tty ? tty->name : "atmel_serial", port);
 	if (retval) {
 		dev_err(port->dev, "atmel_startup - Can't get irq\n");
 		return retval;
@@ -2738,9 +2739,8 @@ static int atmel_serial_probe(struct platform_device *pdev)
 
 	if (!atmel_use_pdc_rx(&atmel_port->uart)) {
 		ret = -ENOMEM;
-		data = kmalloc_array(ATMEL_SERIAL_RINGSIZE,
-				     sizeof(struct atmel_uart_char),
-				     GFP_KERNEL);
+		data = kmalloc(sizeof(struct atmel_uart_char)
+				* ATMEL_SERIAL_RINGSIZE, GFP_KERNEL);
 		if (!data)
 			goto err_alloc_ring;
 		atmel_port->rx_ring.buf = data;

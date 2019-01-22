@@ -320,9 +320,9 @@ int btrfs_find_orphan_roots(struct btrfs_fs_info *fs_info)
 
 /* drop the root item for 'key' from the tree root */
 int btrfs_del_root(struct btrfs_trans_handle *trans,
-		   const struct btrfs_key *key)
+		   struct btrfs_fs_info *fs_info, const struct btrfs_key *key)
 {
-	struct btrfs_root *root = trans->fs_info->tree_root;
+	struct btrfs_root *root = fs_info->tree_root;
 	struct btrfs_path *path;
 	int ret;
 
@@ -341,12 +341,13 @@ out:
 	return ret;
 }
 
-int btrfs_del_root_ref(struct btrfs_trans_handle *trans, u64 root_id,
-		       u64 ref_id, u64 dirid, u64 *sequence, const char *name,
-		       int name_len)
+int btrfs_del_root_ref(struct btrfs_trans_handle *trans,
+		       struct btrfs_fs_info *fs_info,
+		       u64 root_id, u64 ref_id, u64 dirid, u64 *sequence,
+		       const char *name, int name_len)
 
 {
-	struct btrfs_root *tree_root = trans->fs_info->tree_root;
+	struct btrfs_root *tree_root = fs_info->tree_root;
 	struct btrfs_path *path;
 	struct btrfs_root_ref *ref;
 	struct extent_buffer *leaf;
@@ -412,11 +413,12 @@ out:
  *
  * Will return 0, -ENOMEM, or anything from the CoW path
  */
-int btrfs_add_root_ref(struct btrfs_trans_handle *trans, u64 root_id,
-		       u64 ref_id, u64 dirid, u64 sequence, const char *name,
-		       int name_len)
+int btrfs_add_root_ref(struct btrfs_trans_handle *trans,
+		       struct btrfs_fs_info *fs_info,
+		       u64 root_id, u64 ref_id, u64 dirid, u64 sequence,
+		       const char *name, int name_len)
 {
-	struct btrfs_root *tree_root = trans->fs_info->tree_root;
+	struct btrfs_root *tree_root = fs_info->tree_root;
 	struct btrfs_key key;
 	int ret;
 	struct btrfs_path *path;
@@ -483,9 +485,9 @@ void btrfs_update_root_times(struct btrfs_trans_handle *trans,
 			     struct btrfs_root *root)
 {
 	struct btrfs_root_item *item = &root->root_item;
-	struct timespec64 ct;
+	struct timespec ct;
 
-	ktime_get_real_ts64(&ct);
+	ktime_get_real_ts(&ct);
 	spin_lock(&root->root_item_lock);
 	btrfs_set_root_ctransid(item, trans->transid);
 	btrfs_set_stack_timespec_sec(&item->ctime, ct.tv_sec);

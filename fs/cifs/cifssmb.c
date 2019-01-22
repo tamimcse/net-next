@@ -106,12 +106,6 @@ cifs_mark_open_files_invalid(struct cifs_tcon *tcon)
 		open_file->oplock_break_cancelled = true;
 	}
 	spin_unlock(&tcon->open_file_lock);
-
-	mutex_lock(&tcon->crfid.fid_mutex);
-	tcon->crfid.is_valid = false;
-	memset(tcon->crfid.fid, 0, sizeof(struct cifs_fid));
-	mutex_unlock(&tcon->crfid.fid_mutex);
-
 	/*
 	 * BB Add call to invalidate_inodes(sb) for all superblocks mounted
 	 * to this tcon.
@@ -157,14 +151,8 @@ cifs_reconnect_tcon(struct cifs_tcon *tcon, int smb_command)
 	 * greater than cifs socket timeout which is 7 seconds
 	 */
 	while (server->tcpStatus == CifsNeedReconnect) {
-		rc = wait_event_interruptible_timeout(server->response_q,
-						      (server->tcpStatus != CifsNeedReconnect),
-						      10 * HZ);
-		if (rc < 0) {
-			cifs_dbg(FYI, "%s: aborting reconnect due to a received"
-				 " signal by the process\n", __func__);
-			return -ERESTARTSYS;
-		}
+		wait_event_interruptible_timeout(server->response_q,
+			(server->tcpStatus != CifsNeedReconnect), 10 * HZ);
 
 		/* are we still trying to reconnect? */
 		if (server->tcpStatus != CifsNeedReconnect)
@@ -508,13 +496,13 @@ decode_lanman_negprot_rsp(struct TCP_Server_Info *server, NEGOTIATE_RSP *pSMBr)
 		 * this requirement.
 		 */
 		int val, seconds, remain, result;
-		struct timespec64 ts;
-		time64_t utc = ktime_get_real_seconds();
+		struct timespec ts;
+		unsigned long utc = ktime_get_real_seconds();
 		ts = cnvrtDosUnixTm(rsp->SrvTime.Date,
 				    rsp->SrvTime.Time, 0);
-		cifs_dbg(FYI, "SrvTime %lld sec since 1970 (utc: %lld) diff: %lld\n",
-			 ts.tv_sec, utc,
-			 utc - ts.tv_sec);
+		cifs_dbg(FYI, "SrvTime %d sec since 1970 (utc: %d) diff: %d\n",
+			 (int)ts.tv_sec, (int)utc,
+			 (int)(utc - ts.tv_sec));
 		val = (int)(utc - ts.tv_sec);
 		seconds = abs(val);
 		result = (seconds / MIN_TZ_ADJ) * MIN_TZ_ADJ;
@@ -601,15 +589,10 @@ CIFSSMBNegotiate(const unsigned int xid, struct cifs_ses *ses)
 	}
 
 	count = 0;
-	/*
-	 * We know that all the name entries in the protocols array
-	 * are short (< 16 bytes anyway) and are NUL terminated.
-	 */
 	for (i = 0; i < CIFS_NUM_PROT; i++) {
-		size_t len = strlen(protocols[i].name) + 1;
-
-		memcpy(pSMB->DialectsArray+count, protocols[i].name, len);
-		count += len;
+		strncpy(pSMB->DialectsArray+count, protocols[i].name, 16);
+		count += strlen(protocols[i].name) + 1;
+		/* null at end of source and target buffers anyway */
 	}
 	inc_rfc1001_len(pSMB, count);
 	pSMB->ByteCount = cpu_to_le16(count);
@@ -1963,7 +1946,6 @@ cifs_writedata_release(struct kref *refcount)
 	if (wdata->cfile)
 		cifsFileInfo_put(wdata->cfile);
 
-	kvfree(wdata->pages);
 	kfree(wdata);
 }
 
@@ -2087,22 +2069,12 @@ cifs_writev_complete(struct work_struct *work)
 struct cifs_writedata *
 cifs_writedata_alloc(unsigned int nr_pages, work_func_t complete)
 {
-	struct page **pages =
-		kcalloc(nr_pages, sizeof(struct page *), GFP_NOFS);
-	if (pages)
-		return cifs_writedata_direct_alloc(pages, complete);
-
-	return NULL;
-}
-
-struct cifs_writedata *
-cifs_writedata_direct_alloc(struct page **pages, work_func_t complete)
-{
 	struct cifs_writedata *wdata;
 
-	wdata = kzalloc(sizeof(*wdata), GFP_NOFS);
+	/* writedata + number of page pointers */
+	wdata = kzalloc(sizeof(*wdata) +
+			sizeof(struct page *) * nr_pages, GFP_NOFS);
 	if (wdata != NULL) {
-		wdata->pages = pages;
 		kref_init(&wdata->refcount);
 		INIT_LIST_HEAD(&wdata->list);
 		init_completion(&wdata->done);
@@ -4087,7 +4059,7 @@ QInfRetry:
 	if (rc) {
 		cifs_dbg(FYI, "Send error in QueryInfo = %d\n", rc);
 	} else if (data) {
-		struct timespec64 ts;
+		struct timespec ts;
 		__u32 time = le32_to_cpu(pSMBr->last_write_time);
 
 		/* decode response */

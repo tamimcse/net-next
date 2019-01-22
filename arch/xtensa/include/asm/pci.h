@@ -20,6 +20,8 @@
 
 #define pcibios_assign_all_busses()	0
 
+extern struct pci_controller* pcibios_alloc_controller(void);
+
 /* Assume some values. (We should revise them, if necessary) */
 
 #define PCIBIOS_MIN_IO		0x2000
@@ -39,6 +41,8 @@
  * The networking and block device layers use this boolean for bounce buffer
  * decisions.
  */
+
+#define PCI_DMA_BUS_IS_PHYS	(1)
 
 /* Tell PCI code what kind of PCI resource mappings we support */
 #define HAVE_PCI_MMAP			1

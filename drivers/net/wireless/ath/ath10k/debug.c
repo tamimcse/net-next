@@ -987,13 +987,13 @@ static ssize_t ath10k_write_htt_max_amsdu_ampdu(struct file *file,
 {
 	struct ath10k *ar = file->private_data;
 	int res;
-	char buf[64] = {0};
+	char buf[64];
 	unsigned int amsdu, ampdu;
 
-	res = simple_write_to_buffer(buf, sizeof(buf) - 1, ppos,
-				     user_buf, count);
-	if (res <= 0)
-		return res;
+	simple_write_to_buffer(buf, sizeof(buf) - 1, ppos, user_buf, count);
+
+	/* make sure that buf is null terminated */
+	buf[sizeof(buf) - 1] = 0;
 
 	res = sscanf(buf, "%u %u", &amsdu, &ampdu);
 
@@ -1043,14 +1043,14 @@ static ssize_t ath10k_write_fw_dbglog(struct file *file,
 {
 	struct ath10k *ar = file->private_data;
 	int ret;
-	char buf[96] = {0};
+	char buf[96];
 	unsigned int log_level;
 	u64 mask;
 
-	ret = simple_write_to_buffer(buf, sizeof(buf) - 1, ppos,
-				     user_buf, count);
-	if (ret <= 0)
-		return ret;
+	simple_write_to_buffer(buf, sizeof(buf) - 1, ppos, user_buf, count);
+
+	/* make sure that buf is null terminated */
+	buf[sizeof(buf) - 1] = 0;
 
 	ret = sscanf(buf, "%llx %u", &mask, &log_level);
 
@@ -1519,13 +1519,7 @@ static void ath10k_tpc_stats_print(struct ath10k_tpc_stats *tpc_stats,
 	*len += scnprintf(buf + *len, buf_len - *len,
 			  "********************************\n");
 	*len += scnprintf(buf + *len, buf_len - *len,
-			  "No.  Preamble Rate_code ");
-
-	for (i = 0; i < WMI_TPC_TX_N_CHAIN; i++)
-		*len += scnprintf(buf + *len, buf_len - *len,
-				  "tpc_value%d ", i);
-
-	*len += scnprintf(buf + *len, buf_len - *len, "\n");
+			  "No.  Preamble Rate_code tpc_value1 tpc_value2 tpc_value3\n");
 
 	for (i = 0; i < tpc_stats->rate_max; i++) {
 		*len += scnprintf(buf + *len, buf_len - *len,
@@ -1727,9 +1721,7 @@ int ath10k_debug_start(struct ath10k *ar)
 			ath10k_warn(ar, "failed to disable pktlog: %d\n", ret);
 	}
 
-	if (ar->debug.nf_cal_period &&
-	    !test_bit(ATH10K_FW_FEATURE_NON_BMI,
-		      ar->normal_mode_fw.fw_file.fw_features)) {
+	if (ar->debug.nf_cal_period) {
 		ret = ath10k_wmi_pdev_set_param(ar,
 						ar->wmi.pdev_param->cal_period,
 						ar->debug.nf_cal_period);
@@ -1746,9 +1738,7 @@ void ath10k_debug_stop(struct ath10k *ar)
 {
 	lockdep_assert_held(&ar->conf_mutex);
 
-	if (!test_bit(ATH10K_FW_FEATURE_NON_BMI,
-		      ar->normal_mode_fw.fw_file.fw_features))
-		ath10k_debug_cal_data_fetch(ar);
+	ath10k_debug_cal_data_fetch(ar);
 
 	/* Must not use _sync to avoid deadlock, we do that in
 	 * ath10k_debug_destroy(). The check for htt_stats_mask is to avoid
@@ -2297,52 +2287,6 @@ static const struct file_operations fops_tpc_stats_final = {
 	.llseek = default_llseek,
 };
 
-static ssize_t ath10k_write_warm_hw_reset(struct file *file,
-					  const char __user *user_buf,
-					  size_t count, loff_t *ppos)
-{
-	struct ath10k *ar = file->private_data;
-	int ret;
-	bool val;
-
-	if (kstrtobool_from_user(user_buf, count, &val))
-		return -EFAULT;
-
-	if (!val)
-		return -EINVAL;
-
-	mutex_lock(&ar->conf_mutex);
-
-	if (ar->state != ATH10K_STATE_ON) {
-		ret = -ENETDOWN;
-		goto exit;
-	}
-
-	if (!(test_bit(WMI_SERVICE_RESET_CHIP, ar->wmi.svc_map)))
-		ath10k_warn(ar, "wmi service for reset chip is not available\n");
-
-	ret = ath10k_wmi_pdev_set_param(ar, ar->wmi.pdev_param->pdev_reset,
-					WMI_RST_MODE_WARM_RESET);
-
-	if (ret) {
-		ath10k_warn(ar, "failed to enable warm hw reset: %d\n", ret);
-		goto exit;
-	}
-
-	ret = count;
-
-exit:
-	mutex_unlock(&ar->conf_mutex);
-	return ret;
-}
-
-static const struct file_operations fops_warm_hw_reset = {
-	.write = ath10k_write_warm_hw_reset,
-	.open = simple_open,
-	.owner = THIS_MODULE,
-	.llseek = default_llseek,
-};
-
 int ath10k_debug_create(struct ath10k *ar)
 {
 	ar->debug.cal_data = vzalloc(ATH10K_DEBUG_CAL_DATA_LEN);
@@ -2417,17 +2361,14 @@ int ath10k_debug_register(struct ath10k *ar)
 	debugfs_create_file("fw_dbglog", 0600, ar->debug.debugfs_phy, ar,
 			    &fops_fw_dbglog);
 
-	if (!test_bit(ATH10K_FW_FEATURE_NON_BMI,
-		      ar->normal_mode_fw.fw_file.fw_features)) {
-		debugfs_create_file("cal_data", 0400, ar->debug.debugfs_phy, ar,
-				    &fops_cal_data);
-
-		debugfs_create_file("nf_cal_period", 0600, ar->debug.debugfs_phy, ar,
-				    &fops_nf_cal_period);
-	}
+	debugfs_create_file("cal_data", 0400, ar->debug.debugfs_phy, ar,
+			    &fops_cal_data);
 
 	debugfs_create_file("ani_enable", 0600, ar->debug.debugfs_phy, ar,
 			    &fops_ani_enable);
+
+	debugfs_create_file("nf_cal_period", 0600, ar->debug.debugfs_phy, ar,
+			    &fops_nf_cal_period);
 
 	if (IS_ENABLED(CONFIG_ATH10K_DFS_CERTIFIED)) {
 		debugfs_create_file("dfs_simulate_radar", 0200, ar->debug.debugfs_phy,
@@ -2470,9 +2411,6 @@ int ath10k_debug_register(struct ath10k *ar)
 		debugfs_create_file("tpc_stats_final", 0400,
 				    ar->debug.debugfs_phy, ar,
 				    &fops_tpc_stats_final);
-
-	debugfs_create_file("warm_hw_reset", 0600, ar->debug.debugfs_phy, ar,
-			    &fops_warm_hw_reset);
 
 	return 0;
 }

@@ -1,9 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0
-//
-// Renesas R-Car DVC support
-//
-// Copyright (C) 2014 Renesas Solutions Corp.
-// Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>
+/*
+ * Renesas R-Car DVC support
+ *
+ * Copyright (C) 2014 Renesas Solutions Corp.
+ * Kuninori Morimoto <kuninori.morimoto.gx@renesas.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
 
 /*
  * Playback Volume
@@ -340,7 +344,7 @@ int rsnd_dvc_probe(struct rsnd_priv *priv)
 		goto rsnd_dvc_probe_done;
 	}
 
-	dvc	= devm_kcalloc(dev, nr, sizeof(*dvc), GFP_KERNEL);
+	dvc	= devm_kzalloc(dev, sizeof(*dvc) * nr, GFP_KERNEL);
 	if (!dvc) {
 		ret = -ENOMEM;
 		goto rsnd_dvc_probe_done;

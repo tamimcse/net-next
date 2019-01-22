@@ -70,7 +70,8 @@ static void nes_process_mac_intr(struct nes_device *nesdev, u32 mac_number);
 static unsigned int nes_reset_adapter_ne020(struct nes_device *nesdev, u8 *OneG_Mode);
 static void nes_terminate_start_timer(struct nes_qp *nesqp);
 
-static const char *const nes_iwarp_state_str[] = {
+#ifdef CONFIG_INFINIBAND_NES_DEBUG
+static unsigned char *nes_iwarp_state_str[] = {
 	"Non-Existent",
 	"Idle",
 	"RTS",
@@ -81,7 +82,7 @@ static const char *const nes_iwarp_state_str[] = {
 	"RSVD2",
 };
 
-static const char *const nes_tcp_state_str[] = {
+static unsigned char *nes_tcp_state_str[] = {
 	"Non-Existent",
 	"Closed",
 	"Listen",
@@ -99,6 +100,7 @@ static const char *const nes_tcp_state_str[] = {
 	"RSVD3",
 	"RSVD4",
 };
+#endif
 
 static inline void print_ip(struct nes_cm_node *cm_node)
 {

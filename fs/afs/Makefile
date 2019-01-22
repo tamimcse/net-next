@@ -5,7 +5,7 @@
 
 afs-cache-$(CONFIG_AFS_FSCACHE) := cache.o
 
-kafs-y := \
+kafs-objs := \
 	$(afs-cache-y) \
 	addr_list.o \
 	callback.o \
@@ -21,6 +21,7 @@ kafs-y := \
 	main.o \
 	misc.o \
 	mntpt.o \
+	proc.o \
 	rotate.o \
 	rxrpc.o \
 	security.o \
@@ -33,5 +34,4 @@ kafs-y := \
 	write.o \
 	xattr.o
 
-kafs-$(CONFIG_PROC_FS) += proc.o
 obj-$(CONFIG_AFS_FS)  := kafs.o

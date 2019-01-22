@@ -271,7 +271,7 @@ struct reiserfs_journal_list {
 
 	struct mutex j_commit_mutex;
 	unsigned int j_trans_id;
-	time64_t j_timestamp; /* write-only but useful for crash dump analysis */
+	time_t j_timestamp;
 	struct reiserfs_list_bitmap *j_list_bitmap;
 	struct buffer_head *j_commit_bh;	/* commit buffer head */
 	struct reiserfs_journal_cnode *j_realblock;
@@ -331,7 +331,7 @@ struct reiserfs_journal {
 
 	struct buffer_head *j_header_bh;
 
-	time64_t j_trans_start_time;	/* time this transaction started */
+	time_t j_trans_start_time;	/* time this transaction started */
 	struct mutex j_mutex;
 	struct mutex j_flush_mutex;
 

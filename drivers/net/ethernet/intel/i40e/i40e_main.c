@@ -1800,7 +1800,6 @@ static void i40e_vsi_setup_queue_map(struct i40e_vsi *vsi,
 						       num_tc_qps);
 					break;
 				}
-				/* fall through */
 			case I40E_VSI_FDIR:
 			case I40E_VSI_SRIOV:
 			case I40E_VSI_VMDQ2:
@@ -2842,23 +2841,6 @@ static int i40e_vlan_rx_add_vid(struct net_device *netdev,
 }
 
 /**
- * i40e_vlan_rx_add_vid_up - Add a vlan id filter to HW offload in UP path
- * @netdev: network interface to be adjusted
- * @proto: unused protocol value
- * @vid: vlan id to be added
- **/
-static void i40e_vlan_rx_add_vid_up(struct net_device *netdev,
-				    __always_unused __be16 proto, u16 vid)
-{
-	struct i40e_netdev_priv *np = netdev_priv(netdev);
-	struct i40e_vsi *vsi = np->vsi;
-
-	if (vid >= VLAN_N_VID)
-		return;
-	set_bit(vid, vsi->active_vlans);
-}
-
-/**
  * i40e_vlan_rx_kill_vid - Remove a vlan id filter from HW offload
  * @netdev: network interface to be adjusted
  * @proto: unused protocol value
@@ -2900,8 +2882,8 @@ static void i40e_restore_vlan(struct i40e_vsi *vsi)
 		i40e_vlan_stripping_disable(vsi);
 
 	for_each_set_bit(vid, vsi->active_vlans, VLAN_N_VID)
-		i40e_vlan_rx_add_vid_up(vsi->netdev, htons(ETH_P_8021Q),
-					vid);
+		i40e_vlan_rx_add_vid(vsi->netdev, htons(ETH_P_8021Q),
+				     vid);
 }
 
 /**
@@ -5122,17 +5104,15 @@ static int i40e_vsi_configure_bw_alloc(struct i40e_vsi *vsi, u8 enabled_tc,
 				       u8 *bw_share)
 {
 	struct i40e_aqc_configure_vsi_tc_bw_data bw_data;
-	struct i40e_pf *pf = vsi->back;
 	i40e_status ret;
 	int i;
 
-	/* There is no need to reset BW when mqprio mode is on.  */
-	if (pf->flags & I40E_FLAG_TC_MQPRIO)
+	if (vsi->back->flags & I40E_FLAG_TC_MQPRIO)
 		return 0;
-	if (!vsi->mqprio_qopt.qopt.hw && !(pf->flags & I40E_FLAG_DCB_ENABLED)) {
+	if (!vsi->mqprio_qopt.qopt.hw) {
 		ret = i40e_set_bw_limit(vsi, vsi->seid, 0);
 		if (ret)
-			dev_info(&pf->pdev->dev,
+			dev_info(&vsi->back->pdev->dev,
 				 "Failed to reset tx rate for vsi->seid %u\n",
 				 vsi->seid);
 		return ret;
@@ -5141,11 +5121,12 @@ static int i40e_vsi_configure_bw_alloc(struct i40e_vsi *vsi, u8 enabled_tc,
 	for (i = 0; i < I40E_MAX_TRAFFIC_CLASS; i++)
 		bw_data.tc_bw_credits[i] = bw_share[i];
 
-	ret = i40e_aq_config_vsi_tc_bw(&pf->hw, vsi->seid, &bw_data, NULL);
+	ret = i40e_aq_config_vsi_tc_bw(&vsi->back->hw, vsi->seid, &bw_data,
+				       NULL);
 	if (ret) {
-		dev_info(&pf->pdev->dev,
+		dev_info(&vsi->back->pdev->dev,
 			 "AQ command Config VSI BW allocation per TC failed = %d\n",
-			 pf->hw.aq.asq_last_status);
+			 vsi->back->hw.aq.asq_last_status);
 		return -EINVAL;
 	}
 
@@ -6599,8 +6580,6 @@ static i40e_status i40e_force_link_state(struct i40e_pf *pf, bool is_up)
 	config.eee_capability = abilities.eee_capability;
 	config.eeer = abilities.eeer_val;
 	config.low_power_ctrl = abilities.d3_lpan;
-	config.fec_config = abilities.fec_cfg_curr_mod_ext_info &
-			    I40E_AQ_PHY_FEC_CONFIG_MASK;
 	err = i40e_aq_set_phy_config(hw, &config, NULL);
 
 	if (err) {
@@ -7526,7 +7505,7 @@ static int i40e_setup_tc_cls_flower(struct i40e_netdev_priv *np,
 	case TC_CLSFLOWER_STATS:
 		return -EOPNOTSUPP;
 	default:
-		return -EOPNOTSUPP;
+		return -EINVAL;
 	}
 }
 
@@ -7558,7 +7537,7 @@ static int i40e_setup_tc_block(struct net_device *dev,
 	switch (f->command) {
 	case TC_BLOCK_BIND:
 		return tcf_block_cb_register(f->block, i40e_setup_tc_block_cb,
-					     np, np, f->extack);
+					     np, np);
 	case TC_BLOCK_UNBIND:
 		tcf_block_cb_unregister(f->block, i40e_setup_tc_block_cb, np);
 		return 0;
@@ -10330,28 +10309,21 @@ static int i40e_init_msix(struct i40e_pf *pf)
 
 	/* any vectors left over go for VMDq support */
 	if (pf->flags & I40E_FLAG_VMDQ_ENABLED) {
+		int vmdq_vecs_wanted = pf->num_vmdq_vsis * pf->num_vmdq_qps;
+		int vmdq_vecs = min_t(int, vectors_left, vmdq_vecs_wanted);
+
 		if (!vectors_left) {
 			pf->num_vmdq_msix = 0;
 			pf->num_vmdq_qps = 0;
 		} else {
-			int vmdq_vecs_wanted =
-				pf->num_vmdq_vsis * pf->num_vmdq_qps;
-			int vmdq_vecs =
-				min_t(int, vectors_left, vmdq_vecs_wanted);
-
 			/* if we're short on vectors for what's desired, we limit
 			 * the queues per vmdq.  If this is still more than are
 			 * available, the user will need to change the number of
 			 * queues/vectors used by the PF later with the ethtool
 			 * channels command
 			 */
-			if (vectors_left < vmdq_vecs_wanted) {
+			if (vmdq_vecs < vmdq_vecs_wanted)
 				pf->num_vmdq_qps = 1;
-				vmdq_vecs_wanted = pf->num_vmdq_vsis;
-				vmdq_vecs = min_t(int,
-						  vectors_left,
-						  vmdq_vecs_wanted);
-			}
 			pf->num_vmdq_msix = pf->num_vmdq_qps;
 
 			v_budget += vmdq_vecs;
@@ -11845,6 +11817,7 @@ static int i40e_xdp(struct net_device *dev,
 	case XDP_SETUP_PROG:
 		return i40e_xdp_setup(vsi, xdp->prog);
 	case XDP_QUERY_PROG:
+		xdp->prog_attached = i40e_enabled_xdp_vsi(vsi);
 		xdp->prog_id = vsi->xdp_prog ? vsi->xdp_prog->aux->id : 0;
 		return 0;
 	default:
@@ -11886,6 +11859,7 @@ static const struct net_device_ops i40e_netdev_ops = {
 	.ndo_bridge_setlink	= i40e_ndo_bridge_setlink,
 	.ndo_bpf		= i40e_xdp,
 	.ndo_xdp_xmit		= i40e_xdp_xmit,
+	.ndo_xdp_flush		= i40e_xdp_flush,
 };
 
 /**
@@ -11981,7 +11955,7 @@ static int i40e_config_netdev(struct i40e_vsi *vsi)
 		snprintf(netdev->name, IFNAMSIZ, "%.*sv%%d",
 			 IFNAMSIZ - 4,
 			 pf->vsi[pf->lan_vsi]->netdev->name);
-		eth_random_addr(mac_addr);
+		random_ether_addr(mac_addr);
 
 		spin_lock_bh(&vsi->mac_filter_hash_lock);
 		i40e_add_mac_filter(vsi, mac_addr);
@@ -14357,6 +14331,12 @@ static void i40e_shutdown(struct pci_dev *pdev)
 
 	set_bit(__I40E_SUSPENDED, pf->state);
 	set_bit(__I40E_DOWN, pf->state);
+	rtnl_lock();
+	i40e_prep_for_reset(pf, true);
+	rtnl_unlock();
+
+	wr32(hw, I40E_PFPM_APM, (pf->wol_en ? I40E_PFPM_APM_APME_MASK : 0));
+	wr32(hw, I40E_PFPM_WUFC, (pf->wol_en ? I40E_PFPM_WUFC_MAG_MASK : 0));
 
 	del_timer_sync(&pf->service_timer);
 	cancel_work_sync(&pf->service_task);

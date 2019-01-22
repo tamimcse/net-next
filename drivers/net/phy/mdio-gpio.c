@@ -26,7 +26,10 @@
 #include <linux/platform_device.h>
 #include <linux/mdio-bitbang.h>
 #include <linux/mdio-gpio.h>
+#include <linux/gpio.h>
 #include <linux/gpio/consumer.h>
+
+#include <linux/of_gpio.h>
 #include <linux/of_mdio.h>
 
 struct mdio_gpio_info {
@@ -176,7 +179,11 @@ static int mdio_gpio_probe(struct platform_device *pdev)
 	if (!new_bus)
 		return -ENODEV;
 
-	ret = of_mdiobus_register(new_bus, pdev->dev.of_node);
+	if (pdev->dev.of_node)
+		ret = of_mdiobus_register(new_bus, pdev->dev.of_node);
+	else
+		ret = mdiobus_register(new_bus);
+
 	if (ret)
 		mdio_gpio_bus_deinit(&pdev->dev);
 

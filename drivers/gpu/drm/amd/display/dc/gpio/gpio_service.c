@@ -98,8 +98,7 @@ struct gpio_service *dal_gpio_service_create(
 			if (number_of_bits) {
 				uint32_t index_of_uint = 0;
 
-				slot = kcalloc(number_of_uints,
-					       sizeof(uint32_t),
+				slot = kzalloc(number_of_uints * sizeof(uint32_t),
 					       GFP_KERNEL);
 
 				if (!slot) {
@@ -375,7 +374,6 @@ struct gpio *dal_gpio_create_irq(
 	case GPIO_ID_GPIO_PAD:
 	break;
 	default:
-		id = GPIO_ID_HPD;
 		ASSERT_CRITICAL(false);
 		return NULL;
 	}

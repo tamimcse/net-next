@@ -425,23 +425,36 @@ static const struct ieee80211_regdomain *
 reg_copy_regd(const struct ieee80211_regdomain *src_regd)
 {
 	struct ieee80211_regdomain *regd;
-	int size_of_regd;
+	int size_of_regd, size_of_wmms;
 	unsigned int i;
+	struct ieee80211_wmm_rule *d_wmm, *s_wmm;
 
 	size_of_regd =
 		sizeof(struct ieee80211_regdomain) +
 		src_regd->n_reg_rules * sizeof(struct ieee80211_reg_rule);
+	size_of_wmms = src_regd->n_wmm_rules *
+		sizeof(struct ieee80211_wmm_rule);
 
-	regd = kzalloc(size_of_regd, GFP_KERNEL);
+	regd = kzalloc(size_of_regd + size_of_wmms, GFP_KERNEL);
 	if (!regd)
 		return ERR_PTR(-ENOMEM);
 
 	memcpy(regd, src_regd, sizeof(struct ieee80211_regdomain));
 
-	for (i = 0; i < src_regd->n_reg_rules; i++)
+	d_wmm = (struct ieee80211_wmm_rule *)((u8 *)regd + size_of_regd);
+	s_wmm = (struct ieee80211_wmm_rule *)((u8 *)src_regd + size_of_regd);
+	memcpy(d_wmm, s_wmm, size_of_wmms);
+
+	for (i = 0; i < src_regd->n_reg_rules; i++) {
 		memcpy(&regd->reg_rules[i], &src_regd->reg_rules[i],
 		       sizeof(struct ieee80211_reg_rule));
+		if (!src_regd->reg_rules[i].wmm_rule)
+			continue;
 
+		regd->reg_rules[i].wmm_rule = d_wmm +
+			(src_regd->reg_rules[i].wmm_rule - s_wmm) /
+			sizeof(struct ieee80211_wmm_rule);
+	}
 	return regd;
 }
 
@@ -847,10 +860,9 @@ static bool valid_regdb(const u8 *data, unsigned int size)
 	return true;
 }
 
-static void set_wmm_rule(struct ieee80211_reg_rule *rrule,
+static void set_wmm_rule(struct ieee80211_wmm_rule *rule,
 			 struct fwdb_wmm_rule *wmm)
 {
-	struct ieee80211_wmm_rule *rule = &rrule->wmm_rule;
 	unsigned int i;
 
 	for (i = 0; i < IEEE80211_NUM_ACS; i++) {
@@ -864,13 +876,11 @@ static void set_wmm_rule(struct ieee80211_reg_rule *rrule,
 		rule->ap[i].aifsn = wmm->ap[i].aifsn;
 		rule->ap[i].cot = 1000 * be16_to_cpu(wmm->ap[i].cot);
 	}
-
-	rrule->has_wmm = true;
 }
 
 static int __regdb_query_wmm(const struct fwdb_header *db,
 			     const struct fwdb_country *country, int freq,
-			     struct ieee80211_reg_rule *rule)
+			     u32 *dbptr, struct ieee80211_wmm_rule *rule)
 {
 	unsigned int ptr = be16_to_cpu(country->coll_ptr) << 2;
 	struct fwdb_collection *coll = (void *)((u8 *)db + ptr);
@@ -891,6 +901,8 @@ static int __regdb_query_wmm(const struct fwdb_header *db,
 			wmm_ptr = be16_to_cpu(rrule->wmm_ptr) << 2;
 			wmm = (void *)((u8 *)db + wmm_ptr);
 			set_wmm_rule(rule, wmm);
+			if (dbptr)
+				*dbptr = wmm_ptr;
 			return 0;
 		}
 	}
@@ -898,13 +910,11 @@ static int __regdb_query_wmm(const struct fwdb_header *db,
 	return -ENODATA;
 }
 
-int reg_query_regdb_wmm(char *alpha2, int freq, struct ieee80211_reg_rule *rule)
+int reg_query_regdb_wmm(char *alpha2, int freq, u32 *dbptr,
+			struct ieee80211_wmm_rule *rule)
 {
 	const struct fwdb_header *hdr = regdb;
 	const struct fwdb_country *country;
-
-	if (!regdb)
-		return -ENODATA;
 
 	if (IS_ERR(regdb))
 		return PTR_ERR(regdb);
@@ -912,7 +922,8 @@ int reg_query_regdb_wmm(char *alpha2, int freq, struct ieee80211_reg_rule *rule)
 	country = &hdr->country[0];
 	while (country->coll_ptr) {
 		if (alpha2_equal(alpha2, country->alpha2))
-			return __regdb_query_wmm(regdb, country, freq, rule);
+			return __regdb_query_wmm(regdb, country, freq, dbptr,
+						 rule);
 
 		country++;
 	}
@@ -921,13 +932,32 @@ int reg_query_regdb_wmm(char *alpha2, int freq, struct ieee80211_reg_rule *rule)
 }
 EXPORT_SYMBOL(reg_query_regdb_wmm);
 
+struct wmm_ptrs {
+	struct ieee80211_wmm_rule *rule;
+	u32 ptr;
+};
+
+static struct ieee80211_wmm_rule *find_wmm_ptr(struct wmm_ptrs *wmm_ptrs,
+					       u32 wmm_ptr, int n_wmms)
+{
+	int i;
+
+	for (i = 0; i < n_wmms; i++) {
+		if (wmm_ptrs[i].ptr == wmm_ptr)
+			return wmm_ptrs[i].rule;
+	}
+	return NULL;
+}
+
 static int regdb_query_country(const struct fwdb_header *db,
 			       const struct fwdb_country *country)
 {
 	unsigned int ptr = be16_to_cpu(country->coll_ptr) << 2;
 	struct fwdb_collection *coll = (void *)((u8 *)db + ptr);
 	struct ieee80211_regdomain *regdom;
-	unsigned int size_of_regd, i;
+	struct ieee80211_regdomain *tmp_rd;
+	unsigned int size_of_regd, i, n_wmms = 0;
+	struct wmm_ptrs *wmm_ptrs;
 
 	size_of_regd = sizeof(struct ieee80211_regdomain) +
 		coll->n_rules * sizeof(struct ieee80211_reg_rule);
@@ -935,6 +965,12 @@ static int regdb_query_country(const struct fwdb_header *db,
 	regdom = kzalloc(size_of_regd, GFP_KERNEL);
 	if (!regdom)
 		return -ENOMEM;
+
+	wmm_ptrs = kcalloc(coll->n_rules, sizeof(*wmm_ptrs), GFP_KERNEL);
+	if (!wmm_ptrs) {
+		kfree(regdom);
+		return -ENOMEM;
+	}
 
 	regdom->n_reg_rules = coll->n_rules;
 	regdom->alpha2[0] = country->alpha2[0];
@@ -974,11 +1010,36 @@ static int regdb_query_country(const struct fwdb_header *db,
 				1000 * be16_to_cpu(rule->cac_timeout);
 		if (rule->len >= offsetofend(struct fwdb_rule, wmm_ptr)) {
 			u32 wmm_ptr = be16_to_cpu(rule->wmm_ptr) << 2;
-			struct fwdb_wmm_rule *wmm = (void *)((u8 *)db + wmm_ptr);
+			struct ieee80211_wmm_rule *wmm_pos =
+				find_wmm_ptr(wmm_ptrs, wmm_ptr, n_wmms);
+			struct fwdb_wmm_rule *wmm;
+			struct ieee80211_wmm_rule *wmm_rule;
 
-			set_wmm_rule(rrule, wmm);
+			if (wmm_pos) {
+				rrule->wmm_rule = wmm_pos;
+				continue;
+			}
+			wmm = (void *)((u8 *)db + wmm_ptr);
+			tmp_rd = krealloc(regdom, size_of_regd + (n_wmms + 1) *
+					  sizeof(struct ieee80211_wmm_rule),
+					  GFP_KERNEL);
+
+			if (!tmp_rd) {
+				kfree(regdom);
+				return -ENOMEM;
+			}
+			regdom = tmp_rd;
+
+			wmm_rule = (struct ieee80211_wmm_rule *)
+				((u8 *)regdom + size_of_regd + n_wmms *
+				sizeof(struct ieee80211_wmm_rule));
+
+			set_wmm_rule(wmm_rule, wmm);
+			wmm_ptrs[n_wmms].ptr = wmm_ptr;
+			wmm_ptrs[n_wmms++].rule = wmm_rule;
 		}
 	}
+	kfree(wmm_ptrs);
 
 	return reg_schedule_apply(regdom);
 }
@@ -1591,7 +1652,7 @@ const char *reg_initiator_name(enum nl80211_reg_initiator initiator)
 	case NL80211_REGDOM_SET_BY_DRIVER:
 		return "driver";
 	case NL80211_REGDOM_SET_BY_COUNTRY_IE:
-		return "country element";
+		return "country IE";
 	default:
 		WARN_ON(1);
 		return "bug";
@@ -2175,9 +2236,7 @@ static void wiphy_update_regulatory(struct wiphy *wiphy,
 		 * as some drivers used this to restore its orig_* reg domain.
 		 */
 		if (initiator == NL80211_REGDOM_SET_BY_CORE &&
-		    wiphy->regulatory_flags & REGULATORY_CUSTOM_REG &&
-		    !(wiphy->regulatory_flags &
-		      REGULATORY_WIPHY_SELF_MANAGED))
+		    wiphy->regulatory_flags & REGULATORY_CUSTOM_REG)
 			reg_call_notifier(wiphy, lr);
 		return;
 	}
@@ -2559,7 +2618,7 @@ reg_process_hint_country_ie(struct wiphy *wiphy,
 		 * This doesn't happen yet, not sure we
 		 * ever want to support it for this case.
 		 */
-		WARN_ONCE(1, "Unexpected intersection for country elements");
+		WARN_ONCE(1, "Unexpected intersection for country IEs");
 		return REG_REQ_IGNORE;
 	}
 
@@ -2709,19 +2768,24 @@ out_free:
 	reg_free_request(reg_request);
 }
 
-static void notify_self_managed_wiphys(struct regulatory_request *request)
+static bool reg_only_self_managed_wiphys(void)
 {
 	struct cfg80211_registered_device *rdev;
 	struct wiphy *wiphy;
+	bool self_managed_found = false;
+
+	ASSERT_RTNL();
 
 	list_for_each_entry(rdev, &cfg80211_rdev_list, list) {
 		wiphy = &rdev->wiphy;
-		if (wiphy->regulatory_flags & REGULATORY_WIPHY_SELF_MANAGED &&
-		    request->initiator == NL80211_REGDOM_SET_BY_USER &&
-		    request->user_reg_hint_type ==
-				NL80211_USER_REG_HINT_CELL_BASE)
-			reg_call_notifier(wiphy, request);
+		if (wiphy->regulatory_flags & REGULATORY_WIPHY_SELF_MANAGED)
+			self_managed_found = true;
+		else
+			return false;
 	}
+
+	/* make sure at least one self-managed wiphy exists */
+	return self_managed_found;
 }
 
 /*
@@ -2755,7 +2819,10 @@ static void reg_process_pending_hints(void)
 
 	spin_unlock(&reg_requests_lock);
 
-	notify_self_managed_wiphys(reg_request);
+	if (reg_only_self_managed_wiphys()) {
+		reg_free_request(reg_request);
+		return;
+	}
 
 	reg_process_hint(reg_request);
 
@@ -3316,7 +3383,7 @@ bool reg_supported_dfs_region(enum nl80211_dfs_regions dfs_region)
 	case NL80211_DFS_JP:
 		return true;
 	default:
-		pr_debug("Ignoring unknown DFS master region: %d\n", dfs_region);
+		pr_debug("Ignoring uknown DFS master region: %d\n", dfs_region);
 		return false;
 	}
 }
@@ -3631,26 +3698,17 @@ EXPORT_SYMBOL(regulatory_set_wiphy_regd_sync_rtnl);
 
 void wiphy_regulatory_register(struct wiphy *wiphy)
 {
-	struct regulatory_request *lr = get_last_request();
+	struct regulatory_request *lr;
 
-	/* self-managed devices ignore beacon hints and country IE */
-	if (wiphy->regulatory_flags & REGULATORY_WIPHY_SELF_MANAGED) {
+	/* self-managed devices ignore external hints */
+	if (wiphy->regulatory_flags & REGULATORY_WIPHY_SELF_MANAGED)
 		wiphy->regulatory_flags |= REGULATORY_DISABLE_BEACON_HINTS |
 					   REGULATORY_COUNTRY_IE_IGNORE;
-
-		/*
-		 * The last request may have been received before this
-		 * registration call. Call the driver notifier if
-		 * initiator is USER and user type is CELL_BASE.
-		 */
-		if (lr->initiator == NL80211_REGDOM_SET_BY_USER &&
-		    lr->user_reg_hint_type == NL80211_USER_REG_HINT_CELL_BASE)
-			reg_call_notifier(wiphy, lr);
-	}
 
 	if (!reg_dev_ignore_cell_hint(wiphy))
 		reg_num_devs_support_basehint++;
 
+	lr = get_last_request();
 	wiphy_update_regulatory(wiphy, lr->initiator);
 	wiphy_all_share_dfs_chan_state(wiphy);
 }

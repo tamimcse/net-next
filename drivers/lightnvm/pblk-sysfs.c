@@ -173,8 +173,6 @@ static ssize_t pblk_sysfs_lines(struct pblk *pblk, char *page)
 	int free_line_cnt = 0, closed_line_cnt = 0, emeta_line_cnt = 0;
 	int d_line_cnt = 0, l_line_cnt = 0;
 	int gc_full = 0, gc_high = 0, gc_mid = 0, gc_low = 0, gc_empty = 0;
-	int gc_werr = 0;
-
 	int bad = 0, cor = 0;
 	int msecs = 0, cur_sec = 0, vsc = 0, sec_in_line = 0;
 	int map_weight = 0, meta_weight = 0;
@@ -239,15 +237,6 @@ static ssize_t pblk_sysfs_lines(struct pblk *pblk, char *page)
 		gc_empty++;
 	}
 
-	list_for_each_entry(line, &l_mg->gc_werr_list, list) {
-		if (line->type == PBLK_LINETYPE_DATA)
-			d_line_cnt++;
-		else if (line->type == PBLK_LINETYPE_LOG)
-			l_line_cnt++;
-		closed_line_cnt++;
-		gc_werr++;
-	}
-
 	list_for_each_entry(line, &l_mg->bad_list, list)
 		bad++;
 	list_for_each_entry(line, &l_mg->corrupt_list, list)
@@ -268,7 +257,7 @@ static ssize_t pblk_sysfs_lines(struct pblk *pblk, char *page)
 	spin_unlock(&l_mg->free_lock);
 
 	if (nr_free_lines != free_line_cnt)
-		pblk_err(pblk, "corrupted free line list:%d/%d\n",
+		pr_err("pblk: corrupted free line list:%d/%d\n",
 						nr_free_lines, free_line_cnt);
 
 	sz = snprintf(page, PAGE_SIZE - sz,
@@ -286,8 +275,8 @@ static ssize_t pblk_sysfs_lines(struct pblk *pblk, char *page)
 					l_mg->nr_lines);
 
 	sz += snprintf(page + sz, PAGE_SIZE - sz,
-		"GC: full:%d, high:%d, mid:%d, low:%d, empty:%d, werr: %d, queue:%d\n",
-			gc_full, gc_high, gc_mid, gc_low, gc_empty, gc_werr,
+		"GC: full:%d, high:%d, mid:%d, low:%d, empty:%d, queue:%d\n",
+			gc_full, gc_high, gc_mid, gc_low, gc_empty,
 			atomic_read(&pblk->gc.read_inflight_gc));
 
 	sz += snprintf(page + sz, PAGE_SIZE - sz,
@@ -421,7 +410,7 @@ static ssize_t pblk_sysfs_get_padding_dist(struct pblk *pblk, char *page)
 	return sz;
 }
 
-#ifdef CONFIG_NVM_PBLK_DEBUG
+#ifdef CONFIG_NVM_DEBUG
 static ssize_t pblk_sysfs_stats_debug(struct pblk *pblk, char *page)
 {
 	return snprintf(page, PAGE_SIZE,
@@ -598,7 +587,7 @@ static struct attribute sys_padding_dist = {
 	.mode = 0644,
 };
 
-#ifdef CONFIG_NVM_PBLK_DEBUG
+#ifdef CONFIG_NVM_DEBUG
 static struct attribute sys_stats_debug_attr = {
 	.name = "stats",
 	.mode = 0444,
@@ -619,7 +608,7 @@ static struct attribute *pblk_attrs[] = {
 	&sys_write_amp_mileage,
 	&sys_write_amp_trip,
 	&sys_padding_dist,
-#ifdef CONFIG_NVM_PBLK_DEBUG
+#ifdef CONFIG_NVM_DEBUG
 	&sys_stats_debug_attr,
 #endif
 	NULL,
@@ -654,7 +643,7 @@ static ssize_t pblk_sysfs_show(struct kobject *kobj, struct attribute *attr,
 		return pblk_sysfs_get_write_amp_trip(pblk, buf);
 	else if (strcmp(attr->name, "padding_dist") == 0)
 		return pblk_sysfs_get_padding_dist(pblk, buf);
-#ifdef CONFIG_NVM_PBLK_DEBUG
+#ifdef CONFIG_NVM_DEBUG
 	else if (strcmp(attr->name, "stats") == 0)
 		return pblk_sysfs_stats_debug(pblk, buf);
 #endif
@@ -697,7 +686,8 @@ int pblk_sysfs_init(struct gendisk *tdisk)
 					kobject_get(&parent_dev->kobj),
 					"%s", "pblk");
 	if (ret) {
-		pblk_err(pblk, "could not register\n");
+		pr_err("pblk: could not register %s/pblk\n",
+						tdisk->disk_name);
 		return ret;
 	}
 

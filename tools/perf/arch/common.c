@@ -189,7 +189,7 @@ out_error:
 	return -1;
 }
 
-int perf_env__lookup_objdump(struct perf_env *env, const char **path)
+int perf_env__lookup_objdump(struct perf_env *env)
 {
 	/*
 	 * For live mode, env->arch will be NULL and we can use
@@ -198,5 +198,5 @@ int perf_env__lookup_objdump(struct perf_env *env, const char **path)
 	if (env->arch == NULL)
 		return 0;
 
-	return perf_env__lookup_binutils_path(env, "objdump", path);
+	return perf_env__lookup_binutils_path(env, "objdump", &objdump_path);
 }

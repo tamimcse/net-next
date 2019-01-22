@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /**
  * xhci-dbgtty.c - tty glue for xHCI debug capability
  *

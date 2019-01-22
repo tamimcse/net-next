@@ -13,34 +13,12 @@
  */
 
 #include "mtk_eth_soc.h"
-#include "ethtool.h"
 
-struct mtk_stat {
-	char name[ETH_GSTRING_LEN];
-	unsigned int idx;
+static const char mtk_gdma_str[][ETH_GSTRING_LEN] = {
+#define _FE(x...)	# x,
+MTK_STAT_REG_DECLARE
+#undef _FE
 };
-
-#define MTK_HW_STAT(stat) { \
-	.name = #stat, \
-	.idx = offsetof(struct mtk_hw_stats, stat) / sizeof(u64) \
-}
-
-static const struct mtk_stat mtk_ethtool_hw_stats[] = {
-	MTK_HW_STAT(tx_bytes),
-	MTK_HW_STAT(tx_packets),
-	MTK_HW_STAT(tx_skip),
-	MTK_HW_STAT(tx_collisions),
-	MTK_HW_STAT(rx_bytes),
-	MTK_HW_STAT(rx_packets),
-	MTK_HW_STAT(rx_overflow),
-	MTK_HW_STAT(rx_fcs_errors),
-	MTK_HW_STAT(rx_short_errors),
-	MTK_HW_STAT(rx_long_errors),
-	MTK_HW_STAT(rx_checksum_errors),
-	MTK_HW_STAT(rx_flow_control_packets),
-};
-
-#define MTK_HW_STATS_LEN	ARRAY_SIZE(mtk_ethtool_hw_stats)
 
 static int mtk_get_link_ksettings(struct net_device *dev,
 				  struct ethtool_link_ksettings *cmd)
@@ -74,8 +52,7 @@ static int mtk_set_link_ksettings(struct net_device *dev,
 			mac->phy_dev = mac->hw->phy->phy[cmd->base.phy_address];
 			mac->phy_flags = MTK_PHY_FLAG_PORT;
 		} else if (mac->hw->mii_bus) {
-			mac->phy_dev = mdiobus_get_phy(mac->hw->mii_bus,
-						       cmd->base.phy_address);
+			mac->phy_dev = mdiobus_get_phy(mac->hw->mii_bus, cmd->base.phy_address);
 			if (!mac->phy_dev)
 				return -ENODEV;
 			mac->phy_flags = MTK_PHY_FLAG_ATTACH;
@@ -85,6 +62,7 @@ static int mtk_set_link_ksettings(struct net_device *dev,
 	}
 
 	return phy_ethtool_ksettings_set(mac->phy_dev, cmd);
+
 }
 
 static void mtk_get_drvinfo(struct net_device *dev,
@@ -97,7 +75,7 @@ static void mtk_get_drvinfo(struct net_device *dev,
 	strlcpy(info->bus_info, dev_name(mac->hw->dev), sizeof(info->bus_info));
 
 	if (soc->reg_table[MTK_REG_MTK_COUNTER_BASE])
-		info->n_stats = MTK_HW_STATS_LEN;
+		info->n_stats = ARRAY_SIZE(mtk_gdma_str);
 }
 
 static u32 mtk_get_msglevel(struct net_device *dev)
@@ -176,15 +154,9 @@ static void mtk_get_ringparam(struct net_device *dev,
 
 static void mtk_get_strings(struct net_device *dev, u32 stringset, u8 *data)
 {
-	int i;
-
 	switch (stringset) {
 	case ETH_SS_STATS:
-		for (i = 0; i < MTK_HW_STATS_LEN; i++) {
-			memcpy(data, mtk_ethtool_hw_stats[i].name,
-			       ETH_GSTRING_LEN);
-			data += ETH_GSTRING_LEN;
-		}
+		memcpy(data, *mtk_gdma_str, sizeof(mtk_gdma_str));
 		break;
 	}
 }
@@ -193,7 +165,7 @@ static int mtk_get_sset_count(struct net_device *dev, int sset)
 {
 	switch (sset) {
 	case ETH_SS_STATS:
-		return MTK_HW_STATS_LEN;
+		return ARRAY_SIZE(mtk_gdma_str);
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -204,6 +176,7 @@ static void mtk_get_ethtool_stats(struct net_device *dev,
 {
 	struct mtk_mac *mac = netdev_priv(dev);
 	struct mtk_hw_stats *hwstats = mac->hw_stats;
+	u64 *data_src, *data_dst;
 	unsigned int start;
 	int i;
 
@@ -215,9 +188,12 @@ static void mtk_get_ethtool_stats(struct net_device *dev,
 	}
 
 	do {
+		data_src = &hwstats->tx_bytes;
+		data_dst = data;
 		start = u64_stats_fetch_begin_irq(&hwstats->syncp);
-		for (i = 0; i < MTK_HW_STATS_LEN; i++)
-			data[i] = ((u64 *)hwstats)[mtk_ethtool_hw_stats[i].idx];
+
+		for (i = 0; i < ARRAY_SIZE(mtk_gdma_str); i++)
+			*data_dst++ = *data_src++;
 
 	} while (u64_stats_fetch_retry_irq(&hwstats->syncp, start));
 }

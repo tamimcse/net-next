@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Device Tree Source for the SILK board
  *
  * Copyright (C) 2014 Renesas Electronics Corporation
  * Copyright (C) 2014-2015 Renesas Solutions Corp.
  * Copyright (C) 2014-2015 Cogent Embedded, Inc.
+ *
+ * This file is licensed under the terms of the GNU General Public License
+ * version 2.  This program is licensed "as is" without any warranty of any
+ * kind, whether express or implied.
  */
 
 /*
@@ -472,6 +475,9 @@
 	pinctrl-names = "default";
 
 	port {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
 		vin0ep: endpoint {
 			remote-endpoint = <&adv7180>;
 			bus-width = <8>;
@@ -532,11 +538,6 @@
 			capture  = <&ssi1>;
 		};
 	};
-};
-
-&rwdt {
-	timeout-sec = <60>;
-	status = "okay";
 };
 
 &ssi1 {

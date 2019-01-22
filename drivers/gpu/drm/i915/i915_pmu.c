@@ -1,13 +1,33 @@
 /*
- * SPDX-License-Identifier: MIT
+ * Copyright © 2017 Intel Corporation
  *
- * Copyright © 2017-2018 Intel Corporation
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice (including the next
+ * paragraph) shall be included in all copies or substantial portions of the
+ * Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+ * IN THE SOFTWARE.
+ *
  */
 
-#include <linux/irq.h>
+#include <linux/perf_event.h>
+#include <linux/pm_runtime.h>
+
+#include "i915_drv.h"
 #include "i915_pmu.h"
 #include "intel_ringbuffer.h"
-#include "i915_drv.h"
 
 /* Frequency for the sampling timer for events which need it. */
 #define FREQUENCY 200
@@ -128,7 +148,6 @@ static void __i915_pmu_maybe_start_timer(struct drm_i915_private *i915)
 {
 	if (!i915->pmu.timer_enabled && pmu_needs_timer(i915, true)) {
 		i915->pmu.timer_enabled = true;
-		i915->pmu.timer_last = ktime_get();
 		hrtimer_start_range_ns(&i915->pmu.timer,
 				       ns_to_ktime(PERIOD), 0,
 				       HRTIMER_MODE_REL_PINNED);
@@ -157,13 +176,12 @@ static bool grab_forcewake(struct drm_i915_private *i915, bool fw)
 }
 
 static void
-add_sample(struct i915_pmu_sample *sample, u32 val)
+update_sample(struct i915_pmu_sample *sample, u32 unit, u32 val)
 {
-	sample->cur += val;
+	sample->cur += mul_u32_u32(val, unit);
 }
 
-static void
-engines_sample(struct drm_i915_private *dev_priv, unsigned int period_ns)
+static void engines_sample(struct drm_i915_private *dev_priv)
 {
 	struct intel_engine_cs *engine;
 	enum intel_engine_id id;
@@ -185,9 +203,8 @@ engines_sample(struct drm_i915_private *dev_priv, unsigned int period_ns)
 
 		val = !i915_seqno_passed(current_seqno, last_seqno);
 
-		if (val)
-			add_sample(&engine->pmu.sample[I915_SAMPLE_BUSY],
-				   period_ns);
+		update_sample(&engine->pmu.sample[I915_SAMPLE_BUSY],
+			      PERIOD, val);
 
 		if (val && (engine->pmu.enable &
 		    (BIT(I915_SAMPLE_WAIT) | BIT(I915_SAMPLE_SEMA)))) {
@@ -198,13 +215,11 @@ engines_sample(struct drm_i915_private *dev_priv, unsigned int period_ns)
 			val = 0;
 		}
 
-		if (val & RING_WAIT)
-			add_sample(&engine->pmu.sample[I915_SAMPLE_WAIT],
-				   period_ns);
+		update_sample(&engine->pmu.sample[I915_SAMPLE_WAIT],
+			      PERIOD, !!(val & RING_WAIT));
 
-		if (val & RING_WAIT_SEMAPHORE)
-			add_sample(&engine->pmu.sample[I915_SAMPLE_SEMA],
-				   period_ns);
+		update_sample(&engine->pmu.sample[I915_SAMPLE_SEMA],
+			      PERIOD, !!(val & RING_WAIT_SEMAPHORE));
 	}
 
 	if (fw)
@@ -213,14 +228,7 @@ engines_sample(struct drm_i915_private *dev_priv, unsigned int period_ns)
 	intel_runtime_pm_put(dev_priv);
 }
 
-static void
-add_sample_mult(struct i915_pmu_sample *sample, u32 val, u32 mul)
-{
-	sample->cur += mul_u32_u32(val, mul);
-}
-
-static void
-frequency_sample(struct drm_i915_private *dev_priv, unsigned int period_ns)
+static void frequency_sample(struct drm_i915_private *dev_priv)
 {
 	if (dev_priv->pmu.enable &
 	    config_enabled_mask(I915_PMU_ACTUAL_FREQUENCY)) {
@@ -234,17 +242,15 @@ frequency_sample(struct drm_i915_private *dev_priv, unsigned int period_ns)
 			intel_runtime_pm_put(dev_priv);
 		}
 
-		add_sample_mult(&dev_priv->pmu.sample[__I915_SAMPLE_FREQ_ACT],
-				intel_gpu_freq(dev_priv, val),
-				period_ns / 1000);
+		update_sample(&dev_priv->pmu.sample[__I915_SAMPLE_FREQ_ACT],
+			      1, intel_gpu_freq(dev_priv, val));
 	}
 
 	if (dev_priv->pmu.enable &
 	    config_enabled_mask(I915_PMU_REQUESTED_FREQUENCY)) {
-		add_sample_mult(&dev_priv->pmu.sample[__I915_SAMPLE_FREQ_REQ],
-				intel_gpu_freq(dev_priv,
-					       dev_priv->gt_pm.rps.cur_freq),
-				period_ns / 1000);
+		update_sample(&dev_priv->pmu.sample[__I915_SAMPLE_FREQ_REQ], 1,
+			      intel_gpu_freq(dev_priv,
+					     dev_priv->gt_pm.rps.cur_freq));
 	}
 }
 
@@ -252,27 +258,14 @@ static enum hrtimer_restart i915_sample(struct hrtimer *hrtimer)
 {
 	struct drm_i915_private *i915 =
 		container_of(hrtimer, struct drm_i915_private, pmu.timer);
-	unsigned int period_ns;
-	ktime_t now;
 
 	if (!READ_ONCE(i915->pmu.timer_enabled))
 		return HRTIMER_NORESTART;
 
-	now = ktime_get();
-	period_ns = ktime_to_ns(ktime_sub(now, i915->pmu.timer_last));
-	i915->pmu.timer_last = now;
+	engines_sample(i915);
+	frequency_sample(i915);
 
-	/*
-	 * Strictly speaking the passed in period may not be 100% accurate for
-	 * all internal calculation, since some amount of time can be spent on
-	 * grabbing the forcewake. However the potential error from timer call-
-	 * back delay greatly dominates this so we keep it simple.
-	 */
-	engines_sample(i915, period_ns);
-	frequency_sample(i915, period_ns);
-
-	hrtimer_forward(hrtimer, now, ns_to_ktime(PERIOD));
-
+	hrtimer_forward_now(hrtimer, ns_to_ktime(PERIOD));
 	return HRTIMER_RESTART;
 }
 
@@ -547,12 +540,12 @@ static u64 __i915_pmu_event_read(struct perf_event *event)
 		case I915_PMU_ACTUAL_FREQUENCY:
 			val =
 			   div_u64(i915->pmu.sample[__I915_SAMPLE_FREQ_ACT].cur,
-				   USEC_PER_SEC /* to MHz */);
+				   FREQUENCY);
 			break;
 		case I915_PMU_REQUESTED_FREQUENCY:
 			val =
 			   div_u64(i915->pmu.sample[__I915_SAMPLE_FREQ_REQ].cur,
-				   USEC_PER_SEC /* to MHz */);
+				   FREQUENCY);
 			break;
 		case I915_PMU_INTERRUPTS:
 			val = count_interrupts(i915);

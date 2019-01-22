@@ -5,10 +5,6 @@ KBUILD_DEFCONFIG := defconfig
 
 comma = ,
 
-ifdef CONFIG_FUNCTION_TRACER
-arch-y += -malways-save-lp -mno-relax
-endif
-
 KBUILD_CFLAGS	+= $(call cc-option, -mno-sched-prolog-epilog)
 KBUILD_CFLAGS	+= -mcmodel=large
 
@@ -27,6 +23,9 @@ export	TEXTADDR
 # If we have a machine-specific directory, then include it in the build.
 core-y				+= arch/nds32/kernel/ arch/nds32/mm/
 libs-y				+= arch/nds32/lib/
+LIBGCC_PATH     		:= \
+  $(shell $(CC) $(KBUILD_CFLAGS) $(KCFLAGS) -print-libgcc-file-name)
+libs-y				+= $(LIBGCC_PATH)
 
 ifneq '$(CONFIG_NDS32_BUILTIN_DTB)' '""'
 BUILTIN_DTB := y
@@ -36,14 +35,8 @@ endif
 
 ifdef CONFIG_CPU_LITTLE_ENDIAN
 KBUILD_CFLAGS   += $(call cc-option, -EL)
-KBUILD_AFLAGS   += $(call cc-option, -EL)
-KBUILD_LDFLAGS  += $(call cc-option, -EL)
-CHECKFLAGS      += -D__NDS32_EL__
 else
 KBUILD_CFLAGS   += $(call cc-option, -EB)
-KBUILD_AFLAGS   += $(call cc-option, -EB)
-KBUILD_LDFLAGS  += $(call cc-option, -EB)
-CHECKFLAGS      += -D__NDS32_EB__
 endif
 
 boot := arch/nds32/boot

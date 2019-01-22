@@ -126,8 +126,10 @@ static int sdhci_probe(struct platform_device *pdev)
 	}
 
 	ret = sdhci_add_host(host);
-	if (ret)
+	if (ret) {
+		dev_dbg(&pdev->dev, "error adding host\n");
 		goto disable_clk;
+	}
 
 	platform_set_drvdata(pdev, host);
 

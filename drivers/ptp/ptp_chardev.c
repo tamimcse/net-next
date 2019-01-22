@@ -89,7 +89,6 @@ int ptp_set_pinfunc(struct ptp_clock *ptp, unsigned int pin,
 	case PTP_PF_PHYSYNC:
 		if (chan != 0)
 			return -EINVAL;
-		break;
 	default:
 		return -EINVAL;
 	}
@@ -222,7 +221,7 @@ long ptp_ioctl(struct posix_clock *pc, unsigned int cmd, unsigned long arg)
 		}
 		pct = &sysoff->ts[0];
 		for (i = 0; i < sysoff->n_samples; i++) {
-			ktime_get_real_ts64(&ts);
+			getnstimeofday64(&ts);
 			pct->sec = ts.tv_sec;
 			pct->nsec = ts.tv_nsec;
 			pct++;
@@ -231,7 +230,7 @@ long ptp_ioctl(struct posix_clock *pc, unsigned int cmd, unsigned long arg)
 			pct->nsec = ts.tv_nsec;
 			pct++;
 		}
-		ktime_get_real_ts64(&ts);
+		getnstimeofday64(&ts);
 		pct->sec = ts.tv_sec;
 		pct->nsec = ts.tv_nsec;
 		if (copy_to_user((void __user *)arg, sysoff, sizeof(*sysoff)))

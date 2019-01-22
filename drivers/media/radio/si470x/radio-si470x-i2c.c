@@ -89,9 +89,9 @@ MODULE_PARM_DESC(max_rds_errors, "RDS maximum block errors: *1*");
 /*
  * si470x_get_register - read register
  */
-static int si470x_get_register(struct si470x_device *radio, int regnr)
+int si470x_get_register(struct si470x_device *radio, int regnr)
 {
-	__be16 buf[READ_REG_NUM];
+	u16 buf[READ_REG_NUM];
 	struct i2c_msg msgs[1] = {
 		{
 			.addr = radio->client->addr,
@@ -113,10 +113,10 @@ static int si470x_get_register(struct si470x_device *radio, int regnr)
 /*
  * si470x_set_register - write register
  */
-static int si470x_set_register(struct si470x_device *radio, int regnr)
+int si470x_set_register(struct si470x_device *radio, int regnr)
 {
 	int i;
-	__be16 buf[WRITE_REG_NUM];
+	u16 buf[WRITE_REG_NUM];
 	struct i2c_msg msgs[1] = {
 		{
 			.addr = radio->client->addr,
@@ -146,7 +146,7 @@ static int si470x_set_register(struct si470x_device *radio, int regnr)
 static int si470x_get_all_registers(struct si470x_device *radio)
 {
 	int i;
-	__be16 buf[READ_REG_NUM];
+	u16 buf[READ_REG_NUM];
 	struct i2c_msg msgs[1] = {
 		{
 			.addr = radio->client->addr,
@@ -174,7 +174,7 @@ static int si470x_get_all_registers(struct si470x_device *radio)
 /*
  * si470x_fops_open - file open
  */
-static int si470x_fops_open(struct file *file)
+int si470x_fops_open(struct file *file)
 {
 	struct si470x_device *radio = video_drvdata(file);
 	int retval = v4l2_fh_open(file);
@@ -206,7 +206,7 @@ done:
 /*
  * si470x_fops_release - file release
  */
-static int si470x_fops_release(struct file *file)
+int si470x_fops_release(struct file *file)
 {
 	struct si470x_device *radio = video_drvdata(file);
 
@@ -226,8 +226,8 @@ static int si470x_fops_release(struct file *file)
 /*
  * si470x_vidioc_querycap - query device capabilities
  */
-static int si470x_vidioc_querycap(struct file *file, void *priv,
-				  struct v4l2_capability *capability)
+int si470x_vidioc_querycap(struct file *file, void *priv,
+		struct v4l2_capability *capability)
 {
 	strlcpy(capability->driver, DRIVER_NAME, sizeof(capability->driver));
 	strlcpy(capability->card, DRIVER_CARD, sizeof(capability->card));
@@ -360,12 +360,6 @@ static int si470x_i2c_probe(struct i2c_client *client,
 	radio->band = 1; /* Default to 76 - 108 MHz */
 	mutex_init(&radio->lock);
 	init_completion(&radio->completion);
-
-	radio->get_register = si470x_get_register;
-	radio->set_register = si470x_set_register;
-	radio->fops_open = si470x_fops_open;
-	radio->fops_release = si470x_fops_release;
-	radio->vidioc_querycap = si470x_vidioc_querycap;
 
 	retval = v4l2_device_register(&client->dev, &radio->v4l2_dev);
 	if (retval < 0) {

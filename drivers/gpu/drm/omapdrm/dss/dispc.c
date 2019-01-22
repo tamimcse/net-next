@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2009 Nokia Corporation
- * Author: Tomi Valkeinen <tomi.valkeinen@ti.com>
+ * Author: Tomi Valkeinen <tomi.valkeinen@nokia.com>
  *
  * Some code and ideas taken from drivers/video/omap/ driver
  * by Imre Deak.
@@ -827,12 +827,6 @@ static void dispc_ovl_set_scale_coef(struct dispc_device *dispc,
 
 	h_coef = dispc_ovl_get_scale_coef(fir_hinc, true);
 	v_coef = dispc_ovl_get_scale_coef(fir_vinc, five_taps);
-
-	if (!h_coef || !v_coef) {
-		dev_err(&dispc->pdev->dev, "%s: failed to find scale coefs\n",
-			__func__);
-		return;
-	}
 
 	for (i = 0; i < 8; i++) {
 		u32 h, hv;
@@ -2348,7 +2342,7 @@ static int dispc_ovl_calc_scaling_24xx(struct dispc_device *dispc,
 	}
 
 	if (in_width > maxsinglelinewidth) {
-		DSSERR("Cannot scale max input width exceeded\n");
+		DSSERR("Cannot scale max input width exceeded");
 		return -EINVAL;
 	}
 	return 0;
@@ -2430,13 +2424,13 @@ again:
 	}
 
 	if (in_width > (maxsinglelinewidth * 2)) {
-		DSSERR("Cannot setup scaling\n");
-		DSSERR("width exceeds maximum width possible\n");
+		DSSERR("Cannot setup scaling");
+		DSSERR("width exceeds maximum width possible");
 		return -EINVAL;
 	}
 
 	if (in_width > maxsinglelinewidth && *five_taps) {
-		DSSERR("cannot setup scaling with five taps\n");
+		DSSERR("cannot setup scaling with five taps");
 		return -EINVAL;
 	}
 	return 0;
@@ -2478,7 +2472,7 @@ static int dispc_ovl_calc_scaling_44xx(struct dispc_device *dispc,
 			in_width > maxsinglelinewidth && ++*decim_x);
 
 	if (in_width > maxsinglelinewidth) {
-		DSSERR("Cannot scale width exceeds max line width\n");
+		DSSERR("Cannot scale width exceeds max line width");
 		return -EINVAL;
 	}
 
@@ -2496,7 +2490,7 @@ static int dispc_ovl_calc_scaling_44xx(struct dispc_device *dispc,
 		 * bandwidth. Despite what theory says this appears to
 		 * be true also for 16-bit color formats.
 		 */
-		DSSERR("Not enough bandwidth, too much downscaling (x-decimation factor %d > 4)\n", *decim_x);
+		DSSERR("Not enough bandwidth, too much downscaling (x-decimation factor %d > 4)", *decim_x);
 
 		return -EINVAL;
 	}
@@ -4639,7 +4633,7 @@ static int dispc_errata_i734_wa_init(struct dispc_device *dispc)
 						i734_buf.size, &i734_buf.paddr,
 						GFP_KERNEL);
 	if (!i734_buf.vaddr) {
-		dev_err(&dispc->pdev->dev, "%s: dma_alloc_writecombine failed\n",
+		dev_err(&dispc->pdev->dev, "%s: dma_alloc_writecombine failed",
 			__func__);
 		return -ENOMEM;
 	}

@@ -155,8 +155,7 @@ struct mod_freesync *mod_freesync_create(struct dc *dc)
 	if (core_freesync == NULL)
 		goto fail_alloc_context;
 
-	core_freesync->map = kcalloc(MOD_FREESYNC_MAX_CONCURRENT_STREAMS,
-					sizeof(struct freesync_entity),
+	core_freesync->map = kzalloc(sizeof(struct freesync_entity) * MOD_FREESYNC_MAX_CONCURRENT_STREAMS,
 					GFP_KERNEL);
 
 	if (core_freesync->map == NULL)

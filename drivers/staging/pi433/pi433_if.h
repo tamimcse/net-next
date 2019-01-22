@@ -1,5 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0+
- *
+/*
  * include/linux/TODO
  *
  * userspace interface for pi433 radio module
@@ -43,8 +42,7 @@ enum option_on_off {
 /* IOCTL structs and commands */
 
 /**
- * struct pi433_tx_config
- * describes the configuration of the radio module for sending
+ * struct pi433_tx_config - describes the configuration of the radio module for sending
  * @frequency:
  * @bit_rate:
  * @modulation:
@@ -91,8 +89,7 @@ struct pi433_tx_cfg {
 };
 
 /**
- * struct pi433_rx_config
- * describes the configuration of the radio module for sending
+ * struct pi433_rx_config - describes the configuration of the radio module for sending
  * @frequency:
  * @bit_rate:
  * @modulation:

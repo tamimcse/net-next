@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Device Tree Source for the Alt board
  *
  * Copyright (C) 2014 Renesas Electronics Corporation
+ *
+ * This file is licensed under the terms of the GNU General Public License
+ * version 2.  This program is licensed "as is" without any warranty of any
+ * kind, whether express or implied.
  */
 
 /dts-v1/;
@@ -178,12 +181,6 @@
 				};
 			};
 		};
-
-		eeprom@50 {
-			compatible = "renesas,r1ex24002", "atmel,24c02";
-			reg = <0x50>;
-			pagesize = <16>;
-		};
 	};
 
 	/*
@@ -333,11 +330,6 @@
 	status = "okay";
 };
 
-&rwdt {
-	timeout-sec = <60>;
-	status = "okay";
-};
-
 &sdhi0 {
 	pinctrl-0 = <&sdhi0_pins>;
 	pinctrl-1 = <&sdhi0_pins_uhs>;
@@ -383,6 +375,9 @@
 	pinctrl-names = "default";
 
 	port {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
 		vin0ep: endpoint {
 			remote-endpoint = <&adv7180>;
 			bus-width = <8>;

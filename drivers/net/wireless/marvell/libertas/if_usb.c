@@ -614,7 +614,6 @@ static inline void process_cmdrequest(int recvlength, uint8_t *recvbuff,
 				      struct if_usb_card *cardp,
 				      struct lbs_private *priv)
 {
-	unsigned long flags;
 	u8 i;
 
 	if (recvlength > LBS_CMD_BUFFER_SIZE) {
@@ -624,7 +623,9 @@ static inline void process_cmdrequest(int recvlength, uint8_t *recvbuff,
 		return;
 	}
 
-	spin_lock_irqsave(&priv->driver_lock, flags);
+	BUG_ON(!in_interrupt());
+
+	spin_lock(&priv->driver_lock);
 
 	i = (priv->resp_idx == 0) ? 1 : 0;
 	BUG_ON(priv->resp_len[i]);
@@ -634,7 +635,7 @@ static inline void process_cmdrequest(int recvlength, uint8_t *recvbuff,
 	kfree_skb(skb);
 	lbs_notify_command_response(priv, i);
 
-	spin_unlock_irqrestore(&priv->driver_lock, flags);
+	spin_unlock(&priv->driver_lock);
 
 	lbs_deb_usbd(&cardp->udev->dev,
 		    "Wake up main thread to handle cmd response\n");

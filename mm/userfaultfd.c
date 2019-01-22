@@ -404,8 +404,7 @@ static __always_inline ssize_t __mcopy_atomic(struct mm_struct *dst_mm,
 					      unsigned long dst_start,
 					      unsigned long src_start,
 					      unsigned long len,
-					      bool zeropage,
-					      bool *mmap_changing)
+					      bool zeropage)
 {
 	struct vm_area_struct *dst_vma;
 	ssize_t err;
@@ -430,15 +429,6 @@ static __always_inline ssize_t __mcopy_atomic(struct mm_struct *dst_mm,
 	page = NULL;
 retry:
 	down_read(&dst_mm->mmap_sem);
-
-	/*
-	 * If memory mappings are changing because of non-cooperative
-	 * operation (e.g. mremap) running in parallel, bail out and
-	 * request the user to retry later
-	 */
-	err = -EAGAIN;
-	if (mmap_changing && READ_ONCE(*mmap_changing))
-		goto out_unlock;
 
 	/*
 	 * Make sure the vma is not shared, that the dst range is
@@ -573,15 +563,13 @@ out:
 }
 
 ssize_t mcopy_atomic(struct mm_struct *dst_mm, unsigned long dst_start,
-		     unsigned long src_start, unsigned long len,
-		     bool *mmap_changing)
+		     unsigned long src_start, unsigned long len)
 {
-	return __mcopy_atomic(dst_mm, dst_start, src_start, len, false,
-			      mmap_changing);
+	return __mcopy_atomic(dst_mm, dst_start, src_start, len, false);
 }
 
 ssize_t mfill_zeropage(struct mm_struct *dst_mm, unsigned long start,
-		       unsigned long len, bool *mmap_changing)
+		       unsigned long len)
 {
-	return __mcopy_atomic(dst_mm, start, 0, len, true, mmap_changing);
+	return __mcopy_atomic(dst_mm, start, 0, len, true);
 }

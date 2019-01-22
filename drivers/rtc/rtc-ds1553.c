@@ -73,7 +73,8 @@ struct rtc_plat_data {
 
 static int ds1553_rtc_set_time(struct device *dev, struct rtc_time *tm)
 {
-	struct rtc_plat_data *pdata = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct rtc_plat_data *pdata = platform_get_drvdata(pdev);
 	void __iomem *ioaddr = pdata->ioaddr;
 	u8 century;
 
@@ -97,7 +98,8 @@ static int ds1553_rtc_set_time(struct device *dev, struct rtc_time *tm)
 
 static int ds1553_rtc_read_time(struct device *dev, struct rtc_time *tm)
 {
-	struct rtc_plat_data *pdata = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct rtc_plat_data *pdata = platform_get_drvdata(pdev);
 	void __iomem *ioaddr = pdata->ioaddr;
 	unsigned int year, month, day, hour, minute, second, week;
 	unsigned int century;
@@ -153,7 +155,8 @@ static void ds1553_rtc_update_alarm(struct rtc_plat_data *pdata)
 
 static int ds1553_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 {
-	struct rtc_plat_data *pdata = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct rtc_plat_data *pdata = platform_get_drvdata(pdev);
 
 	if (pdata->irq <= 0)
 		return -EINVAL;
@@ -169,7 +172,8 @@ static int ds1553_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 
 static int ds1553_rtc_read_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 {
-	struct rtc_plat_data *pdata = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct rtc_plat_data *pdata = platform_get_drvdata(pdev);
 
 	if (pdata->irq <= 0)
 		return -EINVAL;
@@ -204,7 +208,8 @@ static irqreturn_t ds1553_rtc_interrupt(int irq, void *dev_id)
 
 static int ds1553_rtc_alarm_irq_enable(struct device *dev, unsigned int enabled)
 {
-	struct rtc_plat_data *pdata = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct rtc_plat_data *pdata = platform_get_drvdata(pdev);
 
 	if (pdata->irq <= 0)
 		return -EINVAL;

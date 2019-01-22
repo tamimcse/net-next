@@ -148,6 +148,12 @@ int sd_zbc_setup_report_cmnd(struct scsi_cmnd *cmd)
 	cmd->transfersize = sdkp->device->sector_size;
 	cmd->allowed = 0;
 
+	/*
+	 * Report may return less bytes than requested. Make sure
+	 * to report completion on the entire initial request.
+	 */
+	rq->__data_len = nr_bytes;
+
 	return BLKPREP_OK;
 }
 
@@ -293,6 +299,16 @@ void sd_zbc_complete(struct scsi_cmnd *cmd, unsigned int good_bytes,
 	case REQ_OP_WRITE:
 	case REQ_OP_WRITE_ZEROES:
 	case REQ_OP_WRITE_SAME:
+
+		if (result &&
+		    sshdr->sense_key == ILLEGAL_REQUEST &&
+		    sshdr->asc == 0x21)
+			/*
+			 * INVALID ADDRESS FOR WRITE error: It is unlikely that
+			 * retrying write requests failed with any kind of
+			 * alignement error will result in success. So don't.
+			 */
+			cmd->allowed = 0;
 		break;
 
 	case REQ_OP_ZONE_REPORT:
@@ -385,8 +401,7 @@ static int sd_zbc_check_capacity(struct scsi_disk *sdkp, unsigned char *buf)
  * Check that all zones of the device are equal. The last zone can however
  * be smaller. The zone size must also be a power of two number of LBAs.
  *
- * Returns the zone size in number of blocks upon success or an error code
- * upon failure.
+ * Returns the zone size in bytes upon success or an error code upon failure.
  */
 static s64 sd_zbc_check_zone_size(struct scsi_disk *sdkp)
 {
@@ -396,7 +411,7 @@ static s64 sd_zbc_check_zone_size(struct scsi_disk *sdkp)
 	unsigned char *rec;
 	unsigned int buf_len;
 	unsigned int list_length;
-	s64 ret;
+	int ret;
 	u8 same;
 
 	/* Get a buffer */
@@ -437,7 +452,7 @@ static s64 sd_zbc_check_zone_size(struct scsi_disk *sdkp)
 			} else if (this_zone_blocks != zone_blocks &&
 				   (block + this_zone_blocks < sdkp->capacity
 				    || this_zone_blocks > zone_blocks)) {
-				zone_blocks = 0;
+				this_zone_blocks = 0;
 				goto out;
 			}
 			block += this_zone_blocks;
@@ -489,7 +504,7 @@ out_free:
 static inline unsigned long *
 sd_zbc_alloc_zone_bitmap(u32 nr_zones, int numa_node)
 {
-	return kcalloc_node(BITS_TO_LONGS(nr_zones), sizeof(unsigned long),
+	return kzalloc_node(BITS_TO_LONGS(nr_zones) * sizeof(unsigned long),
 			    GFP_KERNEL, numa_node);
 }
 

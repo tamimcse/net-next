@@ -148,7 +148,7 @@ static bool twl6040_can_write_to_chip(struct snd_soc_component *component,
 	case TWL6040_REG_HFRCTL:
 		return priv->dl2_unmuted;
 	default:
-		return true;
+		return 1;
 	}
 }
 

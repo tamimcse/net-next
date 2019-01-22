@@ -1,6 +1,6 @@
 /*
  * vgaarb.c: Implements the VGA arbitration. For details refer to
- * Documentation/gpu/vgaarbiter.rst
+ * Documentation/vgaarbiter.txt
  *
  *
  * (C) Copyright 2005 Benjamin Herrenschmidt <benh@kernel.crashing.org>

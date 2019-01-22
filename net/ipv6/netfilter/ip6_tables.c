@@ -38,7 +38,6 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Netfilter Core Team <coreteam@netfilter.org>");
 MODULE_DESCRIPTION("IPv6 packet filter");
-MODULE_ALIAS("ip6t_icmp6");
 
 void *ip6t_alloc_initial_table(const struct xt_table *info)
 {
@@ -550,7 +549,6 @@ find_check_entry(struct ip6t_entry *e, struct net *net, const char *name,
 		return -ENOMEM;
 
 	j = 0;
-	memset(&mtpar, 0, sizeof(mtpar));
 	mtpar.net	= net;
 	mtpar.table     = name;
 	mtpar.entryinfo = &e->ipv6;
@@ -1794,8 +1792,6 @@ int ip6t_register_table(struct net *net, const struct xt_table *table,
 
 	/* set res now, will see skbs right after nf_register_net_hooks */
 	WRITE_ONCE(*res, new_table);
-	if (!ops)
-		return 0;
 
 	ret = nf_register_net_hooks(net, ops, hweight32(table->valid_hooks));
 	if (ret != 0) {
@@ -1813,8 +1809,7 @@ out_free:
 void ip6t_unregister_table(struct net *net, struct xt_table *table,
 			   const struct nf_hook_ops *ops)
 {
-	if (ops)
-		nf_unregister_net_hooks(net, ops, hweight32(table->valid_hooks));
+	nf_unregister_net_hooks(net, ops, hweight32(table->valid_hooks));
 	__ip6t_unregister_table(net, table);
 }
 
@@ -1909,7 +1904,6 @@ static struct xt_match ip6t_builtin_mt[] __read_mostly = {
 		.checkentry = icmp6_checkentry,
 		.proto      = IPPROTO_ICMPV6,
 		.family     = NFPROTO_IPV6,
-		.me	    = THIS_MODULE,
 	},
 };
 

@@ -70,7 +70,6 @@
 #include <asm/hmi.h>
 #include <sysdev/fsl_pci.h>
 #include <asm/kprobes.h>
-#include <asm/stacktrace.h>
 
 #if defined(CONFIG_DEBUGGER) || defined(CONFIG_KEXEC_CORE)
 int (*__debugger)(struct pt_regs *regs) __read_mostly;
@@ -96,19 +95,6 @@ EXPORT_SYMBOL(__debugger_fault_handler);
 #else
 #define TM_DEBUG(x...) do { } while(0)
 #endif
-
-static const char *signame(int signr)
-{
-	switch (signr) {
-	case SIGBUS:	return "bus error";
-	case SIGFPE:	return "floating point exception";
-	case SIGILL:	return "illegal instruction";
-	case SIGSEGV:	return "segfault";
-	case SIGTRAP:	return "unhandled trap";
-	}
-
-	return "unknown signal";
-}
 
 /*
  * Trap & Exception support
@@ -310,48 +296,32 @@ NOKPROBE_SYMBOL(die);
 void user_single_step_siginfo(struct task_struct *tsk,
 				struct pt_regs *regs, siginfo_t *info)
 {
+	memset(info, 0, sizeof(*info));
 	info->si_signo = SIGTRAP;
 	info->si_code = TRAP_TRACE;
 	info->si_addr = (void __user *)regs->nip;
 }
 
-static void show_signal_msg(int signr, struct pt_regs *regs, int code,
-			    unsigned long addr)
-{
-	static DEFINE_RATELIMIT_STATE(rs, DEFAULT_RATELIMIT_INTERVAL,
-				      DEFAULT_RATELIMIT_BURST);
-
-	if (!show_unhandled_signals)
-		return;
-
-	if (!unhandled_signal(current, signr))
-		return;
-
-	if (!__ratelimit(&rs))
-		return;
-
-	pr_info("%s[%d]: %s (%d) at %lx nip %lx lr %lx code %x",
-		current->comm, current->pid, signame(signr), signr,
-		addr, regs->nip, regs->link, code);
-
-	print_vma_addr(KERN_CONT " in ", regs->nip);
-
-	pr_cont("\n");
-
-	show_user_instructions(regs);
-}
 
 void _exception_pkey(int signr, struct pt_regs *regs, int code,
-		     unsigned long addr, int key)
+		unsigned long addr, int key)
 {
 	siginfo_t info;
+	const char fmt32[] = KERN_INFO "%s[%d]: unhandled signal %d " \
+			"at %08lx nip %08lx lr %08lx code %x\n";
+	const char fmt64[] = KERN_INFO "%s[%d]: unhandled signal %d " \
+			"at %016lx nip %016lx lr %016lx code %x\n";
 
 	if (!user_mode(regs)) {
 		die("Exception in kernel mode", regs, signr);
 		return;
 	}
 
-	show_signal_msg(signr, regs, code, addr);
+	if (show_unhandled_signals && unhandled_signal(current, signr)) {
+		printk_ratelimited(regs->msr & MSR_64BIT ? fmt64 : fmt32,
+				   current->comm, current->pid, signr,
+				   addr, regs->nip, regs->link, code);
+	}
 
 	if (arch_irqs_disabled() && !arch_irq_disabled_regs(regs))
 		local_irq_enable();
@@ -364,7 +334,7 @@ void _exception_pkey(int signr, struct pt_regs *regs, int code,
 	 */
 	thread_pkey_regs_save(&current->thread);
 
-	clear_siginfo(&info);
+	memset(&info, 0, sizeof(info));
 	info.si_signo = signr;
 	info.si_code = code;
 	info.si_addr = (void __user *) addr;
@@ -1000,7 +970,7 @@ void unknown_exception(struct pt_regs *regs)
 	printk("Bad trap at PC: %lx, SR: %lx, vector=%lx\n",
 	       regs->nip, regs->msr, regs->trap);
 
-	_exception(SIGTRAP, regs, TRAP_UNK, 0);
+	_exception(SIGTRAP, regs, TRAP_FIXME, 0);
 
 	exception_exit(prev_state);
 }
@@ -1022,7 +992,7 @@ bail:
 
 void RunModeException(struct pt_regs *regs)
 {
-	_exception(SIGTRAP, regs, TRAP_UNK, 0);
+	_exception(SIGTRAP, regs, TRAP_FIXME, 0);
 }
 
 void single_step_exception(struct pt_regs *regs)
@@ -1062,7 +1032,7 @@ static void emulate_single_step(struct pt_regs *regs)
 
 static inline int __parse_fpscr(unsigned long fpscr)
 {
-	int ret = FPE_FLTUNK;
+	int ret = FPE_FIXME;
 
 	/* Invalid operation */
 	if ((fpscr & FPSCR_VE) && (fpscr & FPSCR_VX))
@@ -2003,7 +1973,7 @@ void SPEFloatingPointException(struct pt_regs *regs)
 	extern int do_spe_mathemu(struct pt_regs *regs);
 	unsigned long spefscr;
 	int fpexc_mode;
-	int code = FPE_FLTUNK;
+	int code = FPE_FIXME;
 	int err;
 
 	flush_spe_to_thread(current);
@@ -2072,7 +2042,7 @@ void SPEFloatingPointRoundException(struct pt_regs *regs)
 		printk(KERN_ERR "unrecognized spe instruction "
 		       "in %s at %lx\n", current->comm, regs->nip);
 	} else {
-		_exception(SIGFPE, regs, FPE_FLTUNK, regs->nip);
+		_exception(SIGFPE, regs, FPE_FIXME, regs->nip);
 		return;
 	}
 }

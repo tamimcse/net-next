@@ -418,7 +418,8 @@ static void cdns_wdt_shutdown(struct platform_device *pdev)
  */
 static int __maybe_unused cdns_wdt_suspend(struct device *dev)
 {
-	struct cdns_wdt *wdt = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct cdns_wdt *wdt = platform_get_drvdata(pdev);
 
 	if (watchdog_active(&wdt->cdns_wdt_device)) {
 		cdns_wdt_stop(&wdt->cdns_wdt_device);
@@ -437,7 +438,8 @@ static int __maybe_unused cdns_wdt_suspend(struct device *dev)
 static int __maybe_unused cdns_wdt_resume(struct device *dev)
 {
 	int ret;
-	struct cdns_wdt *wdt = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct cdns_wdt *wdt = platform_get_drvdata(pdev);
 
 	if (watchdog_active(&wdt->cdns_wdt_device)) {
 		ret = clk_prepare_enable(wdt->clk);

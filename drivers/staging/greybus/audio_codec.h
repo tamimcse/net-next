@@ -23,10 +23,7 @@ enum {
 	NUM_CODEC_DAIS,
 };
 
-/*
- * device_type should be same as defined in audio.h
- * (Android media layer)
- */
+/* device_type should be same as defined in audio.h (Android media layer) */
 enum {
 	GBAUDIO_DEVICE_NONE                     = 0x0,
 	/* reserved bits */

@@ -485,14 +485,12 @@ static void bcm_kona_gpio_irq_handler(struct irq_desc *desc)
 static int bcm_kona_gpio_irq_reqres(struct irq_data *d)
 {
 	struct bcm_kona_gpio *kona_gpio = irq_data_get_irq_chip_data(d);
-	int ret;
 
-	ret = gpiochip_lock_as_irq(&kona_gpio->gpio_chip, d->hwirq);
-	if (ret) {
+	if (gpiochip_lock_as_irq(&kona_gpio->gpio_chip, d->hwirq)) {
 		dev_err(kona_gpio->gpio_chip.parent,
 			"unable to lock HW IRQ %lu for IRQ\n",
 			d->hwirq);
-		return ret;
+		return -EINVAL;
 	}
 	return 0;
 }
@@ -603,10 +601,9 @@ static int bcm_kona_gpio_probe(struct platform_device *pdev)
 			GPIO_MAX_BANK_NUM);
 		return -ENXIO;
 	}
-	kona_gpio->banks = devm_kcalloc(dev,
-					kona_gpio->num_bank,
-					sizeof(*kona_gpio->banks),
-					GFP_KERNEL);
+	kona_gpio->banks = devm_kzalloc(dev,
+					kona_gpio->num_bank *
+					sizeof(*kona_gpio->banks), GFP_KERNEL);
 	if (!kona_gpio->banks)
 		return -ENOMEM;
 

@@ -278,9 +278,10 @@ static int xlnx_rtc_remove(struct platform_device *pdev)
 
 static int __maybe_unused xlnx_rtc_suspend(struct device *dev)
 {
-	struct xlnx_rtc_dev *xrtcdev = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct xlnx_rtc_dev *xrtcdev = platform_get_drvdata(pdev);
 
-	if (device_may_wakeup(dev))
+	if (device_may_wakeup(&pdev->dev))
 		enable_irq_wake(xrtcdev->alarm_irq);
 	else
 		xlnx_rtc_alarm_irq_enable(dev, 0);
@@ -290,9 +291,10 @@ static int __maybe_unused xlnx_rtc_suspend(struct device *dev)
 
 static int __maybe_unused xlnx_rtc_resume(struct device *dev)
 {
-	struct xlnx_rtc_dev *xrtcdev = dev_get_drvdata(dev);
+	struct platform_device *pdev = to_platform_device(dev);
+	struct xlnx_rtc_dev *xrtcdev = platform_get_drvdata(pdev);
 
-	if (device_may_wakeup(dev))
+	if (device_may_wakeup(&pdev->dev))
 		disable_irq_wake(xrtcdev->alarm_irq);
 	else
 		xlnx_rtc_alarm_irq_enable(dev, 1);

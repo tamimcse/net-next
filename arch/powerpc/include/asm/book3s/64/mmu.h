@@ -134,11 +134,10 @@ typedef struct {
 #ifdef CONFIG_PPC_SUBPAGE_PROT
 	struct subpage_prot_table spt;
 #endif /* CONFIG_PPC_SUBPAGE_PROT */
-	/*
-	 * pagetable fragment support
-	 */
+#ifdef CONFIG_PPC_64K_PAGES
+	/* for 4K PTE fragment support */
 	void *pte_frag;
-	void *pmd_frag;
+#endif
 #ifdef CONFIG_SPAPR_TCE_IOMMU
 	struct list_head iommu_group_mem_list;
 #endif

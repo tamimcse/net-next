@@ -209,24 +209,21 @@ static struct fw_priv *__lookup_fw_priv(const char *fw_name)
 static int alloc_lookup_fw_priv(const char *fw_name,
 				struct firmware_cache *fwc,
 				struct fw_priv **fw_priv, void *dbuf,
-				size_t size, enum fw_opt opt_flags)
+				size_t size)
 {
 	struct fw_priv *tmp;
 
 	spin_lock(&fwc->lock);
-	if (!(opt_flags & FW_OPT_NOCACHE)) {
-		tmp = __lookup_fw_priv(fw_name);
-		if (tmp) {
-			kref_get(&tmp->ref);
-			spin_unlock(&fwc->lock);
-			*fw_priv = tmp;
-			pr_debug("batched request - sharing the same struct fw_priv and lookup for multiple requests\n");
-			return 1;
-		}
+	tmp = __lookup_fw_priv(fw_name);
+	if (tmp) {
+		kref_get(&tmp->ref);
+		spin_unlock(&fwc->lock);
+		*fw_priv = tmp;
+		pr_debug("batched request - sharing the same struct fw_priv and lookup for multiple requests\n");
+		return 1;
 	}
-
 	tmp = __allocate_fw_priv(fw_name, fwc, dbuf, size);
-	if (tmp && !(opt_flags & FW_OPT_NOCACHE))
+	if (tmp)
 		list_add(&tmp->list, &fwc->head);
 	spin_unlock(&fwc->lock);
 
@@ -446,7 +443,7 @@ static int fw_add_devm_name(struct device *dev, const char *name)
 #endif
 
 int assign_fw(struct firmware *fw, struct device *device,
-	      enum fw_opt opt_flags)
+	      unsigned int opt_flags)
 {
 	struct fw_priv *fw_priv = fw->priv;
 	int ret;
@@ -496,8 +493,7 @@ int assign_fw(struct firmware *fw, struct device *device,
  */
 static int
 _request_firmware_prepare(struct firmware **firmware_p, const char *name,
-			  struct device *device, void *dbuf, size_t size,
-			  enum fw_opt opt_flags)
+			  struct device *device, void *dbuf, size_t size)
 {
 	struct firmware *firmware;
 	struct fw_priv *fw_priv;
@@ -515,8 +511,7 @@ _request_firmware_prepare(struct firmware **firmware_p, const char *name,
 		return 0; /* assigned */
 	}
 
-	ret = alloc_lookup_fw_priv(name, &fw_cache, &fw_priv, dbuf, size,
-				  opt_flags);
+	ret = alloc_lookup_fw_priv(name, &fw_cache, &fw_priv, dbuf, size);
 
 	/*
 	 * bind with 'priv' now to avoid warning in failure path
@@ -563,7 +558,7 @@ static void fw_abort_batch_reqs(struct firmware *fw)
 static int
 _request_firmware(const struct firmware **firmware_p, const char *name,
 		  struct device *device, void *buf, size_t size,
-		  enum fw_opt opt_flags)
+		  unsigned int opt_flags)
 {
 	struct firmware *fw = NULL;
 	int ret;
@@ -576,8 +571,7 @@ _request_firmware(const struct firmware **firmware_p, const char *name,
 		goto out;
 	}
 
-	ret = _request_firmware_prepare(&fw, name, device, buf, size,
-					opt_flags);
+	ret = _request_firmware_prepare(&fw, name, device, buf, size);
 	if (ret <= 0) /* error or already assigned */
 		goto out;
 
@@ -587,7 +581,7 @@ _request_firmware(const struct firmware **firmware_p, const char *name,
 			dev_warn(device,
 				 "Direct firmware load for %s failed with error %d\n",
 				 name, ret);
-		ret = firmware_fallback_sysfs(fw, name, device, opt_flags, ret);
+		ret = fw_sysfs_fallback(fw, name, device, opt_flags, ret);
 	} else
 		ret = assign_fw(fw, device, opt_flags);
 
@@ -603,7 +597,7 @@ _request_firmware(const struct firmware **firmware_p, const char *name,
 }
 
 /**
- * request_firmware() - send firmware request and wait for it
+ * request_firmware: - send firmware request and wait for it
  * @firmware_p: pointer to firmware image
  * @name: name of firmware file
  * @device: device for which firmware is being loaded
@@ -638,34 +632,7 @@ request_firmware(const struct firmware **firmware_p, const char *name,
 EXPORT_SYMBOL(request_firmware);
 
 /**
- * firmware_request_nowarn() - request for an optional fw module
- * @firmware: pointer to firmware image
- * @name: name of firmware file
- * @device: device for which firmware is being loaded
- *
- * This function is similar in behaviour to request_firmware(), except
- * it doesn't produce warning messages when the file is not found.
- * The sysfs fallback mechanism is enabled if direct filesystem lookup fails,
- * however, however failures to find the firmware file with it are still
- * suppressed. It is therefore up to the driver to check for the return value
- * of this call and to decide when to inform the users of errors.
- **/
-int firmware_request_nowarn(const struct firmware **firmware, const char *name,
-			    struct device *device)
-{
-	int ret;
-
-	/* Need to pin this module until return */
-	__module_get(THIS_MODULE);
-	ret = _request_firmware(firmware, name, device, NULL, 0,
-				FW_OPT_UEVENT | FW_OPT_NO_WARN);
-	module_put(THIS_MODULE);
-	return ret;
-}
-EXPORT_SYMBOL_GPL(firmware_request_nowarn);
-
-/**
- * request_firmware_direct() - load firmware directly without usermode helper
+ * request_firmware_direct: - load firmware directly without usermode helper
  * @firmware_p: pointer to firmware image
  * @name: name of firmware file
  * @device: device for which firmware is being loaded
@@ -690,7 +657,7 @@ int request_firmware_direct(const struct firmware **firmware_p,
 EXPORT_SYMBOL_GPL(request_firmware_direct);
 
 /**
- * firmware_request_cache() - cache firmware for suspend so resume can use it
+ * firmware_request_cache: - cache firmware for suspend so resume can use it
  * @name: name of firmware file
  * @device: device for which firmware should be cached for
  *
@@ -714,7 +681,7 @@ int firmware_request_cache(struct device *device, const char *name)
 EXPORT_SYMBOL_GPL(firmware_request_cache);
 
 /**
- * request_firmware_into_buf() - load firmware into a previously allocated buffer
+ * request_firmware_into_buf - load firmware into a previously allocated buffer
  * @firmware_p: pointer to firmware image
  * @name: name of firmware file
  * @device: device for which firmware is being loaded and DMA region allocated
@@ -746,7 +713,7 @@ request_firmware_into_buf(const struct firmware **firmware_p, const char *name,
 EXPORT_SYMBOL(request_firmware_into_buf);
 
 /**
- * release_firmware() - release the resource associated with a firmware image
+ * release_firmware: - release the resource associated with a firmware image
  * @fw: firmware resource to release
  **/
 void release_firmware(const struct firmware *fw)
@@ -767,7 +734,7 @@ struct firmware_work {
 	struct device *device;
 	void *context;
 	void (*cont)(const struct firmware *fw, void *context);
-	enum fw_opt opt_flags;
+	unsigned int opt_flags;
 };
 
 static void request_firmware_work_func(struct work_struct *work)
@@ -788,7 +755,7 @@ static void request_firmware_work_func(struct work_struct *work)
 }
 
 /**
- * request_firmware_nowait() - asynchronous version of request_firmware
+ * request_firmware_nowait - asynchronous version of request_firmware
  * @module: module requesting the firmware
  * @uevent: sends uevent to copy the firmware image if this flag
  *	is non-zero else the firmware copy must be done manually.
@@ -857,7 +824,7 @@ EXPORT_SYMBOL(request_firmware_nowait);
 static ASYNC_DOMAIN_EXCLUSIVE(fw_cache_domain);
 
 /**
- * cache_firmware() - cache one firmware image in kernel memory space
+ * cache_firmware - cache one firmware image in kernel memory space
  * @fw_name: the firmware image name
  *
  * Cache firmware in kernel memory so that drivers can use it when
@@ -899,7 +866,7 @@ static struct fw_priv *lookup_fw_priv(const char *fw_name)
 }
 
 /**
- * uncache_firmware() - remove one cached firmware image
+ * uncache_firmware - remove one cached firmware image
  * @fw_name: the firmware image name
  *
  * Uncache one firmware image which has been cached successfully
@@ -1075,7 +1042,7 @@ static void __device_uncache_fw_images(void)
 }
 
 /**
- * device_cache_fw_images() - cache devices' firmware
+ * device_cache_fw_images - cache devices' firmware
  *
  * If one device called request_firmware or its nowait version
  * successfully before, the firmware names are recored into the
@@ -1108,7 +1075,7 @@ static void device_cache_fw_images(void)
 }
 
 /**
- * device_uncache_fw_images() - uncache devices' firmware
+ * device_uncache_fw_images - uncache devices' firmware
  *
  * uncache all firmwares which have been cached successfully
  * by device_uncache_fw_images earlier
@@ -1125,7 +1092,7 @@ static void device_uncache_fw_images_work(struct work_struct *work)
 }
 
 /**
- * device_uncache_fw_images_delay() - uncache devices firmwares
+ * device_uncache_fw_images_delay - uncache devices firmwares
  * @delay: number of milliseconds to delay uncache device firmwares
  *
  * uncache all devices's firmwares which has been cached successfully

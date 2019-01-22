@@ -27,6 +27,7 @@
 
 
 #include "dml_common_defs.h"
+#include "soc_bounding_box.h"
 #include "dml1_display_rq_dlg_calc.h"
 
 enum dml_project {

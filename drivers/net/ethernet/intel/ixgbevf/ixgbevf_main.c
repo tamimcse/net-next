@@ -991,45 +991,24 @@ static int ixgbevf_xmit_xdp_ring(struct ixgbevf_ring *ring,
 		return IXGBEVF_XDP_CONSUMED;
 
 	/* record the location of the first descriptor for this packet */
-	i = ring->next_to_use;
-	tx_buffer = &ring->tx_buffer_info[i];
-
-	dma_unmap_len_set(tx_buffer, len, len);
-	dma_unmap_addr_set(tx_buffer, dma, dma);
-	tx_buffer->data = xdp->data;
+	tx_buffer = &ring->tx_buffer_info[ring->next_to_use];
 	tx_buffer->bytecount = len;
 	tx_buffer->gso_segs = 1;
 	tx_buffer->protocol = 0;
 
-	/* Populate minimal context descriptor that will provide for the
-	 * fact that we are expected to process Ethernet frames.
-	 */
-	if (!test_bit(__IXGBEVF_TX_XDP_RING_PRIMED, &ring->state)) {
-		struct ixgbe_adv_tx_context_desc *context_desc;
+	i = ring->next_to_use;
+	tx_desc = IXGBEVF_TX_DESC(ring, i);
 
-		set_bit(__IXGBEVF_TX_XDP_RING_PRIMED, &ring->state);
-
-		context_desc = IXGBEVF_TX_CTXTDESC(ring, 0);
-		context_desc->vlan_macip_lens	=
-			cpu_to_le32(ETH_HLEN << IXGBE_ADVTXD_MACLEN_SHIFT);
-		context_desc->seqnum_seed	= 0;
-		context_desc->type_tucmd_mlhl	=
-			cpu_to_le32(IXGBE_TXD_CMD_DEXT |
-				    IXGBE_ADVTXD_DTYP_CTXT);
-		context_desc->mss_l4len_idx	= 0;
-
-		i = 1;
-	}
+	dma_unmap_len_set(tx_buffer, len, len);
+	dma_unmap_addr_set(tx_buffer, dma, dma);
+	tx_buffer->data = xdp->data;
+	tx_desc->read.buffer_addr = cpu_to_le64(dma);
 
 	/* put descriptor type bits */
 	cmd_type = IXGBE_ADVTXD_DTYP_DATA |
 		   IXGBE_ADVTXD_DCMD_DEXT |
 		   IXGBE_ADVTXD_DCMD_IFCS;
 	cmd_type |= len | IXGBE_TXD_CMD;
-
-	tx_desc = IXGBEVF_TX_DESC(ring, i);
-	tx_desc->read.buffer_addr = cpu_to_le64(dma);
-
 	tx_desc->read.cmd_type_len = cpu_to_le32(cmd_type);
 	tx_desc->read.olinfo_status =
 			cpu_to_le32((len << IXGBE_ADVTXD_PAYLEN_SHIFT) |
@@ -1709,7 +1688,6 @@ static void ixgbevf_configure_tx_ring(struct ixgbevf_adapter *adapter,
 	       sizeof(struct ixgbevf_tx_buffer) * ring->count);
 
 	clear_bit(__IXGBEVF_HANG_CHECK_ARMED, &ring->state);
-	clear_bit(__IXGBEVF_TX_XDP_RING_PRIMED, &ring->state);
 
 	IXGBE_WRITE_REG(hw, IXGBE_VFTXDCTL(reg_idx), txdctl);
 
@@ -3141,17 +3119,15 @@ static void ixgbevf_reset_subtask(struct ixgbevf_adapter *adapter)
 	if (!test_and_clear_bit(__IXGBEVF_RESET_REQUESTED, &adapter->state))
 		return;
 
-	rtnl_lock();
 	/* If we're already down or resetting, just bail */
 	if (test_bit(__IXGBEVF_DOWN, &adapter->state) ||
 	    test_bit(__IXGBEVF_REMOVING, &adapter->state) ||
-	    test_bit(__IXGBEVF_RESETTING, &adapter->state)) {
-		rtnl_unlock();
+	    test_bit(__IXGBEVF_RESETTING, &adapter->state))
 		return;
-	}
 
 	adapter->tx_timeout_count++;
 
+	rtnl_lock();
 	ixgbevf_reinit_locked(adapter);
 	rtnl_unlock();
 }
@@ -4138,7 +4114,7 @@ out_drop:
 	return NETDEV_TX_OK;
 }
 
-static netdev_tx_t ixgbevf_xmit_frame(struct sk_buff *skb, struct net_device *netdev)
+static int ixgbevf_xmit_frame(struct sk_buff *skb, struct net_device *netdev)
 {
 	struct ixgbevf_adapter *adapter = netdev_priv(netdev);
 	struct ixgbevf_ring *tx_ring;
@@ -4188,7 +4164,6 @@ static int ixgbevf_set_mac(struct net_device *netdev, void *p)
 		return -EPERM;
 
 	ether_addr_copy(hw->mac.addr, addr->sa_data);
-	ether_addr_copy(hw->mac.perm_addr, addr->sa_data);
 	ether_addr_copy(netdev->dev_addr, addr->sa_data);
 
 	return 0;
@@ -4232,6 +4207,24 @@ static int ixgbevf_change_mtu(struct net_device *netdev, int new_mtu)
 
 	return 0;
 }
+
+#ifdef CONFIG_NET_POLL_CONTROLLER
+/* Polling 'interrupt' - used by things like netconsole to send skbs
+ * without having to re-enable interrupts. It's not called while
+ * the interrupt routine is executing.
+ */
+static void ixgbevf_netpoll(struct net_device *netdev)
+{
+	struct ixgbevf_adapter *adapter = netdev_priv(netdev);
+	int i;
+
+	/* if interface is down do nothing */
+	if (test_bit(__IXGBEVF_DOWN, &adapter->state))
+		return;
+	for (i = 0; i < adapter->num_rx_queues; i++)
+		ixgbevf_msix_clean_rings(0, adapter->q_vector[i]);
+}
+#endif /* CONFIG_NET_POLL_CONTROLLER */
 
 static int ixgbevf_suspend(struct pci_dev *pdev, pm_message_t state)
 {
@@ -4444,6 +4437,7 @@ static int ixgbevf_xdp(struct net_device *dev, struct netdev_bpf *xdp)
 	case XDP_SETUP_PROG:
 		return ixgbevf_xdp_setup(dev, xdp->prog);
 	case XDP_QUERY_PROG:
+		xdp->prog_attached = !!(adapter->xdp_prog);
 		xdp->prog_id = adapter->xdp_prog ?
 			       adapter->xdp_prog->aux->id : 0;
 		return 0;
@@ -4464,6 +4458,9 @@ static const struct net_device_ops ixgbevf_netdev_ops = {
 	.ndo_tx_timeout		= ixgbevf_tx_timeout,
 	.ndo_vlan_rx_add_vid	= ixgbevf_vlan_rx_add_vid,
 	.ndo_vlan_rx_kill_vid	= ixgbevf_vlan_rx_kill_vid,
+#ifdef CONFIG_NET_POLL_CONTROLLER
+	.ndo_poll_controller	= ixgbevf_netpoll,
+#endif
 	.ndo_features_check	= ixgbevf_features_check,
 	.ndo_bpf		= ixgbevf_xdp,
 };
@@ -4750,13 +4747,13 @@ static pci_ers_result_t ixgbevf_io_error_detected(struct pci_dev *pdev,
 	rtnl_lock();
 	netif_device_detach(netdev);
 
-	if (netif_running(netdev))
-		ixgbevf_close_suspend(adapter);
-
 	if (state == pci_channel_io_perm_failure) {
 		rtnl_unlock();
 		return PCI_ERS_RESULT_DISCONNECT;
 	}
+
+	if (netif_running(netdev))
+		ixgbevf_close_suspend(adapter);
 
 	if (!test_and_set_bit(__IXGBEVF_DISABLED, &adapter->state))
 		pci_disable_device(pdev);

@@ -497,7 +497,10 @@ int target_xcopy_setup_pt(void)
 	INIT_LIST_HEAD(&xcopy_pt_nacl.acl_list);
 	INIT_LIST_HEAD(&xcopy_pt_nacl.acl_sess_list);
 	memset(&xcopy_pt_sess, 0, sizeof(struct se_session));
-	transport_init_session(&xcopy_pt_sess);
+	INIT_LIST_HEAD(&xcopy_pt_sess.sess_list);
+	INIT_LIST_HEAD(&xcopy_pt_sess.sess_acl_list);
+	INIT_LIST_HEAD(&xcopy_pt_sess.sess_cmd_list);
+	spin_lock_init(&xcopy_pt_sess.sess_cmd_lock);
 
 	xcopy_pt_nacl.se_tpg = &xcopy_pt_tpg;
 	xcopy_pt_nacl.nacl_sess = &xcopy_pt_sess;

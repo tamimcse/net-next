@@ -320,7 +320,6 @@ nfsd4_decode_fattr(struct nfsd4_compoundargs *argp, u32 *bmval,
 		   struct iattr *iattr, struct nfs4_acl **acl,
 		   struct xdr_netobj *label, int *umask)
 {
-	struct timespec ts;
 	int expected_len, len = 0;
 	u32 dummy32;
 	char *buf;
@@ -422,8 +421,7 @@ nfsd4_decode_fattr(struct nfsd4_compoundargs *argp, u32 *bmval,
 		switch (dummy32) {
 		case NFS4_SET_TO_CLIENT_TIME:
 			len += 12;
-			status = nfsd4_decode_time(argp, &ts);
-			iattr->ia_atime = timespec_to_timespec64(ts);
+			status = nfsd4_decode_time(argp, &iattr->ia_atime);
 			if (status)
 				return status;
 			iattr->ia_valid |= (ATTR_ATIME | ATTR_ATIME_SET);
@@ -442,8 +440,7 @@ nfsd4_decode_fattr(struct nfsd4_compoundargs *argp, u32 *bmval,
 		switch (dummy32) {
 		case NFS4_SET_TO_CLIENT_TIME:
 			len += 12;
-			status = nfsd4_decode_time(argp, &ts);
-			iattr->ia_mtime = timespec_to_timespec64(ts);
+			status = nfsd4_decode_time(argp, &iattr->ia_mtime);
 			if (status)
 				return status;
 			iattr->ia_valid |= (ATTR_MTIME | ATTR_MTIME_SET);
@@ -1390,8 +1387,10 @@ nfsd4_decode_exchange_id(struct nfsd4_compoundargs *argp,
 			p += XDR_QUADLEN(dummy);
 		}
 
-		/* ignore ssp_window and ssp_num_gss_handles: */
+		/* ssp_window and ssp_num_gss_handles */
 		READ_BUF(8);
+		dummy = be32_to_cpup(p++);
+		dummy = be32_to_cpup(p++);
 		break;
 	default:
 		goto xdr_error;
@@ -1586,8 +1585,6 @@ nfsd4_decode_getdeviceinfo(struct nfsd4_compoundargs *argp,
 	gdev->gd_maxcount = be32_to_cpup(p++);
 	num = be32_to_cpup(p++);
 	if (num) {
-		if (num > 1000)
-			goto xdr_error;
 		READ_BUF(4 * num);
 		gdev->gd_notify_types = be32_to_cpup(p++);
 		for (i = 1; i < num; i++) {
@@ -2001,31 +1998,6 @@ static __be32 *encode_change(__be32 *p, struct kstat *stat, struct inode *inode,
 		*p++ = cpu_to_be32(stat->ctime.tv_sec);
 		*p++ = cpu_to_be32(stat->ctime.tv_nsec);
 	}
-	return p;
-}
-
-/*
- * ctime (in NFSv4, time_metadata) is not writeable, and the client
- * doesn't really care what resolution could theoretically be stored by
- * the filesystem.
- *
- * The client cares how close together changes can be while still
- * guaranteeing ctime changes.  For most filesystems (which have
- * timestamps with nanosecond fields) that is limited by the resolution
- * of the time returned from current_time() (which I'm assuming to be
- * 1/HZ).
- */
-static __be32 *encode_time_delta(__be32 *p, struct inode *inode)
-{
-	struct timespec ts;
-	u32 ns;
-
-	ns = max_t(u32, NSEC_PER_SEC/HZ, inode->i_sb->s_time_gran);
-	ts = ns_to_timespec(ns);
-
-	p = xdr_encode_hyper(p, ts.tv_sec);
-	*p++ = cpu_to_be32(ts.tv_nsec);
-
 	return p;
 }
 
@@ -2820,7 +2792,9 @@ out_acl:
 		p = xdr_reserve_space(xdr, 12);
 		if (!p)
 			goto out_resource;
-		p = encode_time_delta(p, d_inode(dentry));
+		*p++ = cpu_to_be32(0);
+		*p++ = cpu_to_be32(1);
+		*p++ = cpu_to_be32(0);
 	}
 	if (bmval1 & FATTR4_WORD1_TIME_METADATA) {
 		p = xdr_reserve_space(xdr, 12);
@@ -2887,16 +2861,6 @@ out_acl:
 		status = nfsd4_encode_bitmap(xdr, supp[0], supp[1], supp[2]);
 		if (status)
 			goto out;
-	}
-
-	if (bmval2 & FATTR4_WORD2_CHANGE_ATTR_TYPE) {
-		p = xdr_reserve_space(xdr, 4);
-		if (!p)
-			goto out_resource;
-		if (IS_I_VERSION(d_inode(dentry)))
-			*p++ = cpu_to_be32(NFS4_CHANGE_TYPE_IS_MONOTONIC_INCR);
-		else
-			*p++ = cpu_to_be32(NFS4_CHANGE_TYPE_IS_TIME_METADATA);
 	}
 
 	if (bmval2 & FATTR4_WORD2_SECURITY_LABEL) {
@@ -3687,8 +3651,7 @@ nfsd4_encode_readdir(struct nfsd4_compoundres *resp, __be32 nfserr, struct nfsd4
 		nfserr = nfserr_resource;
 		goto err_no_verf;
 	}
-	maxcount = svc_max_payload(resp->rqstp);
-	maxcount = min_t(u32, readdir->rd_maxcount, maxcount);
+	maxcount = min_t(u32, readdir->rd_maxcount, INT_MAX);
 	/*
 	 * Note the rfc defines rd_maxcount as the size of the
 	 * READDIR4resok structure, which includes the verifier above
@@ -3702,7 +3665,7 @@ nfsd4_encode_readdir(struct nfsd4_compoundres *resp, __be32 nfserr, struct nfsd4
 
 	/* RFC 3530 14.2.24 allows us to ignore dircount when it's 0: */
 	if (!readdir->rd_dircount)
-		readdir->rd_dircount = svc_max_payload(resp->rqstp);
+		readdir->rd_dircount = INT_MAX;
 
 	readdir->xdr = xdr;
 	readdir->rd_maxcount = maxcount;

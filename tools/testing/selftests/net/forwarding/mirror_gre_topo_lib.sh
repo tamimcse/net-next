@@ -33,11 +33,29 @@
 #   |                                                                         |
 #   +-------------------------------------------------------------------------+
 
-source "$relative_path/mirror_topo_lib.sh"
+mirror_gre_topo_h1_create()
+{
+	simple_if_init $h1 192.0.2.1/28
+}
+
+mirror_gre_topo_h1_destroy()
+{
+	simple_if_fini $h1 192.0.2.1/28
+}
+
+mirror_gre_topo_h2_create()
+{
+	simple_if_init $h2 192.0.2.2/28
+}
+
+mirror_gre_topo_h2_destroy()
+{
+	simple_if_fini $h2 192.0.2.2/28
+}
 
 mirror_gre_topo_h3_create()
 {
-	mirror_topo_h3_create
+	simple_if_init $h3
 
 	tunnel_create h3-gt4 gretap 192.0.2.130 192.0.2.129
 	ip link set h3-gt4 vrf v$h3
@@ -53,32 +71,49 @@ mirror_gre_topo_h3_destroy()
 	tunnel_destroy h3-gt6
 	tunnel_destroy h3-gt4
 
-	mirror_topo_h3_destroy
+	simple_if_fini $h3
 }
 
 mirror_gre_topo_switch_create()
 {
-	mirror_topo_switch_create
+	ip link set dev $swp3 up
+
+	ip link add name br1 type bridge vlan_filtering 1
+	ip link set dev br1 up
+
+	ip link set dev $swp1 master br1
+	ip link set dev $swp1 up
+
+	ip link set dev $swp2 master br1
+	ip link set dev $swp2 up
 
 	tunnel_create gt4 gretap 192.0.2.129 192.0.2.130 \
 		      ttl 100 tos inherit
 
 	tunnel_create gt6 ip6gretap 2001:db8:2::1 2001:db8:2::2 \
 		      ttl 100 tos inherit allow-localremote
+
+	tc qdisc add dev $swp1 clsact
 }
 
 mirror_gre_topo_switch_destroy()
 {
+	tc qdisc del dev $swp1 clsact
+
 	tunnel_destroy gt6
 	tunnel_destroy gt4
 
-	mirror_topo_switch_destroy
+	ip link set dev $swp1 down
+	ip link set dev $swp2 down
+	ip link del dev br1
+
+	ip link set dev $swp3 down
 }
 
 mirror_gre_topo_create()
 {
-	mirror_topo_h1_create
-	mirror_topo_h2_create
+	mirror_gre_topo_h1_create
+	mirror_gre_topo_h2_create
 	mirror_gre_topo_h3_create
 
 	mirror_gre_topo_switch_create
@@ -89,6 +124,6 @@ mirror_gre_topo_destroy()
 	mirror_gre_topo_switch_destroy
 
 	mirror_gre_topo_h3_destroy
-	mirror_topo_h2_destroy
-	mirror_topo_h1_destroy
+	mirror_gre_topo_h2_destroy
+	mirror_gre_topo_h1_destroy
 }

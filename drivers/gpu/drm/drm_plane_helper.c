@@ -440,7 +440,6 @@ out:
  * @src_y: y offset of @fb for panning
  * @src_w: width of source rectangle in @fb
  * @src_h: height of source rectangle in @fb
- * @ctx: lock acquire context, not used here
  *
  * Provides a default plane update handler using the atomic plane update
  * functions. It is fully left to the driver to check plane constraints and
@@ -456,8 +455,7 @@ int drm_plane_helper_update(struct drm_plane *plane, struct drm_crtc *crtc,
 			    int crtc_x, int crtc_y,
 			    unsigned int crtc_w, unsigned int crtc_h,
 			    uint32_t src_x, uint32_t src_y,
-			    uint32_t src_w, uint32_t src_h,
-			    struct drm_modeset_acquire_ctx *ctx)
+			    uint32_t src_w, uint32_t src_h)
 {
 	struct drm_plane_state *plane_state;
 
@@ -491,7 +489,6 @@ EXPORT_SYMBOL(drm_plane_helper_update);
 /**
  * drm_plane_helper_disable() - Transitional helper for plane disable
  * @plane: plane to disable
- * @ctx: lock acquire context, not used here
  *
  * Provides a default plane disable handler using the atomic plane update
  * functions. It is fully left to the driver to check plane constraints and
@@ -502,11 +499,9 @@ EXPORT_SYMBOL(drm_plane_helper_update);
  * RETURNS:
  * Zero on success, error code on failure
  */
-int drm_plane_helper_disable(struct drm_plane *plane,
-			     struct drm_modeset_acquire_ctx *ctx)
+int drm_plane_helper_disable(struct drm_plane *plane)
 {
 	struct drm_plane_state *plane_state;
-	struct drm_framebuffer *old_fb;
 
 	/* crtc helpers love to call disable functions for already disabled hw
 	 * functions. So cope with that. */
@@ -526,9 +521,8 @@ int drm_plane_helper_disable(struct drm_plane *plane,
 	plane_state->plane = plane;
 
 	plane_state->crtc = NULL;
-	old_fb = plane_state->fb;
 	drm_atomic_set_fb_for_plane(plane_state, NULL);
 
-	return drm_plane_helper_commit(plane, plane_state, old_fb);
+	return drm_plane_helper_commit(plane, plane_state, plane->fb);
 }
 EXPORT_SYMBOL(drm_plane_helper_disable);

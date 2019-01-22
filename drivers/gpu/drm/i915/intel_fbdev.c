@@ -47,7 +47,7 @@
 
 static void intel_fbdev_invalidate(struct intel_fbdev *ifbdev)
 {
-	struct drm_i915_gem_object *obj = intel_fb_obj(&ifbdev->fb->base);
+	struct drm_i915_gem_object *obj = ifbdev->fb->obj;
 	unsigned int origin =
 		ifbdev->vma_flags & PLANE_HAS_FENCE ? ORIGIN_GTT : ORIGIN_CPU;
 
@@ -193,7 +193,7 @@ static int intelfb_create(struct drm_fb_helper *helper,
 		drm_framebuffer_put(&intel_fb->base);
 		intel_fb = ifbdev->fb = NULL;
 	}
-	if (!intel_fb || WARN_ON(!intel_fb_obj(&intel_fb->base))) {
+	if (!intel_fb || WARN_ON(!intel_fb->obj)) {
 		DRM_DEBUG_KMS("no BIOS fb, allocating a new one\n");
 		ret = intelfb_alloc(helper, sizes);
 		if (ret)
@@ -221,9 +221,6 @@ static int intelfb_create(struct drm_fb_helper *helper,
 		goto out_unlock;
 	}
 
-	fb = &ifbdev->fb->base;
-	intel_fb_obj_flush(intel_fb_obj(fb), ORIGIN_DIRTYFB);
-
 	info = drm_fb_helper_alloc_fbi(helper);
 	if (IS_ERR(info)) {
 		DRM_ERROR("Failed to allocate fb_info\n");
@@ -232,6 +229,8 @@ static int intelfb_create(struct drm_fb_helper *helper,
 	}
 
 	info->par = helper;
+
+	fb = &ifbdev->fb->base;
 
 	ifbdev->helper.fb = fb;
 
@@ -265,7 +264,7 @@ static int intelfb_create(struct drm_fb_helper *helper,
 	 * If the object is stolen however, it will be full of whatever
 	 * garbage was left in there.
 	 */
-	if (intel_fb_obj(fb)->stolen && !prealloc)
+	if (intel_fb->obj->stolen && !prealloc)
 		memset_io(info->screen_base, 0, info->screen_size);
 
 	/* Use default scratch pixmap (info->pixmap.flags = FB_PIXMAP_SYSTEM) */
@@ -641,7 +640,7 @@ static bool intel_fbdev_init_bios(struct drm_device *dev,
 		if (!crtc->state->active)
 			continue;
 
-		WARN(!crtc->primary->state->fb,
+		WARN(!crtc->primary->fb,
 		     "re-used BIOS config but lost an fb on crtc %d\n",
 		     crtc->base.id);
 	}
@@ -792,8 +791,7 @@ void intel_fbdev_set_suspend(struct drm_device *dev, int state, bool synchronous
 	 * been restored from swap. If the object is stolen however, it will be
 	 * full of whatever garbage was left in there.
 	 */
-	if (state == FBINFO_STATE_RUNNING &&
-	    intel_fb_obj(&ifbdev->fb->base)->stolen)
+	if (state == FBINFO_STATE_RUNNING && ifbdev->fb->obj->stolen)
 		memset_io(info->screen_base, 0, info->screen_size);
 
 	drm_fb_helper_set_suspend(&ifbdev->helper, state);

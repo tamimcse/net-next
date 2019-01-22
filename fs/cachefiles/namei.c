@@ -186,12 +186,12 @@ try_again:
 	 * need to wait for it to be destroyed */
 wait_for_old_object:
 	trace_cachefiles_wait_active(object, dentry, xobject);
-	clear_bit(CACHEFILES_OBJECT_ACTIVE, &object->flags);
 
 	if (fscache_object_is_live(&xobject->fscache)) {
 		pr_err("\n");
 		pr_err("Error: Unexpected object collision\n");
 		cachefiles_printk_object(object, xobject);
+		BUG();
 	}
 	atomic_inc(&xobject->usage);
 	write_unlock(&cache->active_lock);
@@ -248,6 +248,7 @@ wait_for_old_object:
 	goto try_again;
 
 requeue:
+	clear_bit(CACHEFILES_OBJECT_ACTIVE, &object->flags);
 	cache->cache.ops->put_object(&xobject->fscache, cachefiles_obj_put_wait_timeo);
 	_leave(" = -ETIMEDOUT");
 	return -ETIMEDOUT;
@@ -571,11 +572,6 @@ lookup_again:
 			if (ret < 0)
 				goto create_error;
 
-			if (unlikely(d_unhashed(next))) {
-				dput(next);
-				inode_unlock(d_inode(dir));
-				goto lookup_again;
-			}
 			ASSERT(d_backing_inode(next));
 
 			_debug("mkdir -> %p{%p{ino=%lu}}",
@@ -768,7 +764,6 @@ struct dentry *cachefiles_get_directory(struct cachefiles_cache *cache,
 	/* search the current directory for the element name */
 	inode_lock(d_inode(dir));
 
-retry:
 	start = jiffies;
 	subdir = lookup_one_len(dirname, dir, strlen(dirname));
 	cachefiles_hist(cachefiles_lookup_histogram, start);
@@ -798,10 +793,6 @@ retry:
 		if (ret < 0)
 			goto mkdir_error;
 
-		if (unlikely(d_unhashed(subdir))) {
-			dput(subdir);
-			goto retry;
-		}
 		ASSERT(d_backing_inode(subdir));
 
 		_debug("mkdir -> %p{%p{ino=%lu}}",

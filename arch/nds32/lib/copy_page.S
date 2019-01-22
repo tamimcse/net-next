@@ -2,7 +2,6 @@
 // Copyright (C) 2005-2017 Andes Technology Corporation
 
 #include <linux/linkage.h>
-#include <asm/export.h>
 #include <asm/page.h>
 
 	.text
@@ -17,7 +16,6 @@ ENTRY(copy_page)
 	popm	$r2, $r10
 	ret
 ENDPROC(copy_page)
-EXPORT_SYMBOL(copy_page)
 
 ENTRY(clear_page)
 	pushm	$r1, $r9
@@ -37,4 +35,3 @@ ENTRY(clear_page)
 	popm	$r1, $r9
         ret
 ENDPROC(clear_page)
-EXPORT_SYMBOL(clear_page)

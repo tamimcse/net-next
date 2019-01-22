@@ -19,8 +19,8 @@ static void free_extent_map_tree(struct extent_map_tree *em_tree)
 
 #ifdef CONFIG_BTRFS_DEBUG
 		if (refcount_read(&em->refs) != 1) {
-			test_err(
-"em leak: em (start 0x%llx len 0x%llx block_start 0x%llx block_len 0x%llx) refs %d",
+			test_msg(
+"em leak: em (start 0x%llx len 0x%llx block_start 0x%llx block_len 0x%llx) refs %d\n",
 				 em->start, em->len, em->block_start,
 				 em->block_len, refcount_read(&em->refs));
 
@@ -47,8 +47,7 @@ static void free_extent_map_tree(struct extent_map_tree *em_tree)
  *                                    ->add_extent_mapping(0, 16K)
  *                                    -> #handle -EEXIST
  */
-static void test_case_1(struct btrfs_fs_info *fs_info,
-		struct extent_map_tree *em_tree)
+static void test_case_1(struct extent_map_tree *em_tree)
 {
 	struct extent_map *em;
 	u64 start = 0;
@@ -91,14 +90,14 @@ static void test_case_1(struct btrfs_fs_info *fs_info,
 	em->len = len;
 	em->block_start = start;
 	em->block_len = len;
-	ret = btrfs_add_extent_mapping(fs_info, em_tree, &em, em->start, em->len);
+	ret = btrfs_add_extent_mapping(em_tree, &em, em->start, em->len);
 	if (ret)
-		test_err("case1 [%llu %llu]: ret %d", start, start + len, ret);
+		test_msg("case1 [%llu %llu]: ret %d\n", start, start + len, ret);
 	if (em &&
 	    (em->start != 0 || extent_map_end(em) != SZ_16K ||
 	     em->block_start != 0 || em->block_len != SZ_16K))
-		test_err(
-"case1 [%llu %llu]: ret %d return a wrong em (start %llu len %llu block_start %llu block_len %llu",
+		test_msg(
+"case1 [%llu %llu]: ret %d return a wrong em (start %llu len %llu block_start %llu block_len %llu\n",
 			 start, start + len, ret, em->start, em->len,
 			 em->block_start, em->block_len);
 	free_extent_map(em);
@@ -113,8 +112,7 @@ out:
  * Reading the inline ending up with EEXIST, ie. read an inline
  * extent and discard page cache and read it again.
  */
-static void test_case_2(struct btrfs_fs_info *fs_info,
-		struct extent_map_tree *em_tree)
+static void test_case_2(struct extent_map_tree *em_tree)
 {
 	struct extent_map *em;
 	int ret;
@@ -155,14 +153,14 @@ static void test_case_2(struct btrfs_fs_info *fs_info,
 	em->len = SZ_1K;
 	em->block_start = EXTENT_MAP_INLINE;
 	em->block_len = (u64)-1;
-	ret = btrfs_add_extent_mapping(fs_info, em_tree, &em, em->start, em->len);
+	ret = btrfs_add_extent_mapping(em_tree, &em, em->start, em->len);
 	if (ret)
-		test_err("case2 [0 1K]: ret %d", ret);
+		test_msg("case2 [0 1K]: ret %d\n", ret);
 	if (em &&
 	    (em->start != 0 || extent_map_end(em) != SZ_1K ||
 	     em->block_start != EXTENT_MAP_INLINE || em->block_len != (u64)-1))
-		test_err(
-"case2 [0 1K]: ret %d return a wrong em (start %llu len %llu block_start %llu block_len %llu",
+		test_msg(
+"case2 [0 1K]: ret %d return a wrong em (start %llu len %llu block_start %llu block_len %llu\n",
 			 ret, em->start, em->len, em->block_start,
 			 em->block_len);
 	free_extent_map(em);
@@ -171,8 +169,7 @@ out:
 	free_extent_map_tree(em_tree);
 }
 
-static void __test_case_3(struct btrfs_fs_info *fs_info,
-		struct extent_map_tree *em_tree, u64 start)
+static void __test_case_3(struct extent_map_tree *em_tree, u64 start)
 {
 	struct extent_map *em;
 	u64 len = SZ_4K;
@@ -201,9 +198,9 @@ static void __test_case_3(struct btrfs_fs_info *fs_info,
 	em->len = SZ_16K;
 	em->block_start = 0;
 	em->block_len = SZ_16K;
-	ret = btrfs_add_extent_mapping(fs_info, em_tree, &em, start, len);
+	ret = btrfs_add_extent_mapping(em_tree, &em, start, len);
 	if (ret)
-		test_err("case3 [0x%llx 0x%llx): ret %d",
+		test_msg("case3 [0x%llx 0x%llx): ret %d\n",
 			 start, start + len, ret);
 	/*
 	 * Since bytes within em are contiguous, em->block_start is identical to
@@ -212,8 +209,8 @@ static void __test_case_3(struct btrfs_fs_info *fs_info,
 	if (em &&
 	    (start < em->start || start + len > extent_map_end(em) ||
 	     em->start != em->block_start || em->len != em->block_len))
-		test_err(
-"case3 [0x%llx 0x%llx): ret %d em (start 0x%llx len 0x%llx block_start 0x%llx block_len 0x%llx)",
+		test_msg(
+"case3 [0x%llx 0x%llx): ret %d em (start 0x%llx len 0x%llx block_start 0x%llx block_len 0x%llx)\n",
 			 start, start + len, ret, em->start, em->len,
 			 em->block_start, em->block_len);
 	free_extent_map(em);
@@ -238,16 +235,14 @@ out:
  *   -> add_extent_mapping()
  *                            -> add_extent_mapping()
  */
-static void test_case_3(struct btrfs_fs_info *fs_info,
-		struct extent_map_tree *em_tree)
+static void test_case_3(struct extent_map_tree *em_tree)
 {
-	__test_case_3(fs_info, em_tree, 0);
-	__test_case_3(fs_info, em_tree, SZ_8K);
-	__test_case_3(fs_info, em_tree, (12 * 1024ULL));
+	__test_case_3(em_tree, 0);
+	__test_case_3(em_tree, SZ_8K);
+	__test_case_3(em_tree, (12 * 1024ULL));
 }
 
-static void __test_case_4(struct btrfs_fs_info *fs_info,
-		struct extent_map_tree *em_tree, u64 start)
+static void __test_case_4(struct extent_map_tree *em_tree, u64 start)
 {
 	struct extent_map *em;
 	u64 len = SZ_4K;
@@ -288,14 +283,14 @@ static void __test_case_4(struct btrfs_fs_info *fs_info,
 	em->len = SZ_32K;
 	em->block_start = 0;
 	em->block_len = SZ_32K;
-	ret = btrfs_add_extent_mapping(fs_info, em_tree, &em, start, len);
+	ret = btrfs_add_extent_mapping(em_tree, &em, start, len);
 	if (ret)
-		test_err("case4 [0x%llx 0x%llx): ret %d",
+		test_msg("case4 [0x%llx 0x%llx): ret %d\n",
 			 start, len, ret);
 	if (em &&
 	    (start < em->start || start + len > extent_map_end(em)))
-		test_err(
-"case4 [0x%llx 0x%llx): ret %d, added wrong em (start 0x%llx len 0x%llx block_start 0x%llx block_len 0x%llx)",
+		test_msg(
+"case4 [0x%llx 0x%llx): ret %d, added wrong em (start 0x%llx len 0x%llx block_start 0x%llx block_len 0x%llx)\n",
 			 start, len, ret, em->start, em->len, em->block_start,
 			 em->block_len);
 	free_extent_map(em);
@@ -329,45 +324,30 @@ out:
  *                                             # handle -EEXIST when adding
  *                                             # [0, 32K)
  */
-static void test_case_4(struct btrfs_fs_info *fs_info,
-		struct extent_map_tree *em_tree)
+static void test_case_4(struct extent_map_tree *em_tree)
 {
-	__test_case_4(fs_info, em_tree, 0);
-	__test_case_4(fs_info, em_tree, SZ_4K);
+	__test_case_4(em_tree, 0);
+	__test_case_4(em_tree, SZ_4K);
 }
 
 int btrfs_test_extent_map(void)
 {
-	struct btrfs_fs_info *fs_info = NULL;
 	struct extent_map_tree *em_tree;
 
-	test_msg("running extent_map tests");
-
-	/*
-	 * Note: the fs_info is not set up completely, we only need
-	 * fs_info::fsid for the tracepoint.
-	 */
-	fs_info = btrfs_alloc_dummy_fs_info(PAGE_SIZE, PAGE_SIZE);
-	if (!fs_info) {
-		test_msg("Couldn't allocate dummy fs info");
-		return -ENOMEM;
-	}
+	test_msg("Running extent_map tests\n");
 
 	em_tree = kzalloc(sizeof(*em_tree), GFP_KERNEL);
 	if (!em_tree)
 		/* Skip the test on error. */
-		goto out;
+		return 0;
 
 	extent_map_tree_init(em_tree);
 
-	test_case_1(fs_info, em_tree);
-	test_case_2(fs_info, em_tree);
-	test_case_3(fs_info, em_tree);
-	test_case_4(fs_info, em_tree);
+	test_case_1(em_tree);
+	test_case_2(em_tree);
+	test_case_3(em_tree);
+	test_case_4(em_tree);
 
 	kfree(em_tree);
-out:
-	btrfs_free_dummy_fs_info(fs_info);
-
 	return 0;
 }

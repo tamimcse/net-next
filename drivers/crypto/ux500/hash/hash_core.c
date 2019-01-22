@@ -21,7 +21,6 @@
 #include <linux/klist.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/mod_devicetable.h>
 #include <linux/platform_device.h>
 #include <linux/crypto.h>
 
@@ -1525,7 +1524,8 @@ static struct hash_algo_template hash_algs[] = {
 			.halg.base = {
 				.cra_name = "sha1",
 				.cra_driver_name = "sha1-ux500",
-				.cra_flags = CRYPTO_ALG_ASYNC,
+				.cra_flags = (CRYPTO_ALG_TYPE_AHASH |
+					      CRYPTO_ALG_ASYNC),
 				.cra_blocksize = SHA1_BLOCK_SIZE,
 				.cra_ctxsize = sizeof(struct hash_ctx),
 				.cra_init = hash_cra_init,
@@ -1548,9 +1548,11 @@ static struct hash_algo_template hash_algs[] = {
 			.halg.base = {
 				.cra_name = "sha256",
 				.cra_driver_name = "sha256-ux500",
-				.cra_flags = CRYPTO_ALG_ASYNC,
+				.cra_flags = (CRYPTO_ALG_TYPE_AHASH |
+					      CRYPTO_ALG_ASYNC),
 				.cra_blocksize = SHA256_BLOCK_SIZE,
 				.cra_ctxsize = sizeof(struct hash_ctx),
+				.cra_type = &crypto_ahash_type,
 				.cra_init = hash_cra_init,
 				.cra_module = THIS_MODULE,
 			}
@@ -1572,9 +1574,11 @@ static struct hash_algo_template hash_algs[] = {
 			.halg.base = {
 				.cra_name = "hmac(sha1)",
 				.cra_driver_name = "hmac-sha1-ux500",
-				.cra_flags = CRYPTO_ALG_ASYNC,
+				.cra_flags = (CRYPTO_ALG_TYPE_AHASH |
+					      CRYPTO_ALG_ASYNC),
 				.cra_blocksize = SHA1_BLOCK_SIZE,
 				.cra_ctxsize = sizeof(struct hash_ctx),
+				.cra_type = &crypto_ahash_type,
 				.cra_init = hash_cra_init,
 				.cra_module = THIS_MODULE,
 			}
@@ -1596,9 +1600,11 @@ static struct hash_algo_template hash_algs[] = {
 			.halg.base = {
 				.cra_name = "hmac(sha256)",
 				.cra_driver_name = "hmac-sha256-ux500",
-				.cra_flags = CRYPTO_ALG_ASYNC,
+				.cra_flags = (CRYPTO_ALG_TYPE_AHASH |
+					      CRYPTO_ALG_ASYNC),
 				.cra_blocksize = SHA256_BLOCK_SIZE,
 				.cra_ctxsize = sizeof(struct hash_ctx),
+				.cra_type = &crypto_ahash_type,
 				.cra_init = hash_cra_init,
 				.cra_module = THIS_MODULE,
 			}

@@ -170,11 +170,13 @@ static int omap_fbdev_create(struct drm_fb_helper *helper,
 		goto fail;
 	}
 
+	mutex_lock(&dev->struct_mutex);
+
 	fbi = drm_fb_helper_alloc_fbi(helper);
 	if (IS_ERR(fbi)) {
 		dev_err(dev->dev, "failed to allocate fb info\n");
 		ret = PTR_ERR(fbi);
-		goto fail;
+		goto fail_unlock;
 	}
 
 	DBG("fbi=%p, dev=%p", fbi, dev);
@@ -210,8 +212,12 @@ static int omap_fbdev_create(struct drm_fb_helper *helper,
 	DBG("par=%p, %dx%d", fbi->par, fbi->var.xres, fbi->var.yres);
 	DBG("allocated %dx%d fb", fbdev->fb->width, fbdev->fb->height);
 
+	mutex_unlock(&dev->struct_mutex);
+
 	return 0;
 
+fail_unlock:
+	mutex_unlock(&dev->struct_mutex);
 fail:
 
 	if (ret) {

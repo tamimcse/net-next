@@ -46,6 +46,7 @@
 #include <linux/virtio_scsi.h>
 #include <linux/llist.h>
 #include <linux/bitmap.h>
+#include <linux/percpu_ida.h>
 
 #include "vhost.h"
 
@@ -55,7 +56,7 @@
 #define VHOST_SCSI_DEFAULT_TAGS 256
 #define VHOST_SCSI_PREALLOC_SGLS 2048
 #define VHOST_SCSI_PREALLOC_UPAGES 2048
-#define VHOST_SCSI_PREALLOC_PROT_SGLS 2048
+#define VHOST_SCSI_PREALLOC_PROT_SGLS 512
 
 struct vhost_scsi_inflight {
 	/* Wait for the flush operation to finish */
@@ -323,7 +324,7 @@ static void vhost_scsi_release_cmd(struct se_cmd *se_cmd)
 	}
 
 	vhost_scsi_put_inflight(tv_cmd->inflight);
-	target_free_tag(se_sess, se_cmd);
+	percpu_ida_free(&se_sess->sess_tag_pool, se_cmd->map_tag);
 }
 
 static u32 vhost_scsi_sess_get_index(struct se_session *se_sess)
@@ -566,7 +567,7 @@ vhost_scsi_get_tag(struct vhost_virtqueue *vq, struct vhost_scsi_tpg *tpg,
 	struct se_session *se_sess;
 	struct scatterlist *sg, *prot_sg;
 	struct page **pages;
-	int tag, cpu;
+	int tag;
 
 	tv_nexus = tpg->tpg_nexus;
 	if (!tv_nexus) {
@@ -575,7 +576,7 @@ vhost_scsi_get_tag(struct vhost_virtqueue *vq, struct vhost_scsi_tpg *tpg,
 	}
 	se_sess = tv_nexus->tvn_se_sess;
 
-	tag = sbitmap_queue_get(&se_sess->sess_tag_pool, &cpu);
+	tag = percpu_ida_alloc(&se_sess->sess_tag_pool, TASK_RUNNING);
 	if (tag < 0) {
 		pr_err("Unable to obtain tag for vhost_scsi_cmd\n");
 		return ERR_PTR(-ENOMEM);
@@ -590,7 +591,6 @@ vhost_scsi_get_tag(struct vhost_virtqueue *vq, struct vhost_scsi_tpg *tpg,
 	cmd->tvc_prot_sgl = prot_sg;
 	cmd->tvc_upages = pages;
 	cmd->tvc_se_cmd.map_tag = tag;
-	cmd->tvc_se_cmd.map_cpu = cpu;
 	cmd->tvc_tag = scsi_tag;
 	cmd->tvc_lun = lun;
 	cmd->tvc_task_attr = task_attr;
@@ -1378,7 +1378,7 @@ static int vhost_scsi_open(struct inode *inode, struct file *f)
 			goto err_vs;
 	}
 
-	vqs = kmalloc_array(VHOST_SCSI_MAX_VQ, sizeof(*vqs), GFP_KERNEL);
+	vqs = kmalloc(VHOST_SCSI_MAX_VQ * sizeof(*vqs), GFP_KERNEL);
 	if (!vqs)
 		goto err_vqs;
 
@@ -1685,25 +1685,22 @@ static int vhost_scsi_nexus_cb(struct se_portal_group *se_tpg,
 	for (i = 0; i < VHOST_SCSI_DEFAULT_TAGS; i++) {
 		tv_cmd = &((struct vhost_scsi_cmd *)se_sess->sess_cmd_map)[i];
 
-		tv_cmd->tvc_sgl = kcalloc(VHOST_SCSI_PREALLOC_SGLS,
-					  sizeof(struct scatterlist),
-					  GFP_KERNEL);
+		tv_cmd->tvc_sgl = kzalloc(sizeof(struct scatterlist) *
+					VHOST_SCSI_PREALLOC_SGLS, GFP_KERNEL);
 		if (!tv_cmd->tvc_sgl) {
 			pr_err("Unable to allocate tv_cmd->tvc_sgl\n");
 			goto out;
 		}
 
-		tv_cmd->tvc_upages = kcalloc(VHOST_SCSI_PREALLOC_UPAGES,
-					     sizeof(struct page *),
-					     GFP_KERNEL);
+		tv_cmd->tvc_upages = kzalloc(sizeof(struct page *) *
+				VHOST_SCSI_PREALLOC_UPAGES, GFP_KERNEL);
 		if (!tv_cmd->tvc_upages) {
 			pr_err("Unable to allocate tv_cmd->tvc_upages\n");
 			goto out;
 		}
 
-		tv_cmd->tvc_prot_sgl = kcalloc(VHOST_SCSI_PREALLOC_PROT_SGLS,
-					       sizeof(struct scatterlist),
-					       GFP_KERNEL);
+		tv_cmd->tvc_prot_sgl = kzalloc(sizeof(struct scatterlist) *
+				VHOST_SCSI_PREALLOC_PROT_SGLS, GFP_KERNEL);
 		if (!tv_cmd->tvc_prot_sgl) {
 			pr_err("Unable to allocate tv_cmd->tvc_prot_sgl\n");
 			goto out;
@@ -1738,7 +1735,7 @@ static int vhost_scsi_make_nexus(struct vhost_scsi_tpg *tpg,
 	 * struct se_node_acl for the vhost_scsi struct se_portal_group with
 	 * the SCSI Initiator port name of the passed configfs group 'name'.
 	 */
-	tv_nexus->tvn_se_sess = target_setup_session(&tpg->se_tpg,
+	tv_nexus->tvn_se_sess = target_alloc_session(&tpg->se_tpg,
 					VHOST_SCSI_DEFAULT_TAGS,
 					sizeof(struct vhost_scsi_cmd),
 					TARGET_PROT_DIN_PASS | TARGET_PROT_DOUT_PASS,
@@ -1797,7 +1794,7 @@ static int vhost_scsi_drop_nexus(struct vhost_scsi_tpg *tpg)
 	/*
 	 * Release the SCSI I_T Nexus to the emulated vhost Target Port
 	 */
-	target_remove_session(se_sess);
+	transport_deregister_session(tv_nexus->tvn_se_sess);
 	tpg->tpg_nexus = NULL;
 	mutex_unlock(&tpg->tv_tpg_mutex);
 
@@ -1912,7 +1909,9 @@ static struct configfs_attribute *vhost_scsi_tpg_attrs[] = {
 };
 
 static struct se_portal_group *
-vhost_scsi_make_tpg(struct se_wwn *wwn, const char *name)
+vhost_scsi_make_tpg(struct se_wwn *wwn,
+		   struct config_group *group,
+		   const char *name)
 {
 	struct vhost_scsi_tport *tport = container_of(wwn,
 			struct vhost_scsi_tport, tport_wwn);

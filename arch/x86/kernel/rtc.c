@@ -39,7 +39,7 @@ EXPORT_SYMBOL(rtc_lock);
  * jump to the next second precisely 500 ms later. Check the Motorola
  * MC146818A or Dallas DS12887 data sheet for details.
  */
-int mach_set_rtc_mmss(const struct timespec64 *now)
+int mach_set_rtc_mmss(const struct timespec *now)
 {
 	unsigned long long nowtime = now->tv_sec;
 	struct rtc_time tm;
@@ -60,7 +60,7 @@ int mach_set_rtc_mmss(const struct timespec64 *now)
 	return retval;
 }
 
-void mach_get_cmos_time(struct timespec64 *now)
+void mach_get_cmos_time(struct timespec *now)
 {
 	unsigned int status, year, mon, day, hour, min, sec, century = 0;
 	unsigned long flags;
@@ -118,7 +118,7 @@ void mach_get_cmos_time(struct timespec64 *now)
 	} else
 		year += CMOS_YEARS_OFFS;
 
-	now->tv_sec = mktime64(year, mon, day, hour, min, sec);
+	now->tv_sec = mktime(year, mon, day, hour, min, sec);
 	now->tv_nsec = 0;
 }
 
@@ -145,13 +145,13 @@ void rtc_cmos_write(unsigned char val, unsigned char addr)
 }
 EXPORT_SYMBOL(rtc_cmos_write);
 
-int update_persistent_clock64(struct timespec64 now)
+int update_persistent_clock(struct timespec now)
 {
 	return x86_platform.set_wallclock(&now);
 }
 
 /* not static: needed by APM */
-void read_persistent_clock64(struct timespec64 *ts)
+void read_persistent_clock(struct timespec *ts)
 {
 	x86_platform.get_wallclock(ts);
 }

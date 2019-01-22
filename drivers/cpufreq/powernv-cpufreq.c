@@ -758,13 +758,8 @@ static int powernv_cpufreq_target_index(struct cpufreq_policy *policy,
 
 	cur_msec = jiffies_to_msecs(get_jiffies_64());
 
-	freq_data.pstate_id = idx_to_pstate(new_index);
-	if (!gpstates) {
-		freq_data.gpstate_id = freq_data.pstate_id;
-		goto no_gpstate;
-	}
-
 	spin_lock(&gpstates->gpstate_lock);
+	freq_data.pstate_id = idx_to_pstate(new_index);
 
 	if (!gpstates->last_sampled_time) {
 		gpstate_idx = new_index;
@@ -814,7 +809,6 @@ gpstates_done:
 
 	spin_unlock(&gpstates->gpstate_lock);
 
-no_gpstate:
 	/*
 	 * Use smp_call_function to send IPI and execute the
 	 * mtspr on target CPU.  We could do that without IPI
@@ -849,13 +843,6 @@ static int powernv_cpufreq_cpu_init(struct cpufreq_policy *policy)
 		kernfs_put(kn);
 	}
 
-	policy->freq_table = powernv_freqs;
-	policy->fast_switch_possible = true;
-
-	if (pvr_version_is(PVR_POWER9))
-		return 0;
-
-	/* Initialise Gpstate ramp-down timer only on POWER8 */
 	gpstates =  kzalloc(sizeof(*gpstates), GFP_KERNEL);
 	if (!gpstates)
 		return -ENOMEM;
@@ -870,6 +857,8 @@ static int powernv_cpufreq_cpu_init(struct cpufreq_policy *policy)
 				msecs_to_jiffies(GPSTATE_TIMER_INTERVAL);
 	spin_lock_init(&gpstates->gpstate_lock);
 
+	policy->freq_table = powernv_freqs;
+	policy->fast_switch_possible = true;
 	return 0;
 }
 
@@ -1009,8 +998,7 @@ static void powernv_cpufreq_stop_cpu(struct cpufreq_policy *policy)
 	freq_data.pstate_id = idx_to_pstate(powernv_pstate_info.min);
 	freq_data.gpstate_id = idx_to_pstate(powernv_pstate_info.min);
 	smp_call_function_single(policy->cpu, set_pstate, &freq_data, 1);
-	if (gpstates)
-		del_timer_sync(&gpstates->timer);
+	del_timer_sync(&gpstates->timer);
 }
 
 static unsigned int powernv_fast_switch(struct cpufreq_policy *policy,

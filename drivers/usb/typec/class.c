@@ -10,13 +10,39 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/slab.h>
+#include <linux/usb/typec.h>
+#include <linux/usb/typec_mux.h>
 
-#include "bus.h"
+struct typec_mode {
+	int				index;
+	u32				vdo;
+	char				*desc;
+	enum typec_port_type		roles;
+
+	struct typec_altmode		*alt_mode;
+
+	unsigned int			active:1;
+
+	char				group_name[6];
+	struct attribute_group		group;
+	struct attribute		*attrs[5];
+	struct device_attribute		vdo_attr;
+	struct device_attribute		desc_attr;
+	struct device_attribute		active_attr;
+	struct device_attribute		roles_attr;
+};
+
+struct typec_altmode {
+	struct device			dev;
+	u16				svid;
+	int				n_modes;
+	struct typec_mode		modes[ALTMODE_MAX_MODES];
+	const struct attribute_group	*mode_groups[ALTMODE_MAX_MODES];
+};
 
 struct typec_plug {
 	struct device			dev;
 	enum typec_plug_index		index;
-	struct ida			mode_ids;
 };
 
 struct typec_cable {
@@ -31,13 +57,11 @@ struct typec_partner {
 	unsigned int			usb_pd:1;
 	struct usb_pd_identity		*identity;
 	enum typec_accessory		accessory;
-	struct ida			mode_ids;
 };
 
 struct typec_port {
 	unsigned int			id;
 	struct device			dev;
-	struct ida			mode_ids;
 
 	int				prefer_role;
 	enum typec_data_role		data_role;
@@ -58,14 +82,17 @@ struct typec_port {
 #define to_typec_plug(_dev_) container_of(_dev_, struct typec_plug, dev)
 #define to_typec_cable(_dev_) container_of(_dev_, struct typec_cable, dev)
 #define to_typec_partner(_dev_) container_of(_dev_, struct typec_partner, dev)
+#define to_altmode(_dev_) container_of(_dev_, struct typec_altmode, dev)
 
 static const struct device_type typec_partner_dev_type;
 static const struct device_type typec_cable_dev_type;
 static const struct device_type typec_plug_dev_type;
+static const struct device_type typec_port_dev_type;
 
 #define is_typec_partner(_dev_) (_dev_->type == &typec_partner_dev_type)
 #define is_typec_cable(_dev_) (_dev_->type == &typec_cable_dev_type)
 #define is_typec_plug(_dev_) (_dev_->type == &typec_plug_dev_type)
+#define is_typec_port(_dev_) (_dev_->type == &typec_port_dev_type)
 
 static DEFINE_IDA(typec_index_ida);
 static struct class *typec_class;
@@ -147,148 +174,28 @@ static void typec_report_identity(struct device *dev)
 /* ------------------------------------------------------------------------- */
 /* Alternate Modes */
 
-static int altmode_match(struct device *dev, void *data)
-{
-	struct typec_altmode *adev = to_typec_altmode(dev);
-	struct typec_device_id *id = data;
-
-	if (!is_typec_altmode(dev))
-		return 0;
-
-	return ((adev->svid == id->svid) && (adev->mode == id->mode));
-}
-
-static void typec_altmode_set_partner(struct altmode *altmode)
-{
-	struct typec_altmode *adev = &altmode->adev;
-	struct typec_device_id id = { adev->svid, adev->mode, };
-	struct typec_port *port = typec_altmode2port(adev);
-	struct altmode *partner;
-	struct device *dev;
-
-	dev = device_find_child(&port->dev, &id, altmode_match);
-	if (!dev)
-		return;
-
-	/* Bind the port alt mode to the partner/plug alt mode. */
-	partner = to_altmode(to_typec_altmode(dev));
-	altmode->partner = partner;
-
-	/* Bind the partner/plug alt mode to the port alt mode. */
-	if (is_typec_plug(adev->dev.parent)) {
-		struct typec_plug *plug = to_typec_plug(adev->dev.parent);
-
-		partner->plug[plug->index] = altmode;
-	} else {
-		partner->partner = altmode;
-	}
-}
-
-static void typec_altmode_put_partner(struct altmode *altmode)
-{
-	struct altmode *partner = altmode->partner;
-	struct typec_altmode *adev;
-
-	if (!partner)
-		return;
-
-	adev = &partner->adev;
-
-	if (is_typec_plug(adev->dev.parent)) {
-		struct typec_plug *plug = to_typec_plug(adev->dev.parent);
-
-		partner->plug[plug->index] = NULL;
-	} else {
-		partner->partner = NULL;
-	}
-	put_device(&adev->dev);
-}
-
-static int __typec_port_match(struct device *dev, const void *name)
-{
-	return !strcmp((const char *)name, dev_name(dev));
-}
-
-static void *typec_port_match(struct device_connection *con, int ep, void *data)
-{
-	return class_find_device(typec_class, NULL, con->endpoint[ep],
-				 __typec_port_match);
-}
-
-struct typec_altmode *
-typec_altmode_register_notifier(struct device *dev, u16 svid, u8 mode,
-				struct notifier_block *nb)
-{
-	struct typec_device_id id = { svid, mode, };
-	struct device *altmode_dev;
-	struct device *port_dev;
-	struct altmode *altmode;
-	int ret;
-
-	/* Find the port linked to the caller */
-	port_dev = device_connection_find_match(dev, NULL, NULL,
-						typec_port_match);
-	if (IS_ERR_OR_NULL(port_dev))
-		return port_dev ? ERR_CAST(port_dev) : ERR_PTR(-ENODEV);
-
-	/* Find the altmode with matching svid */
-	altmode_dev = device_find_child(port_dev, &id, altmode_match);
-
-	put_device(port_dev);
-
-	if (!altmode_dev)
-		return ERR_PTR(-ENODEV);
-
-	altmode = to_altmode(to_typec_altmode(altmode_dev));
-
-	/* Register notifier */
-	ret = blocking_notifier_chain_register(&altmode->nh, nb);
-	if (ret) {
-		put_device(altmode_dev);
-		return ERR_PTR(ret);
-	}
-
-	return &altmode->adev;
-}
-EXPORT_SYMBOL_GPL(typec_altmode_register_notifier);
-
-void typec_altmode_unregister_notifier(struct typec_altmode *adev,
-				       struct notifier_block *nb)
-{
-	struct altmode *altmode = to_altmode(adev);
-
-	blocking_notifier_chain_unregister(&altmode->nh, nb);
-	put_device(&adev->dev);
-}
-EXPORT_SYMBOL_GPL(typec_altmode_unregister_notifier);
-
 /**
  * typec_altmode_update_active - Report Enter/Exit mode
- * @adev: Handle to the alternate mode
+ * @alt: Handle to the alternate mode
+ * @mode: Mode index
  * @active: True when the mode has been entered
  *
  * If a partner or cable plug executes Enter/Exit Mode command successfully, the
  * drivers use this routine to report the updated state of the mode.
  */
-void typec_altmode_update_active(struct typec_altmode *adev, bool active)
+void typec_altmode_update_active(struct typec_altmode *alt, int mode,
+				 bool active)
 {
+	struct typec_mode *m = &alt->modes[mode];
 	char dir[6];
 
-	if (adev->active == active)
+	if (m->active == active)
 		return;
 
-	if (!is_typec_port(adev->dev.parent)) {
-		if (!active)
-			module_put(adev->dev.driver->owner);
-		else
-			WARN_ON(!try_module_get(adev->dev.driver->owner));
-	}
-
-	adev->active = active;
-	snprintf(dir, sizeof(dir), "mode%d", adev->mode);
-	sysfs_notify(&adev->dev.kobj, dir, "active");
-	sysfs_notify(&adev->dev.kobj, NULL, "active");
-	kobject_uevent(&adev->dev.kobj, KOBJ_CHANGE);
+	m->active = active;
+	snprintf(dir, sizeof(dir), "mode%d", mode);
+	sysfs_notify(&alt->dev.kobj, dir, "active");
+	kobject_uevent(&alt->dev.kobj, KOBJ_CHANGE);
 }
 EXPORT_SYMBOL_GPL(typec_altmode_update_active);
 
@@ -313,78 +220,68 @@ struct typec_port *typec_altmode2port(struct typec_altmode *alt)
 EXPORT_SYMBOL_GPL(typec_altmode2port);
 
 static ssize_t
-vdo_show(struct device *dev, struct device_attribute *attr, char *buf)
+typec_altmode_vdo_show(struct device *dev, struct device_attribute *attr,
+		       char *buf)
 {
-	struct typec_altmode *alt = to_typec_altmode(dev);
+	struct typec_mode *mode = container_of(attr, struct typec_mode,
+					       vdo_attr);
 
-	return sprintf(buf, "0x%08x\n", alt->vdo);
+	return sprintf(buf, "0x%08x\n", mode->vdo);
 }
-static DEVICE_ATTR_RO(vdo);
 
 static ssize_t
-description_show(struct device *dev, struct device_attribute *attr, char *buf)
+typec_altmode_desc_show(struct device *dev, struct device_attribute *attr,
+			char *buf)
 {
-	struct typec_altmode *alt = to_typec_altmode(dev);
+	struct typec_mode *mode = container_of(attr, struct typec_mode,
+					       desc_attr);
 
-	return sprintf(buf, "%s\n", alt->desc ? alt->desc : "");
+	return sprintf(buf, "%s\n", mode->desc ? mode->desc : "");
 }
-static DEVICE_ATTR_RO(description);
 
 static ssize_t
-active_show(struct device *dev, struct device_attribute *attr, char *buf)
+typec_altmode_active_show(struct device *dev, struct device_attribute *attr,
+			  char *buf)
 {
-	struct typec_altmode *alt = to_typec_altmode(dev);
+	struct typec_mode *mode = container_of(attr, struct typec_mode,
+					       active_attr);
 
-	return sprintf(buf, "%s\n", alt->active ? "yes" : "no");
+	return sprintf(buf, "%s\n", mode->active ? "yes" : "no");
 }
 
-static ssize_t active_store(struct device *dev, struct device_attribute *attr,
-			    const char *buf, size_t size)
+static ssize_t
+typec_altmode_active_store(struct device *dev, struct device_attribute *attr,
+			   const char *buf, size_t size)
 {
-	struct typec_altmode *adev = to_typec_altmode(dev);
-	struct altmode *altmode = to_altmode(adev);
-	bool enter;
+	struct typec_mode *mode = container_of(attr, struct typec_mode,
+					       active_attr);
+	struct typec_port *port = typec_altmode2port(mode->alt_mode);
+	bool activate;
 	int ret;
 
-	ret = kstrtobool(buf, &enter);
+	if (!port->cap->activate_mode)
+		return -EOPNOTSUPP;
+
+	ret = kstrtobool(buf, &activate);
 	if (ret)
 		return ret;
 
-	if (adev->active == enter)
-		return size;
-
-	if (is_typec_port(adev->dev.parent)) {
-		typec_altmode_update_active(adev, enter);
-
-		/* Make sure that the partner exits the mode before disabling */
-		if (altmode->partner && !enter && altmode->partner->adev.active)
-			typec_altmode_exit(&altmode->partner->adev);
-	} else if (altmode->partner) {
-		if (enter && !altmode->partner->adev.active) {
-			dev_warn(dev, "port has the mode disabled\n");
-			return -EPERM;
-		}
-	}
-
-	/* Note: If there is no driver, the mode will not be entered */
-	if (adev->ops && adev->ops->activate) {
-		ret = adev->ops->activate(adev, enter);
-		if (ret)
-			return ret;
-	}
+	ret = port->cap->activate_mode(port->cap, mode->index, activate);
+	if (ret)
+		return ret;
 
 	return size;
 }
-static DEVICE_ATTR_RW(active);
 
 static ssize_t
-supported_roles_show(struct device *dev, struct device_attribute *attr,
-		     char *buf)
+typec_altmode_roles_show(struct device *dev, struct device_attribute *attr,
+			 char *buf)
 {
-	struct altmode *alt = to_altmode(to_typec_altmode(dev));
+	struct typec_mode *mode = container_of(attr, struct typec_mode,
+					       roles_attr);
 	ssize_t ret;
 
-	switch (alt->roles) {
+	switch (mode->roles) {
 	case TYPEC_PORT_SRC:
 		ret = sprintf(buf, "source\n");
 		break;
@@ -398,74 +295,89 @@ supported_roles_show(struct device *dev, struct device_attribute *attr,
 	}
 	return ret;
 }
-static DEVICE_ATTR_RO(supported_roles);
 
-static ssize_t
-mode_show(struct device *dev, struct device_attribute *attr, char *buf)
+static void typec_init_modes(struct typec_altmode *alt,
+			     const struct typec_mode_desc *desc, bool is_port)
 {
-	struct typec_altmode *adev = to_typec_altmode(dev);
+	int i;
 
-	return sprintf(buf, "%u\n", adev->mode);
+	for (i = 0; i < alt->n_modes; i++, desc++) {
+		struct typec_mode *mode = &alt->modes[i];
+
+		/* Not considering the human readable description critical */
+		mode->desc = kstrdup(desc->desc, GFP_KERNEL);
+		if (desc->desc && !mode->desc)
+			dev_err(&alt->dev, "failed to copy mode%d desc\n", i);
+
+		mode->alt_mode = alt;
+		mode->vdo = desc->vdo;
+		mode->roles = desc->roles;
+		mode->index = desc->index;
+		sprintf(mode->group_name, "mode%d", desc->index);
+
+		sysfs_attr_init(&mode->vdo_attr.attr);
+		mode->vdo_attr.attr.name = "vdo";
+		mode->vdo_attr.attr.mode = 0444;
+		mode->vdo_attr.show = typec_altmode_vdo_show;
+
+		sysfs_attr_init(&mode->desc_attr.attr);
+		mode->desc_attr.attr.name = "description";
+		mode->desc_attr.attr.mode = 0444;
+		mode->desc_attr.show = typec_altmode_desc_show;
+
+		sysfs_attr_init(&mode->active_attr.attr);
+		mode->active_attr.attr.name = "active";
+		mode->active_attr.attr.mode = 0644;
+		mode->active_attr.show = typec_altmode_active_show;
+		mode->active_attr.store = typec_altmode_active_store;
+
+		mode->attrs[0] = &mode->vdo_attr.attr;
+		mode->attrs[1] = &mode->desc_attr.attr;
+		mode->attrs[2] = &mode->active_attr.attr;
+
+		/* With ports, list the roles that the mode is supported with */
+		if (is_port) {
+			sysfs_attr_init(&mode->roles_attr.attr);
+			mode->roles_attr.attr.name = "supported_roles";
+			mode->roles_attr.attr.mode = 0444;
+			mode->roles_attr.show = typec_altmode_roles_show;
+
+			mode->attrs[3] = &mode->roles_attr.attr;
+		}
+
+		mode->group.attrs = mode->attrs;
+		mode->group.name = mode->group_name;
+
+		alt->mode_groups[i] = &mode->group;
+	}
 }
-static DEVICE_ATTR_RO(mode);
 
-static ssize_t
-svid_show(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t svid_show(struct device *dev, struct device_attribute *attr,
+			 char *buf)
 {
-	struct typec_altmode *adev = to_typec_altmode(dev);
+	struct typec_altmode *alt = to_altmode(dev);
 
-	return sprintf(buf, "%04x\n", adev->svid);
+	return sprintf(buf, "%04x\n", alt->svid);
 }
 static DEVICE_ATTR_RO(svid);
 
 static struct attribute *typec_altmode_attrs[] = {
-	&dev_attr_active.attr,
-	&dev_attr_mode.attr,
 	&dev_attr_svid.attr,
-	&dev_attr_vdo.attr,
 	NULL
 };
 ATTRIBUTE_GROUPS(typec_altmode);
 
-static int altmode_id_get(struct device *dev)
-{
-	struct ida *ids;
-
-	if (is_typec_partner(dev))
-		ids = &to_typec_partner(dev)->mode_ids;
-	else if (is_typec_plug(dev))
-		ids = &to_typec_plug(dev)->mode_ids;
-	else
-		ids = &to_typec_port(dev)->mode_ids;
-
-	return ida_simple_get(ids, 0, 0, GFP_KERNEL);
-}
-
-static void altmode_id_remove(struct device *dev, int id)
-{
-	struct ida *ids;
-
-	if (is_typec_partner(dev))
-		ids = &to_typec_partner(dev)->mode_ids;
-	else if (is_typec_plug(dev))
-		ids = &to_typec_plug(dev)->mode_ids;
-	else
-		ids = &to_typec_port(dev)->mode_ids;
-
-	ida_simple_remove(ids, id);
-}
-
 static void typec_altmode_release(struct device *dev)
 {
-	struct altmode *alt = to_altmode(to_typec_altmode(dev));
+	struct typec_altmode *alt = to_altmode(dev);
+	int i;
 
-	typec_altmode_put_partner(alt);
-
-	altmode_id_remove(alt->adev.dev.parent, alt->id);
+	for (i = 0; i < alt->n_modes; i++)
+		kfree(alt->modes[i].desc);
 	kfree(alt);
 }
 
-const struct device_type typec_altmode_dev_type = {
+static const struct device_type typec_altmode_dev_type = {
 	.name = "typec_alternate_mode",
 	.groups = typec_altmode_groups,
 	.release = typec_altmode_release,
@@ -475,74 +387,44 @@ static struct typec_altmode *
 typec_register_altmode(struct device *parent,
 		       const struct typec_altmode_desc *desc)
 {
-	unsigned int id = altmode_id_get(parent);
-	bool is_port = is_typec_port(parent);
-	struct altmode *alt;
+	struct typec_altmode *alt;
 	int ret;
 
 	alt = kzalloc(sizeof(*alt), GFP_KERNEL);
 	if (!alt)
 		return ERR_PTR(-ENOMEM);
 
-	alt->adev.svid = desc->svid;
-	alt->adev.mode = desc->mode;
-	alt->adev.vdo = desc->vdo;
-	alt->roles = desc->roles;
-	alt->id = id;
+	alt->svid = desc->svid;
+	alt->n_modes = desc->n_modes;
+	typec_init_modes(alt, desc->modes, is_typec_port(parent));
 
-	alt->attrs[0] = &dev_attr_vdo.attr;
-	alt->attrs[1] = &dev_attr_description.attr;
-	alt->attrs[2] = &dev_attr_active.attr;
+	alt->dev.parent = parent;
+	alt->dev.groups = alt->mode_groups;
+	alt->dev.type = &typec_altmode_dev_type;
+	dev_set_name(&alt->dev, "svid-%04x", alt->svid);
 
-	if (is_port) {
-		alt->attrs[3] = &dev_attr_supported_roles.attr;
-		alt->adev.active = true; /* Enabled by default */
-	}
-
-	sprintf(alt->group_name, "mode%d", desc->mode);
-	alt->group.name = alt->group_name;
-	alt->group.attrs = alt->attrs;
-	alt->groups[0] = &alt->group;
-
-	alt->adev.dev.parent = parent;
-	alt->adev.dev.groups = alt->groups;
-	alt->adev.dev.type = &typec_altmode_dev_type;
-	dev_set_name(&alt->adev.dev, "%s.%u", dev_name(parent), id);
-
-	/* Link partners and plugs with the ports */
-	if (is_port)
-		BLOCKING_INIT_NOTIFIER_HEAD(&alt->nh);
-	else
-		typec_altmode_set_partner(alt);
-
-	/* The partners are bind to drivers */
-	if (is_typec_partner(parent))
-		alt->adev.dev.bus = &typec_bus;
-
-	ret = device_register(&alt->adev.dev);
+	ret = device_register(&alt->dev);
 	if (ret) {
 		dev_err(parent, "failed to register alternate mode (%d)\n",
 			ret);
-		put_device(&alt->adev.dev);
+		put_device(&alt->dev);
 		return ERR_PTR(ret);
 	}
 
-	return &alt->adev;
+	return alt;
 }
 
 /**
  * typec_unregister_altmode - Unregister Alternate Mode
- * @adev: The alternate mode to be unregistered
+ * @alt: The alternate mode to be unregistered
  *
  * Unregister device created with typec_partner_register_altmode(),
  * typec_plug_register_altmode() or typec_port_register_altmode().
  */
-void typec_unregister_altmode(struct typec_altmode *adev)
+void typec_unregister_altmode(struct typec_altmode *alt)
 {
-	if (IS_ERR_OR_NULL(adev))
-		return;
-	typec_mux_put(to_altmode(adev)->mux);
-	device_unregister(&adev->dev);
+	if (!IS_ERR_OR_NULL(alt))
+		device_unregister(&alt->dev);
 }
 EXPORT_SYMBOL_GPL(typec_unregister_altmode);
 
@@ -580,7 +462,6 @@ static void typec_partner_release(struct device *dev)
 {
 	struct typec_partner *partner = to_typec_partner(dev);
 
-	ida_destroy(&partner->mode_ids);
 	kfree(partner);
 }
 
@@ -646,7 +527,6 @@ struct typec_partner *typec_register_partner(struct typec_port *port,
 	if (!partner)
 		return ERR_PTR(-ENOMEM);
 
-	ida_init(&partner->mode_ids);
 	partner->usb_pd = desc->usb_pd;
 	partner->accessory = desc->accessory;
 
@@ -695,7 +575,6 @@ static void typec_plug_release(struct device *dev)
 {
 	struct typec_plug *plug = to_typec_plug(dev);
 
-	ida_destroy(&plug->mode_ids);
 	kfree(plug);
 }
 
@@ -748,7 +627,6 @@ struct typec_plug *typec_register_plug(struct typec_cable *cable,
 
 	sprintf(name, "plug%d", desc->index);
 
-	ida_init(&plug->mode_ids);
 	plug->index = desc->index;
 	plug->dev.class = typec_class;
 	plug->dev.parent = &cable->dev;
@@ -918,16 +796,10 @@ static const char * const typec_data_roles[] = {
 	[TYPEC_HOST]	= "host",
 };
 
-static const char * const typec_port_power_roles[] = {
+static const char * const typec_port_types[] = {
 	[TYPEC_PORT_SRC] = "source",
 	[TYPEC_PORT_SNK] = "sink",
 	[TYPEC_PORT_DRP] = "dual",
-};
-
-static const char * const typec_port_data_roles[] = {
-	[TYPEC_PORT_DFP] = "host",
-	[TYPEC_PORT_UFP] = "device",
-	[TYPEC_PORT_DRD] = "dual",
 };
 
 static const char * const typec_port_types_drp[] = {
@@ -1060,7 +932,7 @@ static ssize_t power_role_store(struct device *dev,
 	mutex_lock(&port->port_type_lock);
 	if (port->port_type != TYPEC_PORT_DRP) {
 		dev_dbg(dev, "port type fixed at \"%s\"",
-			     typec_port_power_roles[port->port_type]);
+			     typec_port_types[port->port_type]);
 		ret = -EOPNOTSUPP;
 		goto unlock_and_ret;
 	}
@@ -1101,7 +973,7 @@ port_type_store(struct device *dev, struct device_attribute *attr,
 		return -EOPNOTSUPP;
 	}
 
-	ret = sysfs_match_string(typec_port_power_roles, buf);
+	ret = sysfs_match_string(typec_port_types, buf);
 	if (ret < 0)
 		return ret;
 
@@ -1135,7 +1007,7 @@ port_type_show(struct device *dev, struct device_attribute *attr,
 		return sprintf(buf, "%s\n",
 			       typec_port_types_drp[port->port_type]);
 
-	return sprintf(buf, "[%s]\n", typec_port_power_roles[port->cap->type]);
+	return sprintf(buf, "[%s]\n", typec_port_types[port->cap->type]);
 }
 static DEVICE_ATTR_RW(port_type);
 
@@ -1269,13 +1141,12 @@ static void typec_release(struct device *dev)
 	struct typec_port *port = to_typec_port(dev);
 
 	ida_simple_remove(&typec_index_ida, port->id);
-	ida_destroy(&port->mode_ids);
 	typec_switch_put(port->sw);
 	typec_mux_put(port->mux);
 	kfree(port);
 }
 
-const struct device_type typec_port_dev_type = {
+static const struct device_type typec_port_dev_type = {
 	.name = "typec_port",
 	.groups = typec_groups,
 	.uevent = typec_uevent,
@@ -1381,50 +1252,6 @@ void typec_set_pwr_opmode(struct typec_port *port,
 }
 EXPORT_SYMBOL_GPL(typec_set_pwr_opmode);
 
-/**
- * typec_find_port_power_role - Get the typec port power capability
- * @name: port power capability string
- *
- * This routine is used to find the typec_port_type by its string name.
- *
- * Returns typec_port_type if success, otherwise negative error code.
- */
-int typec_find_port_power_role(const char *name)
-{
-	return match_string(typec_port_power_roles,
-			    ARRAY_SIZE(typec_port_power_roles), name);
-}
-EXPORT_SYMBOL_GPL(typec_find_port_power_role);
-
-/**
- * typec_find_power_role - Find the typec one specific power role
- * @name: power role string
- *
- * This routine is used to find the typec_role by its string name.
- *
- * Returns typec_role if success, otherwise negative error code.
- */
-int typec_find_power_role(const char *name)
-{
-	return match_string(typec_roles, ARRAY_SIZE(typec_roles), name);
-}
-EXPORT_SYMBOL_GPL(typec_find_power_role);
-
-/**
- * typec_find_port_data_role - Get the typec port data capability
- * @name: port data capability string
- *
- * This routine is used to find the typec_port_data by its string name.
- *
- * Returns typec_port_data if success, otherwise negative error code.
- */
-int typec_find_port_data_role(const char *name)
-{
-	return match_string(typec_port_data_roles,
-			    ARRAY_SIZE(typec_port_data_roles), name);
-}
-EXPORT_SYMBOL_GPL(typec_find_port_data_role);
-
 /* ------------------------------------------ */
 /* API for Multiplexer/DeMultiplexer Switches */
 
@@ -1453,24 +1280,12 @@ int typec_set_orientation(struct typec_port *port,
 EXPORT_SYMBOL_GPL(typec_set_orientation);
 
 /**
- * typec_get_orientation - Get USB Type-C cable plug orientation
- * @port: USB Type-C Port
- *
- * Get current cable plug orientation for @port.
- */
-enum typec_orientation typec_get_orientation(struct typec_port *port)
-{
-	return port->orientation;
-}
-EXPORT_SYMBOL_GPL(typec_get_orientation);
-
-/**
  * typec_set_mode - Set mode of operation for USB Type-C connector
- * @port: USB Type-C connector
- * @mode: Accessory Mode, USB Operation or Safe State
+ * @port: USB Type-C port for the connector
+ * @mode: Operation mode for the connector
  *
- * Configure @port for Accessory Mode @mode. This function will configure the
- * muxes needed for @mode.
+ * Set mode @mode for @port. This function will configure the muxes needed to
+ * enter @mode.
  */
 int typec_set_mode(struct typec_port *port, int mode)
 {
@@ -1494,23 +1309,7 @@ struct typec_altmode *
 typec_port_register_altmode(struct typec_port *port,
 			    const struct typec_altmode_desc *desc)
 {
-	struct typec_altmode *adev;
-	struct typec_mux *mux;
-	char id[10];
-
-	sprintf(id, "id%04xm%02x", desc->svid, desc->mode);
-
-	mux = typec_mux_get(port->dev.parent, id);
-	if (IS_ERR(mux))
-		return ERR_CAST(mux);
-
-	adev = typec_register_altmode(&port->dev, desc);
-	if (IS_ERR(adev))
-		typec_mux_put(mux);
-	else
-		to_altmode(adev)->mux = mux;
-
-	return adev;
+	return typec_register_altmode(&port->dev, desc);
 }
 EXPORT_SYMBOL_GPL(typec_port_register_altmode);
 
@@ -1546,7 +1345,7 @@ struct typec_port *typec_register_port(struct device *parent,
 		goto err_switch;
 	}
 
-	port->mux = typec_mux_get(parent, "typec-mux");
+	port->mux = typec_mux_get(cap->fwnode ? &port->dev : parent);
 	if (IS_ERR(port->mux)) {
 		ret = PTR_ERR(port->mux);
 		goto err_mux;
@@ -1584,12 +1383,10 @@ struct typec_port *typec_register_port(struct device *parent,
 		break;
 	}
 
-	ida_init(&port->mode_ids);
-	mutex_init(&port->port_type_lock);
-
 	port->id = id;
 	port->cap = cap;
 	port->port_type = cap->type;
+	mutex_init(&port->port_type_lock);
 	port->prefer_role = cap->prefer_role;
 
 	port->dev.class = typec_class;
@@ -1633,19 +1430,8 @@ EXPORT_SYMBOL_GPL(typec_unregister_port);
 
 static int __init typec_init(void)
 {
-	int ret;
-
-	ret = bus_register(&typec_bus);
-	if (ret)
-		return ret;
-
 	typec_class = class_create(THIS_MODULE, "typec");
-	if (IS_ERR(typec_class)) {
-		bus_unregister(&typec_bus);
-		return PTR_ERR(typec_class);
-	}
-
-	return 0;
+	return PTR_ERR_OR_ZERO(typec_class);
 }
 subsys_initcall(typec_init);
 
@@ -1653,7 +1439,6 @@ static void __exit typec_exit(void)
 {
 	class_destroy(typec_class);
 	ida_destroy(&typec_index_ida);
-	bus_unregister(&typec_bus);
 }
 module_exit(typec_exit);
 

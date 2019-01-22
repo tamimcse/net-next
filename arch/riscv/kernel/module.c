@@ -17,17 +17,6 @@
 #include <linux/errno.h>
 #include <linux/moduleloader.h>
 
-static int apply_r_riscv_32_rela(struct module *me, u32 *location, Elf_Addr v)
-{
-	if (v != (u32)v) {
-		pr_err("%s: value %016llx out of range for 32-bit field\n",
-		       me->name, v);
-		return -EINVAL;
-	}
-	*location = v;
-	return 0;
-}
-
 static int apply_r_riscv_64_rela(struct module *me, u32 *location, Elf_Addr v)
 {
 	*(u64 *)location = v;
@@ -37,7 +26,7 @@ static int apply_r_riscv_64_rela(struct module *me, u32 *location, Elf_Addr v)
 static int apply_r_riscv_branch_rela(struct module *me, u32 *location,
 				     Elf_Addr v)
 {
-	ptrdiff_t offset = (void *)v - (void *)location;
+	s64 offset = (void *)v - (void *)location;
 	u32 imm12 = (offset & 0x1000) << (31 - 12);
 	u32 imm11 = (offset & 0x800) >> (11 - 7);
 	u32 imm10_5 = (offset & 0x7e0) << (30 - 10);
@@ -50,7 +39,7 @@ static int apply_r_riscv_branch_rela(struct module *me, u32 *location,
 static int apply_r_riscv_jal_rela(struct module *me, u32 *location,
 				  Elf_Addr v)
 {
-	ptrdiff_t offset = (void *)v - (void *)location;
+	s64 offset = (void *)v - (void *)location;
 	u32 imm20 = (offset & 0x100000) << (31 - 20);
 	u32 imm19_12 = (offset & 0xff000);
 	u32 imm11 = (offset & 0x800) << (20 - 11);
@@ -63,7 +52,7 @@ static int apply_r_riscv_jal_rela(struct module *me, u32 *location,
 static int apply_r_riscv_rcv_branch_rela(struct module *me, u32 *location,
 					 Elf_Addr v)
 {
-	ptrdiff_t offset = (void *)v - (void *)location;
+	s64 offset = (void *)v - (void *)location;
 	u16 imm8 = (offset & 0x100) << (12 - 8);
 	u16 imm7_6 = (offset & 0xc0) >> (6 - 5);
 	u16 imm5 = (offset & 0x20) >> (5 - 2);
@@ -78,7 +67,7 @@ static int apply_r_riscv_rcv_branch_rela(struct module *me, u32 *location,
 static int apply_r_riscv_rvc_jump_rela(struct module *me, u32 *location,
 				       Elf_Addr v)
 {
-	ptrdiff_t offset = (void *)v - (void *)location;
+	s64 offset = (void *)v - (void *)location;
 	u16 imm11 = (offset & 0x800) << (12 - 11);
 	u16 imm10 = (offset & 0x400) >> (10 - 8);
 	u16 imm9_8 = (offset & 0x300) << (12 - 11);
@@ -96,7 +85,7 @@ static int apply_r_riscv_rvc_jump_rela(struct module *me, u32 *location,
 static int apply_r_riscv_pcrel_hi20_rela(struct module *me, u32 *location,
 					 Elf_Addr v)
 {
-	ptrdiff_t offset = (void *)v - (void *)location;
+	s64 offset = (void *)v - (void *)location;
 	s32 hi20;
 
 	if (offset != (s32)offset) {
@@ -178,7 +167,7 @@ static int apply_r_riscv_lo12_s_rela(struct module *me, u32 *location,
 static int apply_r_riscv_got_hi20_rela(struct module *me, u32 *location,
 				       Elf_Addr v)
 {
-	ptrdiff_t offset = (void *)v - (void *)location;
+	s64 offset = (void *)v - (void *)location;
 	s32 hi20;
 
 	/* Always emit the got entry */
@@ -200,7 +189,7 @@ static int apply_r_riscv_got_hi20_rela(struct module *me, u32 *location,
 static int apply_r_riscv_call_plt_rela(struct module *me, u32 *location,
 				       Elf_Addr v)
 {
-	ptrdiff_t offset = (void *)v - (void *)location;
+	s64 offset = (void *)v - (void *)location;
 	s32 fill_v = offset;
 	u32 hi20, lo12;
 
@@ -227,7 +216,7 @@ static int apply_r_riscv_call_plt_rela(struct module *me, u32 *location,
 static int apply_r_riscv_call_rela(struct module *me, u32 *location,
 				   Elf_Addr v)
 {
-	ptrdiff_t offset = (void *)v - (void *)location;
+	s64 offset = (void *)v - (void *)location;
 	s32 fill_v = offset;
 	u32 hi20, lo12;
 
@@ -263,20 +252,19 @@ static int apply_r_riscv_align_rela(struct module *me, u32 *location,
 static int apply_r_riscv_add32_rela(struct module *me, u32 *location,
 				    Elf_Addr v)
 {
-	*(u32 *)location += (u32)v;
+	*(u32 *)location += (*(u32 *)v);
 	return 0;
 }
 
 static int apply_r_riscv_sub32_rela(struct module *me, u32 *location,
 				    Elf_Addr v)
 {
-	*(u32 *)location -= (u32)v;
+	*(u32 *)location -= (*(u32 *)v);
 	return 0;
 }
 
 static int (*reloc_handlers_rela[]) (struct module *me, u32 *location,
 				Elf_Addr v) = {
-	[R_RISCV_32]			= apply_r_riscv_32_rela,
 	[R_RISCV_64]			= apply_r_riscv_64_rela,
 	[R_RISCV_BRANCH]		= apply_r_riscv_branch_rela,
 	[R_RISCV_JAL]			= apply_r_riscv_jal_rela,
@@ -347,7 +335,7 @@ int apply_relocate_add(Elf_Shdr *sechdrs, const char *strtab,
 			unsigned int j;
 
 			for (j = 0; j < sechdrs[relsec].sh_size / sizeof(*rel); j++) {
-				unsigned long hi20_loc =
+				u64 hi20_loc =
 					sechdrs[sechdrs[relsec].sh_info].sh_addr
 					+ rel[j].r_offset;
 				u32 hi20_type = ELF_RISCV_R_TYPE(rel[j].r_info);
@@ -360,12 +348,12 @@ int apply_relocate_add(Elf_Shdr *sechdrs, const char *strtab,
 					Elf_Sym *hi20_sym =
 						(Elf_Sym *)sechdrs[symindex].sh_addr
 						+ ELF_RISCV_R_SYM(rel[j].r_info);
-					unsigned long hi20_sym_val =
+					u64 hi20_sym_val =
 						hi20_sym->st_value
 						+ rel[j].r_addend;
 
 					/* Calculate lo12 */
-					size_t offset = hi20_sym_val - hi20_loc;
+					u64 offset = hi20_sym_val - hi20_loc;
 					if (IS_ENABLED(CONFIG_MODULE_SECTIONS)
 					    && hi20_type == R_RISCV_GOT_HI20) {
 						offset = module_emit_got_entry(
