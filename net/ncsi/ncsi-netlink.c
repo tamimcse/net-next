@@ -100,7 +100,7 @@ static int ncsi_write_package_info(struct sk_buff *skb,
 	bool found;
 	int rc;
 
-	if (id > ndp->package_num) {
+	if (id > ndp->package_num - 1) {
 		netdev_info(ndp->ndev.dev, "NCSI: No package with id %u\n", id);
 		return -ENODEV;
 	}
@@ -201,7 +201,6 @@ static int ncsi_pkg_info_nl(struct sk_buff *msg, struct genl_info *info)
 	return genlmsg_reply(skb, info);
 
 err:
-	genlmsg_cancel(skb, hdr);
 	kfree_skb(skb);
 	return rc;
 }
@@ -209,7 +208,7 @@ err:
 static int ncsi_pkg_info_all_nl(struct sk_buff *skb,
 				struct netlink_callback *cb)
 {
-	struct nlattr *attrs[NCSI_ATTR_MAX];
+	struct nlattr *attrs[NCSI_ATTR_MAX + 1];
 	struct ncsi_package *np, *package;
 	struct ncsi_dev_priv *ndp;
 	unsigned int package_id;
@@ -241,7 +240,7 @@ static int ncsi_pkg_info_all_nl(struct sk_buff *skb,
 		return 0; /* done */
 
 	hdr = genlmsg_put(skb, NETLINK_CB(cb->skb).portid, cb->nlh->nlmsg_seq,
-			  &ncsi_genl_family, 0,  NCSI_CMD_PKG_INFO);
+			  &ncsi_genl_family, NLM_F_MULTI,  NCSI_CMD_PKG_INFO);
 	if (!hdr) {
 		rc = -EMSGSIZE;
 		goto err;

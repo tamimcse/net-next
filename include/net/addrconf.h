@@ -59,6 +59,19 @@ struct in6_validator_info {
 	struct netlink_ext_ack	*extack;
 };
 
+struct ifa6_config {
+	const struct in6_addr	*pfx;
+	unsigned int		plen;
+
+	const struct in6_addr	*peer_pfx;
+
+	u32			rt_priority;
+	u32			ifa_flags;
+	u32			preferred_lft;
+	u32			valid_lft;
+	u16			scope;
+};
+
 int addrconf_init(void);
 void addrconf_cleanup(void);
 
@@ -95,6 +108,7 @@ int ipv6_get_lladdr(struct net_device *dev, struct in6_addr *addr,
 		    u32 banned_flags);
 bool inet_rcv_saddr_equal(const struct sock *sk, const struct sock *sk2,
 			  bool match_wildcard);
+bool inet_rcv_saddr_any(const struct sock *sk);
 void addrconf_join_solict(struct net_device *dev, const struct in6_addr *addr);
 void addrconf_leave_solict(struct inet6_dev *idev, const struct in6_addr *addr);
 
@@ -223,6 +237,22 @@ struct ipv6_stub {
 				 const struct in6_addr *addr);
 	int (*ipv6_dst_lookup)(struct net *net, struct sock *sk,
 			       struct dst_entry **dst, struct flowi6 *fl6);
+
+	struct fib6_table *(*fib6_get_table)(struct net *net, u32 id);
+	struct fib6_info *(*fib6_lookup)(struct net *net, int oif,
+					 struct flowi6 *fl6, int flags);
+	struct fib6_info *(*fib6_table_lookup)(struct net *net,
+					      struct fib6_table *table,
+					      int oif, struct flowi6 *fl6,
+					      int flags);
+	struct fib6_info *(*fib6_multipath_select)(const struct net *net,
+						   struct fib6_info *f6i,
+						   struct flowi6 *fl6, int oif,
+						   const struct sk_buff *skb,
+						   int strict);
+	u32 (*ip6_mtu_from_fib6)(struct fib6_info *f6i, struct in6_addr *daddr,
+				 struct in6_addr *saddr);
+
 	void (*udpv6_encap_enable)(void);
 	void (*ndisc_send_na)(struct net_device *dev, const struct in6_addr *daddr,
 			      const struct in6_addr *solicited_addr,

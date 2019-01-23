@@ -72,17 +72,6 @@ struct tcp_fastopen_cookie {
 	bool	exp;	/* In RFC6994 experimental option format */
 };
 
-#if IS_ENABLED(CONFIG_NET_SCH_MF)
-    /* TCP MF Cookie as stored in memory */
-    struct tcp_mf_cookie {
-            u8	len;
-            u8 req_thput,           /* Required throughput in MF */ 
-               cur_thput,           /* Current throughput in MF */
-               feedback_thput,      /* Feedback throughput in MF */
-               prop_delay_est;
-    };
-#endif
-
 /* This defines a selective acknowledgement block. */
 struct tcp_sack_block_wire {
 	__be32	start_seq;
@@ -100,12 +89,12 @@ struct tcp_sack_block {
 
 struct tcp_options_received {
 /*	PAWS/RTTM data	*/
-	long	ts_recent_stamp;/* Time we stored ts_recent (for aging) */
+	int	ts_recent_stamp;/* Time we stored ts_recent (for aging) */
 	u32	ts_recent;	/* Time stamp to echo next		*/
 	u32	rcv_tsval;	/* Time stamp value             	*/
 	u32	rcv_tsecr;	/* Time stamp echo reply        	*/
 	u16 	saw_tstamp : 1,	/* Saw TIMESTAMP on last packet		*/
-		tstamp_ok : 1,	/* TIMESTAMP seen on SYN packet		*/                
+		tstamp_ok : 1,	/* TIMESTAMP seen on SYN packet		*/
 		dsack : 1,	/* D-SACK is scheduled			*/
 		wscale_ok : 1,	/* Wscale seen on SYN packet		*/
 		sack_ok : 3,	/* SACK seen on SYN packet		*/
@@ -115,14 +104,6 @@ struct tcp_options_received {
 	u8	num_sacks;	/* Number of SACK blocks		*/
 	u16	user_mss;	/* mss requested by user in ioctl	*/
 	u16	mss_clamp;	/* Maximal mss, negotiated at connection setup */
-        
-#if IS_ENABLED(CONFIG_NET_SCH_MF)        
-        u16     mf_ok : 1;	/* MF option seen on SYN packet		*/
-        u8      feedback_thput, /* Feedback throughput from network in option MF */
-                req_thput,      /* Required throughput from network in option MF */
-                cur_thput,      /* Current throughput from network in option MF */       
-                prop_delay_est;
-#endif                
 };
 
 static inline void tcp_clear_options(struct tcp_options_received *rx_opt)
@@ -132,9 +113,6 @@ static inline void tcp_clear_options(struct tcp_options_received *rx_opt)
 #if IS_ENABLED(CONFIG_SMC)
 	rx_opt->smc_ok = 0;
 #endif
-#if IS_ENABLED(CONFIG_NET_SCH_MF)         
-        rx_opt->mf_ok = 0;
-#endif        
 }
 
 /* This is the max number of SACKS that we'll generate and process. It's safe
@@ -203,9 +181,15 @@ struct tcp_sock {
 	u32	data_segs_out;	/* RFC4898 tcpEStatsPerfDataSegsOut
 				 * total number of data segments sent.
 				 */
+	u64	bytes_sent;	/* RFC4898 tcpEStatsPerfHCDataOctetsOut
+				 * total number of data bytes sent.
+				 */
 	u64	bytes_acked;	/* RFC4898 tcpEStatsAppHCThruOctetsAcked
 				 * sum(delta(snd_una)), or how many bytes
 				 * were acked.
+				 */
+	u32	dsack_dups;	/* RFC4898 tcpEStatsStackDSACKDups
+				 * total number of DSACK blocks received
 				 */
  	u32	snd_una;	/* First byte we want an ack for	*/
  	u32	snd_sml;	/* Last byte of the most recently transmitted small packet */
@@ -236,10 +220,10 @@ struct tcp_sock {
 #define TCP_RACK_RECOVERY_THRESH 16
 		u8 reo_wnd_persist:5, /* No. of recovery since last adj */
 		   dsack_seen:1, /* Whether DSACK seen after last adj */
-		   advanced:1,	 /* mstamp advanced since last lost marking */
-		   reord:1;	 /* reordering detected */
+		   advanced:1;	 /* mstamp advanced since last lost marking */
 	} rack;
 	u16	advmss;		/* Advertised MSS			*/
+	u8	compressed_ack;
 	u32	chrono_start;	/* Start time in jiffies of a TCP chrono */
 	u32	chrono_stat[3];	/* Time in jiffies for chrono_stat stats */
 	u8	chrono_type:2,	/* current chronograph type */
@@ -282,6 +266,7 @@ struct tcp_sock {
 	u8	ecn_flags;	/* ECN status bits.			*/
 	u8	keepalive_probes; /* num of allowed keep alive probes	*/
 	u32	reordering;	/* Packet reordering metric.		*/
+	u32	reord_seen;	/* number of data packet reordering events */
 	u32	snd_up;		/* Urgent pointer		*/
 
 /*
@@ -319,6 +304,7 @@ struct tcp_sock {
 	u32	sacked_out;	/* SACK'd packets			*/
 
 	struct hrtimer	pacing_timer;
+	struct hrtimer	compressed_ack_timer;
 
 	/* from STCP, retrans queue hinting */
 	struct sk_buff* lost_skb_hint;
@@ -350,6 +336,9 @@ struct tcp_sock {
 				 * the first SYN. */
 	u32	undo_marker;	/* snd_una upon a new recovery episode. */
 	int	undo_retrans;	/* number of undoable retransmissions. */
+	u64	bytes_retrans;	/* RFC4898 tcpEStatsPerfOctetsRetrans
+				 * Total data bytes retransmitted
+				 */
 	u32	total_retrans;	/* Total retransmits for entire connection */
 
 	u32	urg_seq;	/* Seq of received urgent pointer */
@@ -370,6 +359,7 @@ struct tcp_sock {
 #endif
 
 /* Receiver side RTT estimation */
+	u32 rcv_rtt_last_tsecr;
 	struct {
 		u32	rtt_us;
 		u32	seq;
@@ -402,12 +392,6 @@ struct tcp_sock {
 
 /* TCP fastopen related information */
 	struct tcp_fastopen_request *fastopen_req;
-
-#if IS_ENABLED(CONFIG_NET_SCH_MF)        
-/* TCP MF TCP related information */
-	struct tcp_mf_cookie *mf_cookie_req;        
-#endif
-        
 	/* fastopen_rsk points to request_sock that resulted in this big
 	 * socket. Used to retransmit SYNACKs etc.
 	 */
@@ -451,7 +435,7 @@ struct tcp_timewait_sock {
 	/* The time we sent the last out-of-window ACK: */
 	u32			  tw_last_oow_ack_time;
 
-	long			  tw_ts_recent_stamp;
+	int			  tw_ts_recent_stamp;
 #ifdef CONFIG_TCP_MD5SIG
 	struct tcp_md5sig_key	  *tw_md5_key;
 #endif

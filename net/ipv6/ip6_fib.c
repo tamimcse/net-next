@@ -167,8 +167,9 @@ struct fib6_info *fib6_info_alloc(gfp_t gfp_flags)
 	return f6i;
 }
 
-void fib6_info_destroy(struct fib6_info *f6i)
+void fib6_info_destroy_rcu(struct rcu_head *head)
 {
+	struct fib6_info *f6i = container_of(head, struct fib6_info, rcu);
 	struct rt6_exception_bucket *bucket;
 	struct dst_metrics *m;
 
@@ -197,6 +198,8 @@ void fib6_info_destroy(struct fib6_info *f6i)
 		}
 	}
 
+	lwtstate_put(f6i->fib6_nh.nh_lwtstate);
+
 	if (f6i->fib6_nh.nh_dev)
 		dev_put(f6i->fib6_nh.nh_dev);
 
@@ -206,7 +209,7 @@ void fib6_info_destroy(struct fib6_info *f6i)
 
 	kfree(f6i);
 }
-EXPORT_SYMBOL_GPL(fib6_info_destroy);
+EXPORT_SYMBOL_GPL(fib6_info_destroy_rcu);
 
 static struct fib6_node *node_alloc(struct net *net)
 {
@@ -352,6 +355,13 @@ struct dst_entry *fib6_rule_lookup(struct net *net, struct flowi6 *fl6,
 	}
 
 	return &rt->dst;
+}
+
+/* called with rcu lock held; no reference taken on fib6_info */
+struct fib6_info *fib6_lookup(struct net *net, int oif, struct flowi6 *fl6,
+			      int flags)
+{
+	return fib6_table_lookup(net, net->ipv6.fib6_main_tbl, oif, fl6, flags);
 }
 
 static void __net_init fib6_tables_init(struct net *net)
@@ -979,7 +989,10 @@ static int fib6_add_rt2node(struct fib6_node *fn, struct fib6_info *rt,
 					fib6_clean_expires(iter);
 				else
 					fib6_set_expires(iter, rt->expires);
-				fib6_metric_set(iter, RTAX_MTU, rt->fib6_pmtu);
+
+				if (rt->fib6_pmtu)
+					fib6_metric_set(iter, RTAX_MTU,
+							rt->fib6_pmtu);
 				return -EEXIST;
 			}
 			/* If we have the same destination and the same metric,
@@ -1354,8 +1367,8 @@ struct lookup_args {
 	const struct in6_addr	*addr;		/* search key			*/
 };
 
-static struct fib6_node *fib6_lookup_1(struct fib6_node *root,
-				       struct lookup_args *args)
+static struct fib6_node *fib6_node_lookup_1(struct fib6_node *root,
+					    struct lookup_args *args)
 {
 	struct fib6_node *fn;
 	__be32 dir;
@@ -1400,7 +1413,8 @@ static struct fib6_node *fib6_lookup_1(struct fib6_node *root,
 #ifdef CONFIG_IPV6_SUBTREES
 				if (subtree) {
 					struct fib6_node *sfn;
-					sfn = fib6_lookup_1(subtree, args + 1);
+					sfn = fib6_node_lookup_1(subtree,
+								 args + 1);
 					if (!sfn)
 						goto backtrack;
 					fn = sfn;
@@ -1422,8 +1436,9 @@ backtrack:
 
 /* called with rcu_read_lock() held
  */
-struct fib6_node *fib6_lookup(struct fib6_node *root, const struct in6_addr *daddr,
-			      const struct in6_addr *saddr)
+struct fib6_node *fib6_node_lookup(struct fib6_node *root,
+				   const struct in6_addr *daddr,
+				   const struct in6_addr *saddr)
 {
 	struct fib6_node *fn;
 	struct lookup_args args[] = {
@@ -1442,7 +1457,7 @@ struct fib6_node *fib6_lookup(struct fib6_node *root, const struct in6_addr *dad
 		}
 	};
 
-	fn = fib6_lookup_1(root, daddr ? args : args + 1);
+	fn = fib6_node_lookup_1(root, daddr ? args : args + 1);
 	if (!fn || fn->fn_flags & RTN_TL_ROOT)
 		fn = root;
 
@@ -2235,15 +2250,6 @@ void fib6_gc_cleanup(void)
 }
 
 #ifdef CONFIG_PROC_FS
-
-struct ipv6_route_iter {
-	struct seq_net_private p;
-	struct fib6_walker w;
-	loff_t skip;
-	struct fib6_table *tbl;
-	int sernum;
-};
-
 static int ipv6_route_seq_show(struct seq_file *seq, void *v)
 {
 	struct fib6_info *rt = v;
@@ -2410,17 +2416,10 @@ static void ipv6_route_seq_stop(struct seq_file *seq, void *v)
 	rcu_read_unlock_bh();
 }
 
-static const struct seq_operations ipv6_route_seq_ops = {
+const struct seq_operations ipv6_route_seq_ops = {
 	.start	= ipv6_route_seq_start,
 	.next	= ipv6_route_seq_next,
 	.stop	= ipv6_route_seq_stop,
 	.show	= ipv6_route_seq_show
 };
-
-int ipv6_route_open(struct inode *inode, struct file *file)
-{
-	return seq_open_net(inode, file, &ipv6_route_seq_ops,
-			    sizeof(struct ipv6_route_iter));
-}
-
 #endif /* CONFIG_PROC_FS */

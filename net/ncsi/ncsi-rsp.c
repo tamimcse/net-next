@@ -347,7 +347,7 @@ static int ncsi_rsp_handler_svf(struct ncsi_request *nr)
 
 	cmd = (struct ncsi_cmd_svf_pkt *)skb_network_header(nr->cmd);
 	ncf = &nc->vlan_filter;
-	if (cmd->index > ncf->n_vids)
+	if (cmd->index == 0 || cmd->index > ncf->n_vids)
 		return -ERANGE;
 
 	/* Add or remove the VLAN filter. Remember HW indexes from 1 */
@@ -445,7 +445,8 @@ static int ncsi_rsp_handler_sma(struct ncsi_request *nr)
 	ncf = &nc->mac_filter;
 	bitmap = &ncf->bitmap;
 
-	if (cmd->index > ncf->n_uc + ncf->n_mc + ncf->n_mixed)
+	if (cmd->index == 0 ||
+	    cmd->index > ncf->n_uc + ncf->n_mc + ncf->n_mixed)
 		return -ERANGE;
 
 	index = (cmd->index - 1) * ETH_ALEN;
@@ -651,7 +652,7 @@ static int ncsi_rsp_handler_gc(struct ncsi_request *nr)
 				      NCSI_CAP_VLAN_MASK;
 
 	size = (rsp->uc_cnt + rsp->mc_cnt + rsp->mixed_cnt) * ETH_ALEN;
-	nc->mac_filter.addrs = kzalloc(size, GFP_KERNEL);
+	nc->mac_filter.addrs = kzalloc(size, GFP_ATOMIC);
 	if (!nc->mac_filter.addrs)
 		return -ENOMEM;
 	nc->mac_filter.n_uc = rsp->uc_cnt;
@@ -660,7 +661,7 @@ static int ncsi_rsp_handler_gc(struct ncsi_request *nr)
 
 	nc->vlan_filter.vids = kcalloc(rsp->vlan_cnt,
 				       sizeof(*nc->vlan_filter.vids),
-				       GFP_KERNEL);
+				       GFP_ATOMIC);
 	if (!nc->vlan_filter.vids)
 		return -ENOMEM;
 	/* Set VLAN filters active so they are cleared in the first

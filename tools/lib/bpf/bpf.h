@@ -36,8 +36,10 @@ struct bpf_create_map_attr {
 	__u32 max_entries;
 	__u32 numa_node;
 	__u32 btf_fd;
-	__u32 btf_key_id;
-	__u32 btf_value_id;
+	__u32 btf_key_type_id;
+	__u32 btf_value_type_id;
+	__u32 map_ifindex;
+	__u32 inner_map_fd;
 };
 
 int bpf_create_map_xattr(const struct bpf_create_map_attr *create_attr);
@@ -64,6 +66,7 @@ struct bpf_load_program_attr {
 	size_t insns_cnt;
 	const char *license;
 	__u32 kern_version;
+	__u32 prog_ifindex;
 };
 
 /* Recommend log buffer size */
@@ -98,10 +101,14 @@ int bpf_prog_get_next_id(__u32 start_id, __u32 *next_id);
 int bpf_map_get_next_id(__u32 start_id, __u32 *next_id);
 int bpf_prog_get_fd_by_id(__u32 id);
 int bpf_map_get_fd_by_id(__u32 id);
+int bpf_btf_get_fd_by_id(__u32 id);
 int bpf_obj_get_info_by_fd(int prog_fd, void *info, __u32 *info_len);
 int bpf_prog_query(int target_fd, enum bpf_attach_type type, __u32 query_flags,
 		   __u32 *attach_flags, __u32 *prog_ids, __u32 *prog_cnt);
 int bpf_raw_tracepoint_open(const char *name, int prog_fd);
 int bpf_load_btf(void *btf, __u32 btf_size, char *log_buf, __u32 log_buf_size,
 		 bool do_log);
+int bpf_task_fd_query(int pid, int fd, __u32 flags, char *buf, __u32 *buf_len,
+		      __u32 *prog_id, __u32 *fd_type, __u64 *probe_offset,
+		      __u64 *probe_addr);
 #endif

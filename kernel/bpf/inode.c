@@ -196,19 +196,21 @@ static void *map_seq_next(struct seq_file *m, void *v, loff_t *pos)
 {
 	struct bpf_map *map = seq_file_to_map(m);
 	void *key = map_iter(m)->key;
+	void *prev_key;
 
 	if (map_iter(m)->done)
 		return NULL;
 
 	if (unlikely(v == SEQ_START_TOKEN))
-		goto done;
+		prev_key = NULL;
+	else
+		prev_key = key;
 
-	if (map->ops->map_get_next_key(map, key, key)) {
+	if (map->ops->map_get_next_key(map, prev_key, key)) {
 		map_iter(m)->done = true;
 		return NULL;
 	}
 
-done:
 	++(*pos);
 	return key;
 }
@@ -295,6 +297,15 @@ static const struct file_operations bpffs_map_fops = {
 	.release	= bpffs_map_release,
 };
 
+static int bpffs_obj_open(struct inode *inode, struct file *file)
+{
+	return -EIO;
+}
+
+static const struct file_operations bpffs_obj_fops = {
+	.open		= bpffs_obj_open,
+};
+
 static int bpf_mkobj_ops(struct dentry *dentry, umode_t mode, void *raw,
 			 const struct inode_operations *iops,
 			 const struct file_operations *fops)
@@ -314,7 +325,8 @@ static int bpf_mkobj_ops(struct dentry *dentry, umode_t mode, void *raw,
 
 static int bpf_mkprog(struct dentry *dentry, umode_t mode, void *arg)
 {
-	return bpf_mkobj_ops(dentry, mode, arg, &bpf_prog_iops, NULL);
+	return bpf_mkobj_ops(dentry, mode, arg, &bpf_prog_iops,
+			     &bpffs_obj_fops);
 }
 
 static int bpf_mkmap(struct dentry *dentry, umode_t mode, void *arg)
@@ -322,7 +334,8 @@ static int bpf_mkmap(struct dentry *dentry, umode_t mode, void *arg)
 	struct bpf_map *map = arg;
 
 	return bpf_mkobj_ops(dentry, mode, arg, &bpf_map_iops,
-			     map->btf ? &bpffs_map_fops : NULL);
+			     bpf_map_support_seq_show(map) ?
+			     &bpffs_map_fops : &bpffs_obj_fops);
 }
 
 static struct dentry *
@@ -429,13 +442,6 @@ int bpf_obj_pin_user(u32 ufd, const char __user *pathname)
 	ret = bpf_obj_do_pin(pname, raw, type);
 	if (ret != 0)
 		bpf_any_put(raw, type);
-	if ((trace_bpf_obj_pin_prog_enabled() ||
-	     trace_bpf_obj_pin_map_enabled()) && !ret) {
-		if (type == BPF_TYPE_PROG)
-			trace_bpf_obj_pin_prog(raw, ufd, pname);
-		if (type == BPF_TYPE_MAP)
-			trace_bpf_obj_pin_map(raw, ufd, pname);
-	}
 out:
 	putname(pname);
 	return ret;
@@ -502,15 +508,8 @@ int bpf_obj_get_user(const char __user *pathname, int flags)
 	else
 		goto out;
 
-	if (ret < 0) {
+	if (ret < 0)
 		bpf_any_put(raw, type);
-	} else if (trace_bpf_obj_get_prog_enabled() ||
-		   trace_bpf_obj_get_map_enabled()) {
-		if (type == BPF_TYPE_PROG)
-			trace_bpf_obj_get_prog(raw, ret, pname);
-		if (type == BPF_TYPE_MAP)
-			trace_bpf_obj_get_map(raw, ret, pname);
-	}
 out:
 	putname(pname);
 	return ret;

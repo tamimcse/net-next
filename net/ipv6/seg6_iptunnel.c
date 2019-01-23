@@ -101,7 +101,7 @@ static __be32 seg6_make_flowlabel(struct net *net, struct sk_buff *skb,
 
 	if (do_flowlabel > 0) {
 		hash = skb_get_hash(skb);
-		rol32(hash, 16);
+		hash = rol32(hash, 16);
 		flowlabel = (__force __be32)hash & IPV6_FLOWLABEL_MASK;
 	} else if (!do_flowlabel && skb->protocol == htons(ETH_P_IPV6)) {
 		flowlabel = ip6_flowlabel(inner_hdr);
@@ -122,7 +122,7 @@ int seg6_do_srh_encap(struct sk_buff *skb, struct ipv6_sr_hdr *osrh, int proto)
 	hdrlen = (osrh->hdrlen + 1) << 3;
 	tot_len = hdrlen + sizeof(*hdr);
 
-	err = skb_cow_head(skb, tot_len);
+	err = skb_cow_head(skb, tot_len + skb->mac_len);
 	if (unlikely(err))
 		return err;
 
@@ -181,7 +181,7 @@ int seg6_do_srh_inline(struct sk_buff *skb, struct ipv6_sr_hdr *osrh)
 
 	hdrlen = (osrh->hdrlen + 1) << 3;
 
-	err = skb_cow_head(skb, hdrlen);
+	err = skb_cow_head(skb, hdrlen + skb->mac_len);
 	if (unlikely(err))
 		return err;
 

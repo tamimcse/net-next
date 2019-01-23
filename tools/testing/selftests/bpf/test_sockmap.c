@@ -47,7 +47,8 @@ static void running_handler(int a);
 #define S1_PORT 10000
 #define S2_PORT 10001
 
-#define BPF_FILENAME "test_sockmap_kern.o"
+#define BPF_SOCKMAP_FILENAME "test_sockmap_kern.o"
+#define BPF_SOCKHASH_FILENAME "test_sockhash_kern.o"
 #define CG_PATH "/sockmap"
 
 /* global sockets */
@@ -336,7 +337,14 @@ static int msg_loop(int fd, int iov_count, int iov_length, int cnt,
 		int fd_flags = O_NONBLOCK;
 		struct timeval timeout;
 		float total_bytes;
+		int bytes_cnt = 0;
+		int chunk_sz;
 		fd_set w;
+
+		if (opt->sendpage)
+			chunk_sz = iov_length * cnt;
+		else
+			chunk_sz = iov_length * iov_count;
 
 		fcntl(fd, fd_flags);
 		total_bytes = (float)iov_count * (float)iov_length * (float)cnt;
@@ -344,8 +352,13 @@ static int msg_loop(int fd, int iov_count, int iov_length, int cnt,
 		if (err < 0)
 			perror("recv start time: ");
 		while (s->bytes_recvd < total_bytes) {
-			timeout.tv_sec = 0;
-			timeout.tv_usec = 10;
+			if (txmsg_cork) {
+				timeout.tv_sec = 0;
+				timeout.tv_usec = 300000;
+			} else {
+				timeout.tv_sec = 1;
+				timeout.tv_usec = 0;
+			}
 
 			/* FD sets */
 			FD_ZERO(&w);
@@ -387,8 +400,13 @@ static int msg_loop(int fd, int iov_count, int iov_length, int cnt,
 							errno = -EIO;
 							fprintf(stderr,
 								"detected data corruption @iov[%i]:%i %02x != %02x, %02x ?= %02x\n",
-								i, j, d[j], k - 1, d[j+1], k + 1);
+								i, j, d[j], k - 1, d[j+1], k);
 							goto out_errno;
+						}
+						bytes_cnt++;
+						if (bytes_cnt == chunk_sz) {
+							k = 0;
+							bytes_cnt = 0;
 						}
 						recv--;
 					}
@@ -428,8 +446,8 @@ static int sendmsg_test(struct sockmap_options *opt)
 	struct msg_stats s = {0};
 	int iov_count = opt->iov_count;
 	int iov_buf = opt->iov_length;
+	int rx_status, tx_status;
 	int cnt = opt->rate;
-	int status;
 
 	errno = 0;
 
@@ -441,7 +459,7 @@ static int sendmsg_test(struct sockmap_options *opt)
 	rxpid = fork();
 	if (rxpid == 0) {
 		if (opt->drop_expected)
-			exit(1);
+			exit(0);
 
 		if (opt->sendpage)
 			iov_count = 1;
@@ -462,7 +480,9 @@ static int sendmsg_test(struct sockmap_options *opt)
 				"rx_sendmsg: TX: %zuB %fB/s %fGB/s RX: %zuB %fB/s %fGB/s\n",
 				s.bytes_sent, sent_Bps, sent_Bps/giga,
 				s.bytes_recvd, recvd_Bps, recvd_Bps/giga);
-		exit(1);
+		if (err && txmsg_cork)
+			err = 0;
+		exit(err ? 1 : 0);
 	} else if (rxpid == -1) {
 		perror("msg_loop_rx: ");
 		return errno;
@@ -490,14 +510,27 @@ static int sendmsg_test(struct sockmap_options *opt)
 				"tx_sendmsg: TX: %zuB %fB/s %f GB/s RX: %zuB %fB/s %fGB/s\n",
 				s.bytes_sent, sent_Bps, sent_Bps/giga,
 				s.bytes_recvd, recvd_Bps, recvd_Bps/giga);
-		exit(1);
+		exit(err ? 1 : 0);
 	} else if (txpid == -1) {
 		perror("msg_loop_tx: ");
 		return errno;
 	}
 
-	assert(waitpid(rxpid, &status, 0) == rxpid);
-	assert(waitpid(txpid, &status, 0) == txpid);
+	assert(waitpid(rxpid, &rx_status, 0) == rxpid);
+	assert(waitpid(txpid, &tx_status, 0) == txpid);
+	if (WIFEXITED(rx_status)) {
+		err = WEXITSTATUS(rx_status);
+		if (err) {
+			fprintf(stderr, "rx thread exited with err %d. ", err);
+			goto out;
+		}
+	}
+	if (WIFEXITED(tx_status)) {
+		err = WEXITSTATUS(tx_status);
+		if (err)
+			fprintf(stderr, "tx thread exited with err %d. ", err);
+	}
+out:
 	return err;
 }
 
@@ -843,6 +876,8 @@ static char *test_to_str(int test)
 #define OPTSTRING 60
 static void test_options(char *options)
 {
+	char tstr[OPTSTRING];
+
 	memset(options, 0, OPTSTRING);
 
 	if (txmsg_pass)
@@ -855,14 +890,22 @@ static void test_options(char *options)
 		strncat(options, "redir_noisy,", OPTSTRING);
 	if (txmsg_drop)
 		strncat(options, "drop,", OPTSTRING);
-	if (txmsg_apply)
-		strncat(options, "apply,", OPTSTRING);
-	if (txmsg_cork)
-		strncat(options, "cork,", OPTSTRING);
-	if (txmsg_start)
-		strncat(options, "start,", OPTSTRING);
-	if (txmsg_end)
-		strncat(options, "end,", OPTSTRING);
+	if (txmsg_apply) {
+		snprintf(tstr, OPTSTRING, "apply %d,", txmsg_apply);
+		strncat(options, tstr, OPTSTRING);
+	}
+	if (txmsg_cork) {
+		snprintf(tstr, OPTSTRING, "cork %d,", txmsg_cork);
+		strncat(options, tstr, OPTSTRING);
+	}
+	if (txmsg_start) {
+		snprintf(tstr, OPTSTRING, "start %d,", txmsg_start);
+		strncat(options, tstr, OPTSTRING);
+	}
+	if (txmsg_end) {
+		snprintf(tstr, OPTSTRING, "end %d,", txmsg_end);
+		strncat(options, tstr, OPTSTRING);
+	}
 	if (txmsg_ingress)
 		strncat(options, "ingress,", OPTSTRING);
 	if (txmsg_skb)
@@ -871,7 +914,7 @@ static void test_options(char *options)
 
 static int __test_exec(int cgrp, int test, struct sockmap_options *opt)
 {
-	char *options = calloc(60, sizeof(char));
+	char *options = calloc(OPTSTRING, sizeof(char));
 	int err;
 
 	if (test == SENDPAGE)
@@ -1009,14 +1052,14 @@ static int test_send(struct sockmap_options *opt, int cgrp)
 
 	opt->iov_length = 1;
 	opt->iov_count = 1;
-	opt->rate = 1024;
+	opt->rate = 512;
 	err = test_exec(cgrp, opt);
 	if (err)
 		goto out;
 
 	opt->iov_length = 256;
 	opt->iov_count = 1024;
-	opt->rate = 10;
+	opt->rate = 2;
 	err = test_exec(cgrp, opt);
 	if (err)
 		goto out;
@@ -1260,9 +1303,8 @@ int prog_type[] = {
 	BPF_PROG_TYPE_SK_MSG,
 };
 
-static int populate_progs(void)
+static int populate_progs(char *bpf_file)
 {
-	char *bpf_file = BPF_FILENAME;
 	struct bpf_program *prog;
 	struct bpf_object *obj;
 	int i = 0;
@@ -1306,11 +1348,11 @@ static int populate_progs(void)
 	return 0;
 }
 
-static int test_suite(void)
+static int __test_suite(char *bpf_file)
 {
 	int cg_fd, err;
 
-	err = populate_progs();
+	err = populate_progs(bpf_file);
 	if (err < 0) {
 		fprintf(stderr, "ERROR: (%i) load bpf failed\n", err);
 		return err;
@@ -1327,6 +1369,11 @@ static int test_suite(void)
 			"ERROR: (%i) open cg path failed: %s\n",
 			cg_fd, optarg);
 		return cg_fd;
+	}
+
+	if (join_cgroup(CG_PATH)) {
+		fprintf(stderr, "ERROR: failed to join cgroup\n");
+		return -EINVAL;
 	}
 
 	/* Tests basic commands and APIs with range of iov values */
@@ -1347,23 +1394,30 @@ static int test_suite(void)
 
 out:
 	printf("Summary: %i PASSED %i FAILED\n", passed, failed);
+	cleanup_cgroup_environment();
 	close(cg_fd);
+	return err;
+}
+
+static int test_suite(void)
+{
+	int err;
+
+	err = __test_suite(BPF_SOCKMAP_FILENAME);
+	if (err)
+		goto out;
+	err = __test_suite(BPF_SOCKHASH_FILENAME);
+out:
 	return err;
 }
 
 int main(int argc, char **argv)
 {
-	struct rlimit r = {10 * 1024 * 1024, RLIM_INFINITY};
 	int iov_count = 1, length = 1024, rate = 1;
 	struct sockmap_options options = {0};
 	int opt, longindex, err, cg_fd = 0;
-	char *bpf_file = BPF_FILENAME;
+	char *bpf_file = BPF_SOCKMAP_FILENAME;
 	int test = PING_PONG;
-
-	if (setrlimit(RLIMIT_MEMLOCK, &r)) {
-		perror("setrlimit(RLIMIT_MEMLOCK)");
-		return 1;
-	}
 
 	if (argc < 2)
 		return test_suite();
@@ -1438,7 +1492,7 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
-	err = populate_progs();
+	err = populate_progs(bpf_file);
 	if (err) {
 		fprintf(stderr, "populate program: (%s) %s\n",
 			bpf_file, strerror(errno));
