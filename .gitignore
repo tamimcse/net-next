@@ -129,6 +129,7 @@ x509.genkey
 
 # Kconfig presets
 all.config
+nbproject
 
 # Kdevelop4
 *.kdev4
